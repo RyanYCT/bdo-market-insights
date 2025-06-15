@@ -164,42 +164,49 @@ class DynamoDBService:
 
     def get_item_id_list(self, table_name: str) -> Dict[str, Any]:
         """Get all item IDs from DynamoDB"""
-        try:
-            table = self.dynamodb.Table(table_name)
-            projection = "id"
+        # In case multiple table_name are provided
+        table_names = table_name.split(",")
+        all_item_id_list = []
 
-            # Scan the entire table
-            scan_params = {"ProjectionExpression": projection}
-            response = table.scan(**scan_params)
-            items = response.get("Items", [])
+        for table_name in table_names:
+            try:
+                table = self.dynamodb.Table(table_name)
+                projection = "id"
 
-            # Handle pagination
-            while "LastEvaluatedKey" in response:
-                scan_params["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                # Scan the entire table
+                scan_params = {"ProjectionExpression": projection}
                 response = table.scan(**scan_params)
-                items.extend(response.get("Items", []))
+                items = response.get("Items", [])
 
-            # Extract item IDs and convert decimal to int
-            item_id_list = []
-            for item in items:
-                item_id_list.append(int(item["id"]))
+                # Handle pagination
+                while "LastEvaluatedKey" in response:
+                    scan_params["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                    response = table.scan(**scan_params)
+                    items.extend(response.get("Items", []))
 
-            return {
-                "message": "Items read successfully",
-                "inputTable": table_name,
-                "itemCount": len(item_id_list),
-                "items": item_id_list,
-            }
+                # Extract item IDs and convert decimal to int
+                item_id_list = []
+                for item in items:
+                    item_id_list.append(int(item["id"]))
 
-        except ClientError as e:
-            logger.error(f"AWS Client Error: {e}")
-            raise
-        except KeyError as e:
-            logger.error(f"Missing required parameter: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error: {e}")
-            raise
+                all_item_id_list.extend(item_id_list)
+
+            except ClientError as e:
+                logger.error(f"AWS Client Error: {e}")
+                raise
+            except KeyError as e:
+                logger.error(f"Missing required parameter: {e}")
+                raise
+            except Exception as e:
+                logger.error(f"Unexpected error: {e}")
+                raise
+
+        return {
+            "message": "Items read successfully",
+            "inputTable": table_names,
+            "itemCount": len(all_item_id_list),
+            "items": all_item_id_list,
+        }
 
 
 # Initialize router
