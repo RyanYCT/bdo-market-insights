@@ -180,11 +180,12 @@ class StoreDataService:
                     # Batch upsert items
                     item_rows = []
                     for item in data:
-                        item_rows.append((item["id"], item["sid"], item["name"]))
+                        # Only set category_id = 5 for new item
+                        item_rows.append((item["id"], item["sid"], item["name"], 5))
                     execute_values(
                         cursor,
                         """
-                        INSERT INTO bdo_item (item_id, sid, name)
+                        INSERT INTO bdo_item (item_id, sid, name, category_id)
                         VALUES %s
                         ON CONFLICT (item_id, sid) DO UPDATE SET name=EXCLUDED.name
                         """,
