@@ -151,22 +151,21 @@ class QueryDataService:
         self.db_host = os.getenv("DB_HOST")
         self.db_port = os.getenv("DB_PORT")
 
-    def serialize_result(self, result):
-        """Convert datetime object in result to string"""
+    def serialize_result(self, cursor, result):
+        """Convert result to list of dicts with column names as keys"""
         if not result:
             return []
 
+        colnames = [desc[0] for desc in cursor.description]
         serialized_result = []
         for row in result:
-            new_row = []
-            for value in row:
-                if value is None:
-                    new_row.append(None)
-                elif isinstance(value, datetime.datetime):
-                    new_row.append(value.isoformat())
+            row_dict = {}
+            for col, value in zip(colnames, row):
+                if isinstance(value, datetime.datetime):
+                    row_dict[col] = value.isoformat()
                 else:
-                    new_row.append(value)
-            serialized_result.append(new_row)
+                    row_dict[col] = value
+            serialized_result.append(row_dict)
         return serialized_result
 
     def query_data(self, query: sql.SQL, params):
@@ -181,7 +180,7 @@ class QueryDataService:
                 with conn.cursor() as cursor:
                     cursor.execute(query, params)
                     result = cursor.fetchall()
-                    serialized_result = self.serialize_result(result)
+                    serialized_result = self.serialize_result(cursor, result)
                     return serialized_result
 
         except Exception as e:
@@ -213,14 +212,12 @@ class ConstructQueryService:
         # column_map = {key:  ("table_name_abbr", "column_name", "alias"),}
         columns = []
         for key in column_map:
-            table_abbr, column, alias = column_map[key]
-            column = sql.SQL(f"{table_abbr}.") + sql.Identifier(column)
-            if alias:
-                column += sql.SQL(f" AS {alias}")
-            columns.append(column)
+            table_abbr, column, _ = column_map[key]
+            col_expr = sql.SQL(f"{table_abbr}.") + sql.Identifier(column) + sql.SQL(" AS ") + sql.Identifier(key)
+            columns.append(col_expr)
         return sql.SQL(", ").join(columns)
 
-    def construct_query(self, report_type, item_category, item_id) -> Dict:
+    def construct_query(self, report_type, item_category, item_id, interval_day) -> Dict:
         item_table = self.tables["item_table"]
         item_category_table = self.tables["item_category_table"]
         market_data_table = self.tables["market_data_table"]
@@ -239,10 +236,10 @@ class ConstructQueryService:
         if not item_category and not item_id:
             logger.error("At least one of item_category or item_id must be provided.")
         # Case 3: Only category is provided, default use case
-        if item_category and not item_id:
+        if item_category and not item_id and not interval_day:
             query = sql.SQL(
                 """
-                WITH latestscrape AS (
+                WITH latest_scrape AS (
                     SELECT id AS scrape_id
                     FROM {market_scrape_table}
                     ORDER BY scrape_time DESC
@@ -252,7 +249,7 @@ class ConstructQueryService:
                 FROM {item_table} i
                 JOIN {item_category_table} ic ON i.category_id = ic.id    -- for category name
                 JOIN {market_data_table} md ON i.id = md.item_id          -- for latest market numbers
-                JOIN latestscrape ls ON md.scrape_id = ls.scrape_id       -- for latest scrape id
+                JOIN latest_scrape ls ON md.scrape_id = ls.scrape_id      -- for latest scrape id
                 JOIN {market_scrape_table} ms ON ls.scrape_id = ms.id     -- for scrape timestamp
                 WHERE ic.name = %s
                 ORDER BY i.item_id, i.sid;
@@ -267,10 +264,10 @@ class ConstructQueryService:
             params = [item_category]
 
         # Case 4: Both category and item_id are provided
-        elif item_category and item_id:
+        elif item_category and item_id and not interval_day:
             query = sql.SQL(
                 """
-                WITH latestscrape AS (
+                WITH latest_scrape AS (
                     SELECT id AS scrape_id
                     FROM {market_scrape_table}
                     ORDER BY scrape_time DESC
@@ -280,7 +277,7 @@ class ConstructQueryService:
                 FROM {item_table} i
                 JOIN {item_category_table} ic ON i.category_id = ic.id    -- for category name
                 JOIN {market_data_table} md ON i.id = md.item_id          -- for latest market numbers
-                JOIN latestscrape ls ON md.scrape_id = ls.scrape_id       -- for latest scrape id
+                JOIN latest_scrape ls ON md.scrape_id = ls.scrape_id      -- for latest scrape id
                 JOIN {market_scrape_table} ms ON ls.scrape_id = ms.id     -- for scrape timestamp
                 WHERE i.item_id = %s
                 ORDER BY i.sid;
@@ -293,6 +290,47 @@ class ConstructQueryService:
                 columns=columns,
             )
             params = [item_id]
+
+        # Case 5: category, item_id, and interval_day are provided
+        elif item_category and item_id and interval_day:
+            query = sql.SQL(
+                """
+                WITH ranked_scrapes AS (
+                    SELECT
+                        ms.id AS scrape_id,
+                        ms.scrape_time::date AS scrape_date,
+                        ms.scrape_time,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY ms.scrape_time::date
+                            ORDER BY ms.scrape_time DESC
+                        ) AS rn
+                    FROM {market_scrape_table} ms
+                    WHERE ms.scrape_time::date >= (CURRENT_DATE - INTERVAL %s)
+                ),
+                last_n_days AS (
+                    SELECT scrape_id, scrape_date
+                    FROM ranked_scrapes
+                    WHERE rn = 1
+                    ORDER BY scrape_date DESC
+                    LIMIT %s
+                )
+                SELECT {columns}
+                FROM {item_table} i
+                JOIN {item_category_table} ic ON i.category_id = ic.id
+                JOIN {market_data_table} md ON i.id = md.item_id
+                JOIN last_n_days lnd ON md.scrape_id = lnd.scrape_id
+                JOIN {market_scrape_table} ms ON lnd.scrape_id = ms.id
+                WHERE i.item_id = %s AND ic.name = %s
+                ORDER BY lnd.scrape_date DESC, i.sid;
+                """
+            ).format(
+                item_table=item_table,
+                item_category_table=item_category_table,
+                market_data_table=market_data_table,
+                market_scrape_table=market_scrape_table,
+                columns=columns,
+            )
+            params = [f"{interval_day} DAY", interval_day, item_id, item_category]
 
         return {
             "query": query,
@@ -316,7 +354,7 @@ def retrieve_step(event: Dict[str, Any]) -> Dict[str, Any]:
         report_type = event.get("reportType")
         item_category = event.get("itemCategory")
         item_id = event.get("itemID")
-        # interval_day = report_details.get("intervalDay")
+        interval_day = event.get("intervalDay")
         table_map = event.get("tableMap", {})
         column_map_raw = event.get("columnMap", {})
 
@@ -340,7 +378,7 @@ def retrieve_step(event: Dict[str, Any]) -> Dict[str, Any]:
         # Initialize construct query service
         construct_query_service = ConstructQueryService(table_map, column_map)
 
-        statement = construct_query_service.construct_query(report_type, item_category, item_id)
+        statement = construct_query_service.construct_query(report_type, item_category, item_id, interval_day)
         query = statement["query"]
         params = statement["params"]
         result = query_data_service.query_data(query, params)
