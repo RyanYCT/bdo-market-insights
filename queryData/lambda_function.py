@@ -217,7 +217,7 @@ class ConstructQueryService:
             columns.append(col_expr)
         return sql.SQL(", ").join(columns)
 
-    def construct_query(self, report_type, item_category, item_id, interval_day) -> Dict:
+    def construct_query(self, report_type, item_category, item_id, item_sid, interval_day) -> Dict:
         item_table = self.tables["item_table"]
         item_category_table = self.tables["item_category_table"]
         market_data_table = self.tables["market_data_table"]
@@ -252,6 +252,7 @@ class ConstructQueryService:
                 JOIN latest_scrape ls ON md.scrape_id = ls.scrape_id      -- for latest scrape id
                 JOIN {market_scrape_table} ms ON ls.scrape_id = ms.id     -- for scrape timestamp
                 WHERE ic.name = %s
+                {item_sid_filter}
                 ORDER BY i.item_id, i.sid;
                 """
             ).format(
@@ -260,8 +261,11 @@ class ConstructQueryService:
                 market_data_table=market_data_table,
                 market_scrape_table=market_scrape_table,
                 columns=self.columns,
+                item_sid_filter=sql.SQL("AND i.sid = %s") if item_sid else sql.SQL(""),
             )
             params = [item_category]
+            if item_sid:
+                params.append(item_sid)
 
         # Case 4: Both category and item_id are provided
         elif item_category and item_id and not interval_day:
@@ -280,6 +284,7 @@ class ConstructQueryService:
                 JOIN latest_scrape ls ON md.scrape_id = ls.scrape_id      -- for latest scrape id
                 JOIN {market_scrape_table} ms ON ls.scrape_id = ms.id     -- for scrape timestamp
                 WHERE i.item_id = %s
+                {item_sid_filter}
                 ORDER BY i.sid;
                 """
             ).format(
@@ -288,8 +293,11 @@ class ConstructQueryService:
                 market_data_table=market_data_table,
                 market_scrape_table=market_scrape_table,
                 columns=columns,
+                item_sid_filter=sql.SQL("AND i.sid = %s") if item_sid else sql.SQL(""),
             )
             params = [item_id]
+            if item_sid:
+                params.append(item_sid)
 
         # Case 5: category, item_id, and interval_day are provided
         elif item_category and item_id and interval_day:
@@ -321,6 +329,7 @@ class ConstructQueryService:
                 JOIN last_n_days lnd ON md.scrape_id = lnd.scrape_id
                 JOIN {market_scrape_table} ms ON lnd.scrape_id = ms.id
                 WHERE i.item_id = %s AND ic.name = %s
+                {item_sid_filter}
                 ORDER BY lnd.scrape_date DESC, i.sid;
                 """
             ).format(
@@ -329,8 +338,11 @@ class ConstructQueryService:
                 market_data_table=market_data_table,
                 market_scrape_table=market_scrape_table,
                 columns=columns,
+                item_sid_filter=sql.SQL("AND i.sid = %s") if item_sid else sql.SQL(""),
             )
             params = [f"{interval_day} DAY", interval_day, item_id, item_category]
+            if item_sid:
+                params.append(item_sid)
 
         return {
             "query": query,
@@ -354,6 +366,7 @@ def retrieve_step(event: Dict[str, Any]) -> Dict[str, Any]:
         report_type = event.get("reportType")
         item_category = event.get("itemCategory")
         item_id = event.get("itemID")
+        item_sid = event.get("itemSID")
         interval_day = event.get("intervalDay")
         table_map = event.get("tableMap", {})
         column_map_raw = event.get("columnMap", {})
@@ -378,7 +391,9 @@ def retrieve_step(event: Dict[str, Any]) -> Dict[str, Any]:
         # Initialize construct query service
         construct_query_service = ConstructQueryService(table_map, column_map)
 
-        statement = construct_query_service.construct_query(report_type, item_category, item_id, interval_day)
+        statement = construct_query_service.construct_query(
+            report_type, item_category, item_id, item_sid, interval_day
+        )
         query = statement["query"]
         params = statement["params"]
         result = query_data_service.query_data(query, params)
@@ -387,6 +402,7 @@ def retrieve_step(event: Dict[str, Any]) -> Dict[str, Any]:
             "reportType": report_type,
             "itemCategory": item_category,
             "itemID": item_id,
+            "itemSID": item_sid,
             "columns": list(column_map.keys()),
             "resultSet": result,
         }
