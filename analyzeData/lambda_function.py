@@ -198,6 +198,7 @@ class AnalysisService:
                         "profit": profit,
                         "rate": rate,
                         "stock": row["current_stock"],
+                        "total_trades": row["total_trades"],
                         "scrape_time": row["scrape_time"],
                     }
                 )
