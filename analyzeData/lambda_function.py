@@ -198,11 +198,14 @@ class AnalysisService:
                         "profit": profit,
                         "rate": rate,
                         "stock": row["current_stock"],
+                        "scrape_time": row["scrape_time"],
                     }
                 )
 
         analyzed_df = pd.DataFrame(analyzed_rows)
-        analyzed_df = analyzed_df.sort_values("rate", ascending=False, na_position="last")
+        analyzed_df = analyzed_df.sort_values(
+            ["scrape_time", "item_id", "sid", "rate"], ascending=True, na_position="last"
+        )
         return json.loads(analyzed_df.to_json(orient="records"))
 
 
