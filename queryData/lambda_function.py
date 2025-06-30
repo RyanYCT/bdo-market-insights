@@ -191,6 +191,8 @@ class QueryDataService:
 class ConstructQueryService:
     """Service class for constructing SQL statement"""
 
+    # Missing parameters should be catched in upstream
+
     def __init__(self, table_map: Dict[str, str], column_map: Dict[str, tuple]):
         # SQL identifiers
         self.table_map = table_map
@@ -217,137 +219,139 @@ class ConstructQueryService:
             columns.append(col_expr)
         return sql.SQL(", ").join(columns)
 
-    def construct_query(self, report_type, item_category, item_id, item_sid, interval_day) -> Dict:
-        item_table = self.tables["item_table"]
-        item_category_table = self.tables["item_category_table"]
-        market_data_table = self.tables["market_data_table"]
-        market_scrape_table = self.tables["market_scrape_table"]
+    def construct_query(self, item_category, item_id, item_sid, interval_day) -> Dict:
+        tables = self.tables
         columns = self.columns
 
-        # Construct query
-        query = sql.SQL("")
-        params = []
+        # Clause fragments
+        select_from_join = sql.SQL(
+            """
+            SELECT {columns}
+            FROM {item_table} i
+            JOIN {item_category_table} ic ON i.category_id = ic.id
+            JOIN {market_data_table} md ON i.id = md.item_id
+            """
+        ).format(
+            columns=columns,
+            item_table=tables["item_table"],
+            item_category_table=tables["item_category_table"],
+            market_data_table=tables["market_data_table"],
+        )
 
-        # Missing parameters should be catched in upstream
-        # Case 1: report type is not provided, missing parameter
-        if not report_type:
-            logger.error("Report type is required.")
-        # Case 2: Both item category and item id are not provided, missing parameter
-        if not item_category and not item_id:
-            logger.error("At least one of item_category or item_id must be provided.")
-        # Case 3: Only category is provided, default use case
+        with_latest = sql.SQL(
+            """
+            WITH latest_scrape AS (
+                SELECT id AS scrape_id
+                FROM {market_scrape_table}
+                ORDER BY scrape_time DESC
+                LIMIT 1
+            )
+            """
+        ).format(market_scrape_table=tables["market_scrape_table"])
+
+        join_latest = sql.SQL(
+            """
+            JOIN latest_scrape ls ON md.scrape_id = ls.scrape_id
+            JOIN {market_scrape_table} ms ON ls.scrape_id = ms.id
+            """
+        ).format(market_scrape_table=tables["market_scrape_table"])
+
+        with_ranked = sql.SQL(
+            """
+            WITH ranked_scrapes AS (
+                SELECT
+                    ms.id AS scrape_id,
+                    ms.scrape_time::date AS scrape_date,
+                    ms.scrape_time,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY ms.scrape_time::date
+                        ORDER BY ms.scrape_time DESC
+                    ) AS rn
+                FROM {market_scrape_table} ms
+                WHERE ms.scrape_time::date >= (CURRENT_DATE - INTERVAL %s)
+            ),
+            last_n_days AS (
+                SELECT scrape_id, scrape_date
+                FROM ranked_scrapes
+                WHERE rn = 1
+                ORDER BY scrape_date DESC
+                LIMIT %s
+            )
+            """
+        ).format(market_scrape_table=tables["market_scrape_table"])
+
+        join_last_n = sql.SQL(
+            """
+            JOIN last_n_days lnd ON md.scrape_id = lnd.scrape_id
+            JOIN {market_scrape_table} ms ON lnd.scrape_id = ms.id
+            """
+        ).format(market_scrape_table=tables["market_scrape_table"])
+
+        # Compose by case
+        # In simple terms, cases depending on item_id and interval_day is provided or not.
+
+        # Case 1: Both item_id and interval_day are not provided -> All level of all items in current hour
         if item_category and not item_id and not interval_day:
-            query = sql.SQL(
+            where = sql.SQL(
                 """
-                WITH latest_scrape AS (
-                    SELECT id AS scrape_id
-                    FROM {market_scrape_table}
-                    ORDER BY scrape_time DESC
-                    LIMIT 1
-                )
-                SELECT {columns}
-                FROM {item_table} i
-                JOIN {item_category_table} ic ON i.category_id = ic.id    -- for category name
-                JOIN {market_data_table} md ON i.id = md.item_id          -- for latest market numbers
-                JOIN latest_scrape ls ON md.scrape_id = ls.scrape_id      -- for latest scrape id
-                JOIN {market_scrape_table} ms ON ls.scrape_id = ms.id     -- for scrape timestamp
                 WHERE ic.name = %s
                 {item_sid_filter}
-                ORDER BY i.item_id, i.sid;
                 """
-            ).format(
-                item_table=item_table,
-                item_category_table=item_category_table,
-                market_data_table=market_data_table,
-                market_scrape_table=market_scrape_table,
-                columns=self.columns,
-                item_sid_filter=sql.SQL("AND i.sid = %s") if item_sid else sql.SQL(""),
-            )
+            ).format(item_sid_filter=sql.SQL("AND i.sid = %s") if item_sid else sql.SQL(""))
+            order = sql.SQL("ORDER BY i.item_id, i.sid;")
+            query = with_latest + select_from_join + join_latest + where + order
             params = [item_category]
             if item_sid:
                 params.append(item_sid)
+            return {"query": query, "params": params}
 
-        # Case 4: Both category and item_id are provided
+        # Case 2: item_id is provided but interval_day is not -> All level of an item in current hour
         elif item_category and item_id and not interval_day:
-            query = sql.SQL(
+            where = sql.SQL(
                 """
-                WITH latest_scrape AS (
-                    SELECT id AS scrape_id
-                    FROM {market_scrape_table}
-                    ORDER BY scrape_time DESC
-                    LIMIT 1
-                )
-                SELECT {columns}
-                FROM {item_table} i
-                JOIN {item_category_table} ic ON i.category_id = ic.id    -- for category name
-                JOIN {market_data_table} md ON i.id = md.item_id          -- for latest market numbers
-                JOIN latest_scrape ls ON md.scrape_id = ls.scrape_id      -- for latest scrape id
-                JOIN {market_scrape_table} ms ON ls.scrape_id = ms.id     -- for scrape timestamp
                 WHERE i.item_id = %s
                 {item_sid_filter}
-                ORDER BY i.sid;
                 """
-            ).format(
-                item_table=item_table,
-                item_category_table=item_category_table,
-                market_data_table=market_data_table,
-                market_scrape_table=market_scrape_table,
-                columns=columns,
-                item_sid_filter=sql.SQL("AND i.sid = %s") if item_sid else sql.SQL(""),
-            )
+            ).format(item_sid_filter=sql.SQL("AND i.sid = %s") if item_sid else sql.SQL(""))
+            order = sql.SQL("ORDER BY i.sid;")
+            query = with_latest + select_from_join + join_latest + where + order
             params = [item_id]
             if item_sid:
                 params.append(item_sid)
+            return {"query": query, "params": params}
 
-        # Case 5: category, item_id, and interval_day are provided
+        # Case 3: Both item_id and interval_day are provided -> All level of an item in n days at closing
         elif item_category and item_id and interval_day:
-            query = sql.SQL(
+            where = sql.SQL(
                 """
-                WITH ranked_scrapes AS (
-                    SELECT
-                        ms.id AS scrape_id,
-                        ms.scrape_time::date AS scrape_date,
-                        ms.scrape_time,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY ms.scrape_time::date
-                            ORDER BY ms.scrape_time DESC
-                        ) AS rn
-                    FROM {market_scrape_table} ms
-                    WHERE ms.scrape_time::date >= (CURRENT_DATE - INTERVAL %s)
-                ),
-                last_n_days AS (
-                    SELECT scrape_id, scrape_date
-                    FROM ranked_scrapes
-                    WHERE rn = 1
-                    ORDER BY scrape_date DESC
-                    LIMIT %s
-                )
-                SELECT {columns}
-                FROM {item_table} i
-                JOIN {item_category_table} ic ON i.category_id = ic.id
-                JOIN {market_data_table} md ON i.id = md.item_id
-                JOIN last_n_days lnd ON md.scrape_id = lnd.scrape_id
-                JOIN {market_scrape_table} ms ON lnd.scrape_id = ms.id
                 WHERE i.item_id = %s AND ic.name = %s
                 {item_sid_filter}
-                ORDER BY lnd.scrape_date DESC, i.sid;
                 """
-            ).format(
-                item_table=item_table,
-                item_category_table=item_category_table,
-                market_data_table=market_data_table,
-                market_scrape_table=market_scrape_table,
-                columns=columns,
-                item_sid_filter=sql.SQL("AND i.sid = %s") if item_sid else sql.SQL(""),
-            )
+            ).format(item_sid_filter=sql.SQL("AND i.sid = %s") if item_sid else sql.SQL(""))
+            order = sql.SQL("ORDER BY lnd.scrape_date DESC, i.sid;")
+            query = with_ranked + select_from_join + join_last_n + where + order
             params = [f"{interval_day} DAY", interval_day, item_id, item_category]
             if item_sid:
                 params.append(item_sid)
+            return {"query": query, "params": params}
 
-        return {
-            "query": query,
-            "params": params,
-        }
+        # Case 4: item_id is not provided but interval_day is -> All level of all items in n days at closing
+        elif item_category and not item_id and interval_day:
+            where = sql.SQL(
+                """
+                WHERE ic.name = %s
+                {item_sid_filter}
+                """
+            ).format(item_sid_filter=sql.SQL("AND i.sid = %s") if item_sid else sql.SQL(""))
+            order = sql.SQL("ORDER BY lnd.scrape_date DESC, i.sid;")
+            query = with_ranked + select_from_join + join_last_n + where + order
+            params = [f"{interval_day} DAY", interval_day, item_category]
+            if item_sid:
+                params.append(item_sid)
+            return {"query": query, "params": params}
+
+        logger.error("Invalid parameter combination.")
+        return {"query": None, "params": []}
 
 
 # Initialize router
@@ -363,7 +367,6 @@ def retrieve_step(event: Dict[str, Any]) -> Dict[str, Any]:
     """Process Step Functions"""
     try:
         # Get parameters from Step Functions input event object
-        report_type = event.get("reportType")
         item_category = event.get("itemCategory")
         item_id = event.get("itemID")
         item_sid = event.get("itemSID")
@@ -381,9 +384,7 @@ def retrieve_step(event: Dict[str, Any]) -> Dict[str, Any]:
 
         # Validate required parameters based on report type
         missing_params = []
-        if not report_type:
-            missing_params.append("report_type")
-        if report_type and not item_category:
+        if not item_category:
             missing_params.append("item_category")
         if missing_params:
             return {"error": f"Missing parameters: {', '.join(missing_params)}"}
@@ -391,18 +392,16 @@ def retrieve_step(event: Dict[str, Any]) -> Dict[str, Any]:
         # Initialize construct query service
         construct_query_service = ConstructQueryService(table_map, column_map)
 
-        statement = construct_query_service.construct_query(
-            report_type, item_category, item_id, item_sid, interval_day
-        )
+        statement = construct_query_service.construct_query(item_category, item_id, item_sid, interval_day)
         query = statement["query"]
         params = statement["params"]
         result = query_data_service.query_data(query, params)
 
         return {
-            "reportType": report_type,
             "itemCategory": item_category,
             "itemID": item_id,
             "itemSID": item_sid,
+            "intervalDay": interval_day,
             "columns": list(column_map.keys()),
             "resultSet": result,
         }

@@ -223,7 +223,6 @@ def retrieve_step(event: Dict[str, Any]) -> Dict[str, Any]:
     """Process Step Functions"""
     try:
         # Get parameters from Step Functions input event object
-        report_type = event.get("reportType", "")
         item_category = event.get("itemCategory", "")
         item_id = event.get("itemID", "")
         columns = event.get("columns", "")
@@ -231,9 +230,7 @@ def retrieve_step(event: Dict[str, Any]) -> Dict[str, Any]:
 
         # Validate required parameters
         missing_params = []
-        if not report_type:
-            missing_params.append("report_type")
-        if report_type and not item_category:
+        if not item_category:
             missing_params.append("item_category")
         if missing_params:
             return {"error": f"Missing parameters: {', '.join(missing_params)}"}
