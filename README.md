@@ -1,4 +1,4 @@
-# Serverless Application
+# BDO Market Insights
 
 A serverless data pipeline designed for collecting, analyzing, and serving Black Desert Online Market data. This system integrated with [Discord Bot](https://github.com/RyanYCT/discord-bot) and [ryanyct.com](https://www.ryanyct.com/) to provide insight and report.
 
