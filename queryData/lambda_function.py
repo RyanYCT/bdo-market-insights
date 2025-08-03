@@ -211,7 +211,7 @@ class ConstructQueryService:
 
     def _generate_columns(self, column_map: Dict[str, tuple]) -> sql.Composed:
         """Generate comma separated SQL column expressions"""
-        # column_map = {key:  ("table_name_abbr", "column_name", "alias"),}
+        # column_map = {key: ("table_name_abbr", "column_name", "column_alias"),}
         columns = []
         for key in column_map:
             table_abbr, column, _ = column_map[key]
@@ -360,6 +360,24 @@ router = LambdaRouter()
 # Initialize service
 query_data_service = QueryDataService()
 
+TABLE_MAP = {
+    "item_table": os.getenv("ITEM_TABLE"),
+    "item_category_table": os.getenv("ITEM_CATEGORY_TABLE"),
+    "market_data_table": os.getenv("MARKET_DATA_TABLE"),
+    "market_scrape_table": os.getenv("MARKET_SCRAPE_TABLE")
+}
+
+COLUMN_MAP = {
+    # key: ("table_name_abbr", "column_name", "column_alias"),
+    "item_name": ("i", os.getenv("ITEM_NAME"), "item_name"),
+    "item_id": ("i", os.getenv("ITEM_ID"), None),
+    "sid": ("i", os.getenv("SID"), None),
+    "category": ("ic", os.getenv("CATEGORY"), "category"),
+    "last_sold_price": ("md", os.getenv("LAST_SOLD_PRICE"), None),
+    "current_stock": ("md", os.getenv("CURRENT_STOCK"), None),
+    "total_trades": ("md", os.getenv("TOTAL_TRADES"), None),
+    "scrape_time": ("ms", os.getenv("SCRAPE_TIME"), None),
+}
 
 # Step Functions handler
 @router.step_route("default")
@@ -367,20 +385,10 @@ def retrieve_step(event: Dict[str, Any]) -> Dict[str, Any]:
     """Process Step Functions"""
     try:
         # Get parameters from Step Functions input event object
-        item_category = event.get("itemCategory")
-        item_id = event.get("itemID")
-        item_sid = event.get("itemSID")
-        interval_day = event.get("intervalDay")
-        table_map = event.get("tableMap", {})
-        column_map_raw = event.get("columnMap", {})
-
-        # Normalize parameter, remove null value
-        # key: [table, column, alias],
-        # key: [table, column, null]
-        column_map = {}
-        for key in column_map_raw:
-            value = column_map_raw[key]
-            column_map[key] = tuple(value)
+        item_category = event.get("itemCategory")  # required
+        item_id = event.get("itemID")  # optional
+        item_sid = event.get("itemSID")  # optional
+        interval_day = event.get("intervalDay")  # optional
 
         # Validate required parameters based on report type
         missing_params = []
@@ -390,7 +398,7 @@ def retrieve_step(event: Dict[str, Any]) -> Dict[str, Any]:
             return {"error": f"Missing parameters: {', '.join(missing_params)}"}
 
         # Initialize construct query service
-        construct_query_service = ConstructQueryService(table_map, column_map)
+        construct_query_service = ConstructQueryService(TABLE_MAP, COLUMN_MAP)
 
         statement = construct_query_service.construct_query(item_category, item_id, item_sid, interval_day)
         query = statement["query"]
@@ -402,7 +410,7 @@ def retrieve_step(event: Dict[str, Any]) -> Dict[str, Any]:
             "itemID": item_id,
             "itemSID": item_sid,
             "intervalDay": interval_day,
-            "columns": list(column_map.keys()),
+            "columns": list(COLUMN_MAP.keys()),
             "resultSet": result,
         }
 
