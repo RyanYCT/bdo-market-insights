@@ -76,22 +76,6 @@ It could be test in [Postman](https://www.postman.com/ryanyip-2272909/my-site/co
 ```json
 // Lambda Function: queryData POST request body
 {
-    "tableMap": {
-        "item_table": "bdo_item",
-        "item_category_table": "bdo_itemcategory",
-        "market_data_table": "bdo_marketdata",
-        "market_scrape_table": "bdo_marketscrape"
-    },
-    "columnMap": {
-        "item_name": ["i", "name", "item_name"],
-        "item_id": ["i", "item_id", null],
-        "sid": ["i", "sid", null],
-        "category": ["ic", "name", "category"],
-        "last_sold_price": ["md", "last_sold_price", null],
-        "current_stock": ["md", "current_stock", null],
-        "total_trades": ["md", "total_trades", null],
-        "scrape_time": ["ms", "scrape_time", null]
-    },
     "itemCategory": "Accessory",
     "itemID": <int>,
     "itemSID": <int:[0-5]>,
@@ -123,7 +107,6 @@ Some use cases are described below.
 ```json
 // Lambda Function: queryData POST request body
 {
-    ...,
     "itemCategory": "Accessory"
 }
 ```
@@ -179,7 +162,6 @@ In this case, Ocean Haze Ring vs Deboreka Necklace.
 ```json
 // Lambda Function: queryData POST request body
 {
-    ...,
     "itemCategory": "Accessory",
     "itemID": 11653,
     "itemSID": 5,
@@ -189,7 +171,6 @@ In this case, Ocean Haze Ring vs Deboreka Necklace.
 ```json
 // Lambda Function: queryData POST request body
 {
-    ...,
     "itemCategory": "Accessory",
     "itemID": 12091,
     "itemSID": 5,
