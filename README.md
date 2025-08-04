@@ -63,6 +63,44 @@ On each push to the `main` branch:
 | 1    | queryData      | Retrieve relevant record from database |
 | 2    | analyzeData    | Compute metrics                        |
 
+## Data Model
+
+```mermaid
+erDiagram
+    ItemCategory ||--o{ Item : categorizes
+    Item ||--o{ MarketData : contains
+    MarketScrape ||--o{ MarketData : generates
+
+    ItemCategory {
+        bigint id PK
+        varchar name
+    }
+
+    Item {
+        bigint id PK
+        varchar name
+        int item_id
+        int sid
+        bigint category_id FK "Reference ItemCategory"
+    }
+
+    MarketData {
+        bigint id PK
+        bigint current_stock
+        bigint total_trades
+        bigint last_sold_price
+        timestamp last_sold_time
+        bigint item_id FK "Reference Item"
+        bigint scrape_id FK "Reference MarketScrape"
+    }
+
+    MarketScrape {
+        bigint id PK
+        varchar endpoint
+        timestamp scrape_time
+    }
+```
+
 ## API
 The delivery feature is integrated with API Gateway.
 
