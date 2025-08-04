@@ -393,7 +393,7 @@ def retrieve_step(event: Dict[str, Any]) -> Dict[str, Any]:
         # Validate required parameters based on report type
         missing_params = []
         if not item_category:
-            missing_params.append("item_category")
+            missing_params.append("itemCategory")
         if missing_params:
             return {"error": f"Missing parameters: {', '.join(missing_params)}"}
 
