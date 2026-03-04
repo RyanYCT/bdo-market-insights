@@ -23,7 +23,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Define ETL pipeline schemas: `ItemIdList`, `FetchDataInput`, `CleanDataInput`, `StoreDataInput`
     - _Requirements: 2.1, 2.2, 2.3_
   
-  - [ ]* 2.2 Write property test for schema validation
+  - [ ] 2.2 Write property test for schema validation
     - **Property 1: Schema validation rejects invalid inputs**
     - **Property 2: Schema validation accepts valid inputs**
     - **Validates: Requirements 2.2, 2.3**
@@ -35,7 +35,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Add error handling for missing or invalid secrets
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
   
-  - [ ]* 3.2 Write property test for secret caching
+  - [ ] 3.2 Write property test for secret caching
     - **Property 3: Secret caching within execution context**
     - **Validates: Requirements 3.4**
 
@@ -47,7 +47,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Implement idle connection cleanup
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
   
-  - [ ]* 4.2 Write property test for connection reuse
+  - [ ] 4.2 Write property test for connection reuse
     - **Property 7: Connection reuse from pool**
     - **Validates: Requirements 5.2**
 
@@ -64,7 +64,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Add failure threshold and timeout configuration
     - _Requirements: 6.6_
   
-  - [ ]* 5.3 Write property tests for retry and circuit breaker
+  - [ ] 5.3 Write property tests for retry and circuit breaker
     - **Property 8: Retry behavior with exponential backoff**
     - **Property 9: Circuit breaker prevents cascading failures**
     - **Validates: Requirements 6.1, 6.2, 6.3, 6.6**
@@ -82,7 +82,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Query DynamoDB for item IDs
     - _Requirements: 1.3, 2.2, 4.1, 4.3_
   
-  - [ ]* 7.2 Write unit tests for retrieveIdList
+  - [ ] 7.2 Write unit tests for retrieveIdList
     - Test DynamoDB query logic
     - Test error handling for missing data
     - Test correlation ID generation
@@ -96,13 +96,13 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Handle rate limit headers from External API
     - _Requirements: 6.5, 7.1, 7.2, 7.3, 7.4, 7.5_
   
-  - [ ]* 8.2 Write property tests for batch processing
+  - [ ] 8.2 Write property tests for batch processing
     - **Property 10: Batch size enforcement**
     - **Property 11: API rate limiting**
     - **Property 12: Metrics emission for API calls**
     - **Validates: Requirements 7.1, 7.2, 7.3, 7.4, 7.5**
   
-  - [ ]* 8.3 Write unit tests for fetchData
+  - [ ] 8.3 Write unit tests for fetchData
     - Test External API error handling
     - Test rate limit header parsing
     - Test circuit breaker integration
@@ -115,7 +115,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Filter out invalid records with logging
     - _Requirements: 2.2, 2.3_
   
-  - [ ]* 9.2 Write unit tests for cleanData
+  - [ ] 9.2 Write unit tests for cleanData
     - Test data transformation logic
     - Test validation error handling
     - Test filtering of invalid records
@@ -130,12 +130,12 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Use parameterized queries for SQL injection prevention
     - _Requirements: 5.2, 15.1_
   
-  - [ ]* 10.2 Write property tests for database operations
+  - [ ] 10.2 Write property tests for database operations
     - **Property 22: SQL parameterization prevents injection**
     - **Property 23: Slow query logging**
     - **Validates: Requirements 15.1, 15.5**
   
-  - [ ]* 10.3 Write unit tests for storeData
+  - [ ] 10.3 Write unit tests for storeData
     - Test MarketScrape creation
     - Test Item creation with category handling
     - Test bulk insert logic
@@ -155,7 +155,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Set up CORS headers for approved origins
     - _Requirements: 8.1, 8.2, 9.1, 9.2, 9.3, 9.4_
   
-  - [ ]* 12.2 Write property tests for API authentication
+  - [ ] 12.2 Write property tests for API authentication
     - **Property 15: API key rate limiting**
     - **Property 16: API access audit logging**
     - **Validates: Requirements 9.3, 9.5**
@@ -170,7 +170,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Add HandleError state for error responses
     - _Requirements: 8.2, 8.3, 8.4, 8.5, 8.6, 18.1, 18.2, 18.3, 18.4_
   
-  - [ ]* 13.2 Write property tests for Step Functions data flow
+  - [ ] 13.2 Write property tests for Step Functions data flow
     - **Property 13: Step Functions data flow integrity**
     - **Property 14: Cache-control headers on GET responses**
     - **Property 26: GET parameter to JSON transformation**
@@ -187,7 +187,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Apply limit and ordering
     - _Requirements: 5.2, 8.5, 15.1_
   
-  - [ ]* 14.2 Write unit tests for queryData
+  - [ ] 14.2 Write unit tests for queryData
     - Test query building for different parameter combinations
     - Test date range filtering
     - Test limit enforcement
@@ -202,7 +202,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Include item name and query context in response
     - _Requirements: 4.1, 4.3_
   
-  - [ ]* 15.2 Write unit tests for analyzeData
+  - [ ] 15.2 Write unit tests for analyzeData
     - Test statistics calculation
     - Test profitability score computation
     - Test price trend detection
@@ -221,7 +221,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Emit database connection pool utilization metrics
     - _Requirements: 11.1_
   
-  - [ ]* 17.2 Write property test for metrics emission
+  - [ ] 17.2 Write property test for metrics emission
     - **Property 19: Custom metrics emission**
     - **Validates: Requirements 11.1**
 
@@ -232,7 +232,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Include X-Ray trace IDs in structured logs
     - _Requirements: 11.2, 11.5_
   
-  - [ ]* 18.2 Write property test for X-Ray integration
+  - [ ] 18.2 Write property test for X-Ray integration
     - **Property 20: X-Ray trace ID in logs**
     - **Validates: Requirements 11.5**
 
@@ -270,12 +270,12 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Log all operations with record counts and date ranges
     - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.7_
   
-  - [ ]* 21.2 Write property tests for data retention
+  - [ ] 21.2 Write property tests for data retention
     - **Property 17: Data aggregation for old records**
     - **Property 18: Retention operation logging**
     - **Validates: Requirements 10.2, 10.7**
   
-  - [ ]* 21.3 Write unit tests for retention Lambda
+  - [ ] 21.3 Write unit tests for retention Lambda
     - Test aggregation calculation accuracy
     - Test date range filtering
     - Test S3 archival
@@ -290,7 +290,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Document all parameters with descriptions and valid ranges
     - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5_
   
-  - [ ]* 22.2 Write property tests for configuration
+  - [ ] 22.2 Write property tests for configuration
     - **Property 21: Configuration validation and defaults**
     - **Validates: Requirements 14.3, 14.4**
 
@@ -302,14 +302,14 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
 ### Phase 6: Integration Testing and Deployment
 
 - [ ] 24. Write integration tests
-  - [ ]* 24.1 Write ETL pipeline integration test
+  - [ ] 24.1 Write ETL pipeline integration test
     - Test complete flow: retrieveIdList → fetchData → cleanData → storeData
     - Use mocked DynamoDB, External API, and RDS
     - Verify data flows correctly through all stages
     - Verify correlation ID propagation
     - _Requirements: 13.2, 13.5_
   
-  - [ ]* 24.2 Write Query pipeline integration test
+  - [ ] 24.2 Write Query pipeline integration test
     - Test complete flow: API Gateway → Step Functions → queryData → analyzeData
     - Use mocked API Gateway, Step Functions, and RDS
     - Verify GET parameter transformation
@@ -317,7 +317,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Verify response format and headers
     - _Requirements: 13.2, 13.5_
   
-  - [ ]* 24.3 Write end-to-end test
+  - [ ] 24.3 Write end-to-end test
     - Test full ETL pipeline followed by query
     - Verify data inserted by ETL can be queried
     - Verify analysis results are accurate
@@ -375,7 +375,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
 
 ## Notes
 
-- Tasks marked with `*` are optional and can be skipped for faster MVP
+- All tasks are required for comprehensive implementation
 - Each task references specific requirements for traceability
 - Checkpoints ensure incremental validation
 - Property tests validate universal correctness properties with 100+ iterations
