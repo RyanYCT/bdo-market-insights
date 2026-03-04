@@ -28,14 +28,14 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - **Property 2: Schema validation accepts valid inputs**
     - **Validates: Requirements 2.2, 2.3**
 
-- [ ] 3. Implement Secrets Manager integration
-  - [ ] 3.1 Create `SecretsManagerClient` class
+- [x] 3. Implement Secrets Manager integration
+  - [x] 3.1 Create `SecretsManagerClient` class
     - Implement credential retrieval from Secrets Manager
     - Implement caching for execution context duration
     - Add error handling for missing or invalid secrets
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
   
-  - [ ] 3.2 Write property test for secret caching
+  - [x] 3.2 Write property test for secret caching
     - **Property 3: Secret caching within execution context**
     - **Validates: Requirements 3.4**
 

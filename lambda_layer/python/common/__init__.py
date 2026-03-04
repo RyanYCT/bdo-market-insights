@@ -11,6 +11,13 @@ This package provides shared utilities for all Lambda functions:
 from .router import LambdaRouter
 from .logging import StructuredLogger
 from .correlation import generate_correlation_id, extract_correlation_id
+from .secrets import (
+    SecretsManagerClient,
+    SecretsManagerError,
+    SecretNotFoundError,
+    SecretAccessDeniedError,
+    InvalidSecretError,
+)
 from .schemas import (
     QueryRequest,
     MarketDataRecord,
@@ -27,6 +34,11 @@ __all__ = [
     "StructuredLogger",
     "generate_correlation_id",
     "extract_correlation_id",
+    "SecretsManagerClient",
+    "SecretsManagerError",
+    "SecretNotFoundError",
+    "SecretAccessDeniedError",
+    "InvalidSecretError",
     "QueryRequest",
     "MarketDataRecord",
     "ItemRecord",
