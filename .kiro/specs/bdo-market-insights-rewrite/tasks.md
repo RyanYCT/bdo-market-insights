@@ -15,15 +15,15 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
   - Implement correlation ID generation and propagation utilities
   - _Requirements: 1.1, 1.2, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6_
 
-- [ ] 2. Implement Pydantic validation schemas
-  - [ ] 2.1 Create base schemas for all Lambda inputs and outputs
+- [x] 2. Implement Pydantic validation schemas
+  - [x] 2.1 Create base schemas for all Lambda inputs and outputs
     - Define `QueryRequest` schema with item_id, name, category, date range validation
     - Define `MarketDataRecord` schema matching Django model fields
     - Define `ItemRecord` schema with category validation
     - Define ETL pipeline schemas: `ItemIdList`, `FetchDataInput`, `CleanDataInput`, `StoreDataInput`
     - _Requirements: 2.1, 2.2, 2.3_
   
-  - [ ] 2.2 Write property test for schema validation
+  - [x] 2.2 Write property test for schema validation
     - **Property 1: Schema validation rejects invalid inputs**
     - **Property 2: Schema validation accepts valid inputs**
     - **Validates: Requirements 2.2, 2.3**

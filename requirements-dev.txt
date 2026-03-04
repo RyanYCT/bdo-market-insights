@@ -1,0 +1,23 @@
+# Development and Testing Dependencies
+
+# Testing framework
+pytest==7.4.3
+pytest-cov==4.1.0
+pytest-mock==3.12.0
+
+# Property-based testing
+hypothesis==6.92.1
+
+# AWS service mocking
+moto==4.2.9
+
+# Code quality
+black==23.12.1
+flake8==7.0.0
+mypy==1.7.1
+
+# Security scanning
+bandit==1.7.6
+
+# Lambda layer dependencies (for testing)
+-r lambda_layer/requirements.txt

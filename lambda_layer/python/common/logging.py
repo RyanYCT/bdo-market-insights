@@ -10,7 +10,7 @@ import logging
 import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
-from pythonjsonlogger import jsonlogger
+from pythonjsonlogger.json import JsonFormatter
 
 
 class StructuredLogger:
@@ -62,7 +62,7 @@ class StructuredLogger:
         
         # Create JSON formatter
         handler = logging.StreamHandler(sys.stdout)
-        formatter = jsonlogger.JsonFormatter(
+        formatter = JsonFormatter(
             '%(timestamp)s %(level)s %(function_name)s %(correlation_id)s %(message)s'
         )
         handler.setFormatter(formatter)
