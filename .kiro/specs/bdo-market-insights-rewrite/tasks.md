@@ -39,15 +39,15 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - **Property 3: Secret caching within execution context**
     - **Validates: Requirements 3.4**
 
-- [ ] 4. Implement database connection pooling
-  - [ ] 4.1 Create `DatabasePool` class
+- [x] 4. Implement database connection pooling
+  - [x] 4.1 Create `DatabasePool` class
     - Implement connection pool with configurable size limits
     - Implement connection reuse logic
     - Add retry logic for connection failures with exponential backoff
     - Implement idle connection cleanup
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
   
-  - [ ] 4.2 Write property test for connection reuse
+  - [x] 4.2 Write property test for connection reuse
     - **Property 7: Connection reuse from pool**
     - **Validates: Requirements 5.2**
 

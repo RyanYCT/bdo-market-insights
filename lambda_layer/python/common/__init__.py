@@ -28,6 +28,7 @@ from .schemas import (
     StoreDataInput,
     VALID_CATEGORIES,
 )
+from .database import DatabasePool, DatabasePoolError
 
 __all__ = [
     "LambdaRouter",
@@ -47,4 +48,6 @@ __all__ = [
     "CleanDataInput",
     "StoreDataInput",
     "VALID_CATEGORIES",
+    "DatabasePool",
+    "DatabasePoolError",
 ]
