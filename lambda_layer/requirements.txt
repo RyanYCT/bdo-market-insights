@@ -1,0 +1,14 @@
+# Lambda Layer Dependencies
+# These packages will be included in the Lambda Layer
+
+# JSON logging
+python-json-logger==2.0.7
+
+# Data validation (will be added in task 2)
+# pydantic==2.5.0
+
+# AWS SDK
+# boto3==1.34.0  # Usually provided by Lambda runtime
+
+# Database driver (will be added in task 4)
+# psycopg2-binary==2.9.9
