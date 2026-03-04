@@ -51,20 +51,20 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - **Property 7: Connection reuse from pool**
     - **Validates: Requirements 5.2**
 
-- [ ] 5. Implement error handling and retry logic
-  - [ ] 5.1 Create retry decorator with exponential backoff
+- [x] 5. Implement error handling and retry logic
+  - [x] 5.1 Create retry decorator with exponential backoff
     - Implement error classification (retriable vs non-retriable)
     - Implement exponential backoff with jitter
     - Add comprehensive error logging with context
     - _Requirements: 6.1, 6.2, 6.3, 6.4_
   
-  - [ ] 5.2 Implement circuit breaker pattern
+  - [x] 5.2 Implement circuit breaker pattern
     - Create `CircuitBreaker` class for External API calls
     - Implement state management (CLOSED, OPEN, HALF_OPEN)
     - Add failure threshold and timeout configuration
     - _Requirements: 6.6_
   
-  - [ ] 5.3 Write property tests for retry and circuit breaker
+  - [x] 5.3 Write property tests for retry and circuit breaker
     - **Property 8: Retry behavior with exponential backoff**
     - **Property 9: Circuit breaker prevents cascading failures**
     - **Validates: Requirements 6.1, 6.2, 6.3, 6.6**

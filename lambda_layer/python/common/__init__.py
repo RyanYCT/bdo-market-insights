@@ -29,6 +29,22 @@ from .schemas import (
     VALID_CATEGORIES,
 )
 from .database import DatabasePool, DatabasePoolError
+from .retry import (
+    retry,
+    retry_with_context,
+    calculate_backoff,
+    is_retriable_error,
+    RetryableError,
+    NetworkError,
+    RateLimitError,
+    TemporaryUnavailableError,
+    NonRetriableError,
+    ValidationError,
+    AuthenticationError,
+    AuthorizationError,
+    ResourceNotFoundError,
+)
+from .circuit_breaker import CircuitBreaker, CircuitBreakerError, CircuitState
 
 __all__ = [
     "LambdaRouter",
@@ -50,4 +66,20 @@ __all__ = [
     "VALID_CATEGORIES",
     "DatabasePool",
     "DatabasePoolError",
+    "retry",
+    "retry_with_context",
+    "calculate_backoff",
+    "is_retriable_error",
+    "RetryableError",
+    "NetworkError",
+    "RateLimitError",
+    "TemporaryUnavailableError",
+    "NonRetriableError",
+    "ValidationError",
+    "AuthenticationError",
+    "AuthorizationError",
+    "ResourceNotFoundError",
+    "CircuitBreaker",
+    "CircuitBreakerError",
+    "CircuitState",
 ]
