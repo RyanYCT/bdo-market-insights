@@ -107,15 +107,15 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Test rate limit header parsing
     - Test circuit breaker integration
 
-- [ ] 9. Rewrite cleanData Lambda function
-  - [ ] 9.1 Implement cleanData with schema validation
+- [x] 9. Rewrite cleanData Lambda function
+  - [x] 9.1 Implement cleanData with schema validation
     - Integrate LambdaRouter and structured logging
     - Transform raw API data to MarketDataRecord format
     - Validate all records against Pydantic schema
     - Filter out invalid records with logging
     - _Requirements: 2.2, 2.3_
   
-  - [ ] 9.2 Write unit tests for cleanData
+  - [x] 9.2 Write unit tests for cleanData
     - Test data transformation logic
     - Test validation error handling
     - Test filtering of invalid records

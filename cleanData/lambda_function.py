@@ -1,296 +1,161 @@
-import decimal
-import json
-import logging
+"""
+cleanData Lambda function - Transform and validate raw API data.
+
+This Lambda function:
+- Receives raw market data from fetchData Lambda
+- Transforms API response format to MarketDataRecord format
+- Validates all records against Pydantic schema
+- Filters out invalid records with logging
+- Returns cleaned and validated data for storeData Lambda
+
+Requirements: 2.2, 2.3
+"""
+
+import sys
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-import boto3
-from botocore.exceptions import ClientError
+# Add lambda layer to path
+sys.path.insert(0, '/opt/python')
 
-# Configure logging
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
-
-class DecimalEncoder(json.JSONEncoder):
-    """Helper class to convert Decimal to int/float for JSON serialization"""
-
-    def default(self, o):
-        if isinstance(o, decimal.Decimal):
-            # If the decimal is whole number, convert to int
-            if o % 1 == 0:
-                return int(o)
-            # Else convert to float
-            else:
-                return float(o)
-
-        return super(DecimalEncoder, self).default(o)
-
-
-class LambdaRouter:
-    """Router class to handle different types of Lambda events"""
-
-    def __init__(self):
-        self.api_routes = {}
-        self.step_routes = {}
-        self.default_headers = {"Content-Type": "application/json"}
-
-    def api_route(self, method: str, path: str):
-        """Decorator to register API Gateway routes"""
-        route_key = f"{method}:{path}"
-
-        def decorator(func):
-            self.api_routes[route_key] = func
-            return func
-
-        return decorator
-
-    def step_route(self, step_name: str):
-        """Decorator to register Step Functions routes"""
-
-        def decorator(func):
-            self.step_routes[step_name] = func
-            return func
-
-        return decorator
-
-    def handle(self, event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-        """Main handler that routes requests based on the event source"""
-        logger.info(f"Event received: {json.dumps(event)}")
-
-        # Determine the event source and route
-        try:
-            # API Gateway event
-            if "httpMethod" in event or "requestContext" in event:
-                return self._handle_api_gateway(event)
-
-            # Step Functions event or default
-            else:
-                return self._handle_step_function(event)
-
-        except Exception as e:
-            logger.error(f"Error processing event: {e}")
-            # For API Gateway, return HTTP error
-            if "httpMethod" in event or "requestContext" in event:
-                return {
-                    "statusCode": 500,
-                    "headers": self.default_headers,
-                    "body": json.dumps({"error": str(e)}),
-                }
-            # For Step Functions, return plain error
-            else:
-                return {"error": str(e)}
-
-    def _handle_api_gateway(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle API Gateway events by routing to the appropriate handler"""
-        # Extract HTTP method and path from the event
-        if "requestContext" in event and "http" in event["requestContext"]:
-            # HTTP API format
-            http_method = event["requestContext"]["http"]["method"]
-            resource_path = event["requestContext"]["http"]["path"]
-        else:
-            # REST API format
-            http_method = event.get("httpMethod")
-            resource_path = event.get("resource", event.get("path", ""))
-
-        # Create the route key
-        route_key = f"{http_method}:{resource_path}"
-
-        # Find the handler function
-        handler_func = self.api_routes.get(route_key)
-
-        if not handler_func:
-            # Try to match parameterized routes
-            for config_route, config_handler in self.api_routes.items():
-                if self._is_route_match(config_route, route_key):
-                    handler_func = config_handler
-                    break
-
-        if handler_func:
-            return handler_func(event)
-        else:
-            logger.error(f"No handler found for route: {route_key}")
-            return {
-                "statusCode": 404,
-                "headers": self.default_headers,
-                "body": json.dumps({"error": f"Route not found: {route_key}"}),
-            }
-
-    def _handle_step_function(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle Step Functions events by routing to the appropriate handler"""
-        # Extract the step name from the event if available
-        step_name = event.get("step")
-
-        # Find the handler function
-        handler_func = self.step_routes.get(step_name)
-        if not handler_func:
-            # Try default handler if step name is not specified
-            handler_func = self.step_routes.get("default")
-
-        if handler_func:
-            return handler_func(event)
-        else:
-            logger.error(f"Invalid step name: {step_name}")
-            return {"error": f"Invalid step name: {step_name}"}
-
-    def _is_route_match(self, config_route: str, actual_route: str) -> bool:
-        """Check if a parameterized route matches the actual route"""
-        # Split method and path
-        config_method, config_path = config_route.split(":", 1)
-        actual_method, actual_path = actual_route.split(":", 1)
-
-        # Methods must match
-        if config_method != actual_method:
-            return False
-
-        # Check path matching
-        config_parts = config_path.split("/")
-        actual_parts = actual_path.split("/")
-
-        if len(config_parts) != len(actual_parts):
-            return False
-
-        for i, part in enumerate(config_parts):
-            if "{" in part and "}" in part:
-                # Skip parameter
-                continue
-            elif part != actual_parts[i]:
-                return False
-
-        return True
-
-
-class DataCleanerService:
-    """Service class for data cleaning operations"""
-
-    def __init__(self):
-        self.s3_client = boto3.client("s3")
-
-    def process_data(self, data: List) -> List[Dict[str, Any]]:
-        """
-        Process and clean the data from the API response
-        """
-        if not data:
-            logger.error("Empty data received")
-            return []
-
-        try:
-            flattened_data = []
-            for sublist in data:
-                for item in sublist:
-                    flattened_data.append(item)
-
-            # Remove redundant attributes
-            keys_to_remove = ["minEnhance", "maxEnhance", "basePrice", "priceMin", "priceMax"]
-            for item in flattened_data:
-                for key in keys_to_remove:
-                    item.pop(key, None)
-
-            logger.info(f"Processed {len(flattened_data)} items")
-            return flattened_data
-
-        except Exception as e:
-            logger.error(f"Error processing data: {e}")
-            raise
+from common.router import LambdaRouter, ValidationError as RouterValidationError
+from common.schemas import CleanDataInput, MarketDataRecord
+from pydantic import ValidationError as PydanticValidationError
 
 
 # Initialize router
 router = LambdaRouter()
 
-# Initialize services
-data_cleaner = DataCleanerService()
+
+def transform_raw_record(raw_record: dict) -> dict:
+    """
+    Transform raw API record to MarketDataRecord format.
+    
+    Converts field names from API format (camelCase) to schema format (snake_case).
+    Handles datetime parsing for last_sold_time.
+    
+    Args:
+        raw_record: Raw record from External API
+        
+    Returns:
+        dict: Transformed record ready for validation
+    """
+    # Map API fields to schema fields
+    transformed = {
+        'item_id': raw_record.get('itemId'),
+        'sid': raw_record.get('sid', 0),
+        'current_stock': raw_record.get('currentStock'),
+        'total_trades': raw_record.get('totalTrades'),
+        'last_sold_price': raw_record.get('lastSoldPrice'),
+        'last_sold_time': raw_record.get('lastSoldTime')
+    }
+    
+    # Parse datetime if it's a string
+    if isinstance(transformed['last_sold_time'], str):
+        try:
+            # Try ISO format first
+            transformed['last_sold_time'] = datetime.fromisoformat(
+                transformed['last_sold_time'].replace('Z', '+00:00')
+            )
+        except (ValueError, AttributeError):
+            # If parsing fails, set to None (will be caught by validation)
+            transformed['last_sold_time'] = None
+    
+    return transformed
 
 
-# API Gateway route handlers (placeholder for extensibility)
-@router.api_route("POST", "/clean")
-def clean_api(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle POST request"""
+@router.route(function_name='cleanData')
+def handler(event: Dict[str, Any], context: Any, logger) -> Dict[str, Any]:
+    """
+    Clean and validate raw market data.
+    
+    Args:
+        event: Lambda event containing raw_data and correlation_id
+        context: Lambda context
+        logger: StructuredLogger instance
+        
+    Returns:
+        dict: Cleaned and validated data with metadata
+    """
+    logger.info("Starting data cleaning and validation")
+    
+    # Validate input
     try:
-        body = json.loads(event.get("body", "{}"))
-        endpoint = body.get("endpoint", "unknown")
-        raw_data = body.get("data", [])
-        if not raw_data:
-            return {
-                "statusCode": 400,
-                "headers": router.default_headers,
-                "body": json.dumps({"error": "Missing required field: data"}),
-            }
-        processed_data = data_cleaner.process_data(raw_data)
-        if not processed_data:
-            return {
-                "statusCode": 200,
-                "headers": router.default_headers,
-                "body": json.dumps({"message": "No data to process", "endpoint": endpoint}),
-            }
-        return {
-            "statusCode": 200,
-            "headers": router.default_headers,
-            "body": json.dumps(
-                {
-                    "message": "Data processed successfully",
-                    "endpoint": endpoint,
-                    "itemCount": len(processed_data),
-                    "data": processed_data,
-                },
-                cls=DecimalEncoder,
-            ),
+        input_data = CleanDataInput(**event)
+        logger.info(
+            "Input validated",
+            raw_record_count=len(input_data.raw_data)
+        )
+    except PydanticValidationError as e:
+        logger.error("Input validation failed", error=e)
+        # Re-raise as RouterValidationError so router catches it properly
+        raise RouterValidationError(str(e))
+    
+    # Transform and validate each record
+    cleaned_records = []
+    invalid_records = []
+    
+    for idx, raw_record in enumerate(input_data.raw_data):
+        try:
+            # Transform to schema format
+            transformed = transform_raw_record(raw_record)
+            
+            # Validate against Pydantic schema
+            validated_record = MarketDataRecord(**transformed)
+            
+            # Add to cleaned list (serialize datetime to ISO format)
+            cleaned_records.append(validated_record.model_dump(mode='json'))
+            
+        except PydanticValidationError as e:
+            # Log validation failure and skip record
+            logger.warning(
+                "Record validation failed, filtering out",
+                record_index=idx,
+                item_id=raw_record.get('itemId'),
+                validation_errors=e.errors()
+            )
+            invalid_records.append({
+                'index': idx,
+                'item_id': raw_record.get('itemId'),
+                'errors': e.errors()
+            })
+        except Exception as e:
+            # Log unexpected transformation errors
+            logger.warning(
+                "Record transformation failed, filtering out",
+                record_index=idx,
+                item_id=raw_record.get('itemId'),
+                error_type=type(e).__name__,
+                error_message=str(e)
+            )
+            invalid_records.append({
+                'index': idx,
+                'item_id': raw_record.get('itemId'),
+                'error': str(e)
+            })
+    
+    # Log summary
+    logger.info(
+        "Data cleaning completed",
+        total_records=len(input_data.raw_data),
+        valid_records=len(cleaned_records),
+        invalid_records=len(invalid_records)
+    )
+    
+    # Return cleaned data
+    return {
+        'cleaned_data': cleaned_records,
+        'correlation_id': input_data.correlation_id,
+        'metadata': {
+            'total_records': len(input_data.raw_data),
+            'valid_records': len(cleaned_records),
+            'invalid_records': len(invalid_records),
+            'filtered_items': [r['item_id'] for r in invalid_records if 'item_id' in r]
         }
-
-    except json.JSONDecodeError:
-        return {
-            "statusCode": 400,
-            "headers": router.default_headers,
-            "body": json.dumps({"error": "Invalid JSON in request body"}),
-        }
-    except ClientError as e:
-        logger.error(f"AWS service error: {str(e)}")
-        return {
-            "statusCode": 500,
-            "headers": router.default_headers,
-            "body": json.dumps({"error": f"Error interacting with AWS services: {str(e)}"}),
-        }
-    except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
-        return {
-            "statusCode": 500,
-            "headers": router.default_headers,
-            "body": json.dumps({"error": f"Unexpected error occurred: {str(e)}"}),
-        }
-
-
-# Step Functions handler
-@router.step_route("default")
-def clean_step(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Process Step Functions"""
-    try:
-        # Get parameters from event
-        endpoint = event.get("endpoint")
-        scrape_time = event.get("scrapeTime")
-        data = event.get("data", [])
-
-        # Validate required parameters
-        missing_params = []
-        if not endpoint:
-            missing_params.append("endpoint")
-        if not scrape_time:
-            missing_params.append("scrapeTime")
-        if not data:
-            missing_params.append("data")
-        if missing_params:
-            return {"error": f"Missing parameters: {', '.join(missing_params)}"}
-
-        # Clean data
-        result = data_cleaner.process_data(data)
-        return {
-            "endpoint": endpoint,
-            "scrapeTime": scrape_time,
-            "data": result,
-        }
-    except Exception as e:
-        logger.error(f"Error processing Step Functions task: {e}")
-        return {"error": str(e)}
+    }
 
 
 # Lambda handler function
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """AWS Lambda handler function"""
-    return router.handle(event, context)
+    """AWS Lambda handler function."""
+    return handler(event, context)
