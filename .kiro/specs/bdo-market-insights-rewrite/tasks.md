@@ -301,15 +301,15 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
 
 ### Phase 6: Integration Testing and Deployment
 
-- [ ] 24. Write integration tests
-  - [ ] 24.1 Write ETL pipeline integration test
+- [x] 24. Write integration tests
+  - [x] 24.1 Write ETL pipeline integration test
     - Test complete flow: retrieveIdList → fetchData → cleanData → storeData
     - Use mocked DynamoDB, External API, and RDS
     - Verify data flows correctly through all stages
     - Verify correlation ID propagation
     - _Requirements: 13.2, 13.5_
   
-  - [ ] 24.2 Write Query pipeline integration test
+  - [x] 24.2 Write Query pipeline integration test
     - Test complete flow: API Gateway → Step Functions → queryData → analyzeData
     - Use mocked API Gateway, Step Functions, and RDS
     - Verify GET parameter transformation
@@ -317,7 +317,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Verify response format and headers
     - _Requirements: 13.2, 13.5_
   
-  - [ ] 24.3 Write end-to-end test
+  - [x] 24.3 Write end-to-end test
     - Test full ETL pipeline followed by query
     - Verify data inserted by ETL can be queried
     - Verify analysis results are accurate
