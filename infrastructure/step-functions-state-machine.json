@@ -1,0 +1,216 @@
+{
+  "Comment": "BDO Market Insights Query Pipeline - Handles GET requests with parameter transformation and data flow",
+  "StartAt": "TransformInput",
+  "States": {
+    "TransformInput": {
+      "Type": "Pass",
+      "Comment": "Extract query parameters from API Gateway GET request and prepare for queryData Lambda",
+      "Parameters": {
+        "queryParams.$": "$.queryStringParameters",
+        "correlationId.$": "$.requestContext.requestId"
+      },
+      "Next": "ValidateQueryParams"
+    },
+    "ValidateQueryParams": {
+      "Type": "Pass",
+      "Comment": "Ensure required parameters are present and set defaults",
+      "Parameters": {
+        "item_id.$": "$.queryParams.item_id",
+        "name.$": "$.queryParams.name",
+        "category.$": "$.queryParams.category",
+        "start_date.$": "$.queryParams.start_date",
+        "end_date.$": "$.queryParams.end_date",
+        "limit.$": "States.StringToJson($.queryParams.limit)",
+        "correlation_id.$": "$.correlationId"
+      },
+      "ResultPath": "$.validatedParams",
+      "Next": "QueryData"
+    },
+    "QueryData": {
+      "Type": "Task",
+      "Comment": "Invoke queryData Lambda to retrieve market data from PostgreSQL",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${QueryDataLambdaArn}",
+        "Payload": {
+          "item_id.$": "$.validatedParams.item_id",
+          "name.$": "$.validatedParams.name",
+          "category.$": "$.validatedParams.category",
+          "start_date.$": "$.validatedParams.start_date",
+          "end_date.$": "$.validatedParams.end_date",
+          "limit.$": "$.validatedParams.limit",
+          "correlation_id.$": "$.validatedParams.correlation_id"
+        }
+      },
+      "ResultPath": "$.queryResult",
+      "ResultSelector": {
+        "statusCode.$": "$.Payload.statusCode",
+        "body.$": "$.Payload.body"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "HandleError"
+        }
+      ],
+      "Next": "CheckQueryDataSuccess"
+    },
+    "CheckQueryDataSuccess": {
+      "Type": "Choice",
+      "Comment": "Check if queryData Lambda succeeded",
+      "Choices": [
+        {
+          "Variable": "$.queryResult.statusCode",
+          "NumericEquals": 200,
+          "Next": "MergeForAnalysis"
+        }
+      ],
+      "Default": "HandleQueryDataError"
+    },
+    "HandleQueryDataError": {
+      "Type": "Pass",
+      "Comment": "Handle non-200 response from queryData",
+      "Parameters": {
+        "error": {
+          "code": "QUERY_DATA_ERROR",
+          "message": "queryData Lambda returned non-200 status",
+          "statusCode.$": "$.queryResult.statusCode",
+          "details.$": "$.queryResult.body"
+        },
+        "correlationId.$": "$.validatedParams.correlation_id"
+      },
+      "ResultPath": "$.error",
+      "Next": "HandleError"
+    },
+    "MergeForAnalysis": {
+      "Type": "Pass",
+      "Comment": "Combine queryData results with original query parameters for analyzeData Lambda",
+      "Parameters": {
+        "market_data.$": "$.queryResult.body.data",
+        "query_params": {
+          "item_id.$": "$.validatedParams.item_id",
+          "name.$": "$.validatedParams.name",
+          "category.$": "$.validatedParams.category",
+          "start_date.$": "$.validatedParams.start_date",
+          "end_date.$": "$.validatedParams.end_date",
+          "limit.$": "$.validatedParams.limit"
+        },
+        "correlation_id.$": "$.validatedParams.correlation_id"
+      },
+      "Next": "AnalyzeData"
+    },
+    "AnalyzeData": {
+      "Type": "Task",
+      "Comment": "Invoke analyzeData Lambda to compute statistics and profitability metrics",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${AnalyzeDataLambdaArn}",
+        "Payload": {
+          "market_data.$": "$.market_data",
+          "query_params.$": "$.query_params",
+          "correlation_id.$": "$.correlation_id"
+        }
+      },
+      "ResultPath": "$.analysisResult",
+      "ResultSelector": {
+        "statusCode.$": "$.Payload.statusCode",
+        "body.$": "$.Payload.body"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "HandleError"
+        }
+      ],
+      "Next": "CheckAnalyzeDataSuccess"
+    },
+    "CheckAnalyzeDataSuccess": {
+      "Type": "Choice",
+      "Comment": "Check if analyzeData Lambda succeeded",
+      "Choices": [
+        {
+          "Variable": "$.analysisResult.statusCode",
+          "NumericEquals": 200,
+          "Next": "FormatResponse"
+        }
+      ],
+      "Default": "HandleAnalyzeDataError"
+    },
+    "HandleAnalyzeDataError": {
+      "Type": "Pass",
+      "Comment": "Handle non-200 response from analyzeData",
+      "Parameters": {
+        "error": {
+          "code": "ANALYZE_DATA_ERROR",
+          "message": "analyzeData Lambda returned non-200 status",
+          "statusCode.$": "$.analysisResult.statusCode",
+          "details.$": "$.analysisResult.body"
+        },
+        "correlationId.$": "$.correlation_id"
+      },
+      "ResultPath": "$.error",
+      "Next": "HandleError"
+    },
+    "FormatResponse": {
+      "Type": "Pass",
+      "Comment": "Format successful response with cache-control headers",
+      "Parameters": {
+        "statusCode": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "public, max-age=300",
+          "X-Correlation-Id.$": "$.correlation_id"
+        },
+        "body.$": "$.analysisResult.body"
+      },
+      "End": true
+    },
+    "HandleError": {
+      "Type": "Pass",
+      "Comment": "Format error response with appropriate status code and correlation ID",
+      "Parameters": {
+        "statusCode": 500,
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Correlation-Id.$": "$.error.correlationId"
+        },
+        "body": {
+          "error": {
+            "code.$": "$.error.code",
+            "message.$": "$.error.message",
+            "correlation_id.$": "$.error.correlationId"
+          }
+        }
+      },
+      "End": true
+    }
+  }
+}

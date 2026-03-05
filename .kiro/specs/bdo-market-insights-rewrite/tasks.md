@@ -160,8 +160,8 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - **Property 16: API access audit logging**
     - **Validates: Requirements 9.3, 9.5**
 
-- [ ] 13. Rewrite Step Functions state machine
-  - [ ] 13.1 Update state machine definition for GET requests
+- [x] 13. Rewrite Step Functions state machine
+  - [x] 13.1 Update state machine definition for GET requests
     - Implement TransformInput state to extract query parameters
     - Update QueryData state with parameter passing
     - Implement MergeForAnalysis state to combine results
@@ -170,7 +170,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Add HandleError state for error responses
     - _Requirements: 8.2, 8.3, 8.4, 8.5, 8.6, 18.1, 18.2, 18.3, 18.4_
   
-  - [ ] 13.2 Write property tests for Step Functions data flow
+  - [x] 13.2 Write property tests for Step Functions data flow
     - **Property 13: Step Functions data flow integrity**
     - **Property 14: Cache-control headers on GET responses**
     - **Property 26: GET parameter to JSON transformation**
