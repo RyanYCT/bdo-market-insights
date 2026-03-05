@@ -10,9 +10,9 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-echo -e "${BLUE}=========================================="
-echo "Deployment Configuration Setup"
-echo "==========================================${NC}"
+echo -e "${BLUE}=============================="
+echo -e "Deployment Configuration Setup"
+echo -e "==============================${NC}"
 echo ""
 echo "This script will help you create a deployment configuration file."
 echo "Your credentials will be stored in config/deployment-config.sh"
@@ -182,9 +182,9 @@ echo "export ENABLE_SCHEDULER=\"true\"" >> config/deployment-config.sh
 chmod 600 config/deployment-config.sh
 
 echo ""
-echo -e "${GREEN}=========================================="
-echo "Configuration Created Successfully!"
-echo "==========================================${NC}"
+echo -e "${GREEN}==================================="
+echo -e "Configuration Created Successfully!"
+echo -e "===================================${NC}"
 echo ""
 echo "Configuration file: config/deployment-config.sh"
 echo "File permissions: 600 (owner read/write only)"
