@@ -342,7 +342,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Implement automatic rollback on failure
     - _Requirements: 17.2, 17.3, 17.4, 17.5, 17.6_
 
-- [ ] 26. Deploy to staging environment
+- [x] 26. Deploy to staging environment
   - Create AWS Secrets Manager secrets with credentials
   - Deploy Lambda Layer
   - Deploy all Lambda functions
