@@ -1,0 +1,441 @@
+openapi: 3.0.3
+info:
+  title: BDO Market Insights API
+  description: |
+    RESTful API for querying Black Desert Online market data. This API provides access to historical market data including prices, stock levels, and trade volumes for items in the BDO marketplace.
+    
+    ## Authentication
+    All endpoints require an API key passed in the `x-api-key` header. Contact your administrator to obtain an API key.
+    
+    ## Rate Limiting
+    - **Rate Limit**: 100 requests per minute per API key
+    - **Burst Limit**: 20 concurrent requests
+    - **Daily Quota**: 10,000 requests per day
+    
+    When rate limits are exceeded, the API returns a 429 status code with a `Retry-After` header.
+    
+    ## Caching
+    GET responses include `Cache-Control` headers. Clients should respect these headers to reduce unnecessary API calls.
+    
+    ## Correlation IDs
+    All responses include a `correlation_id` field for request tracing and support purposes.
+  version: 1.0.0
+  contact:
+    name: BDO Market Insights Support
+    email: support@example.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.example.com/dev
+    description: Development environment
+  - url: https://api.example.com/staging
+    description: Staging environment
+  - url: https://api.example.com/prod
+    description: Production environment
+
+tags:
+  - name: Query
+    description: Market data query operations
+
+security:
+  - ApiKeyAuth: []
+
+paths:
+  /query:
+    get:
+      tags:
+        - Query
+      summary: Query market data
+      description: |
+        Retrieve market data for specific items within a date range. Returns historical price data, stock levels, and trade volumes along with computed statistics and profitability metrics.
+        
+        **Query Parameters:**
+        - Either `item_id` or `name` must be provided
+        - `start_date` and `end_date` are required
+        - Results are ordered by `last_sold_time` descending
+        - Maximum 1000 results per request
+      operationId: queryMarketData
+      parameters:
+        - name: item_id
+          in: query
+          description: Specific item ID to query. Either `item_id` or `name` must be provided.
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            example: 1001
+        - name: name
+          in: query
+          description: Item name to search (partial match supported). Either `item_id` or `name` must be provided.
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+            example: "Black Stone (Weapon)"
+        - name: category
+          in: query
+          description: Filter by item category
+          required: false
+          schema:
+            type: string
+            enum:
+              - Uncategorized
+              - Accessory
+              - Buff
+              - Costume
+            example: "Accessory"
+        - name: start_date
+          in: query
+          description: Start of date range for last_sold_time (ISO 8601 format)
+          required: true
+          schema:
+            type: string
+            format: date-time
+            example: "2024-01-01T00:00:00Z"
+        - name: end_date
+          in: query
+          description: End of date range for last_sold_time (ISO 8601 format)
+          required: true
+          schema:
+            type: string
+            format: date-time
+            example: "2024-01-31T23:59:59Z"
+        - name: limit
+          in: query
+          description: Maximum number of results to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+            example: 100
+      responses:
+        '200':
+          description: Successful query with market data and analysis
+          headers:
+            Cache-Control:
+              description: Caching directive for the response
+              schema:
+                type: string
+                example: "public, max-age=300"
+            Access-Control-Allow-Origin:
+              description: CORS header for allowed origins
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+              examples:
+                singleItem:
+                  summary: Query for a specific item
+                  value:
+                    item_id: 1001
+                    item_name: "Black Stone (Weapon)"
+                    date_range:
+                      start: "2024-01-01T00:00:00Z"
+                      end: "2024-01-31T23:59:59Z"
+                    statistics:
+                      avg_last_sold_price: 14850.50
+                      min_last_sold_price: 14000
+                      max_last_sold_price: 16000
+                      avg_current_stock: 48.5
+                      total_trades_sum: 123400
+                    profitability_score: 0.85
+                    price_trend: "increasing"
+                    correlation_id: "550e8400-e29b-41d4-a716-446655440000"
+                categoryQuery:
+                  summary: Query by category
+                  value:
+                    item_id: 2001
+                    item_name: "Deboreka Necklace"
+                    date_range:
+                      start: "2024-01-01T00:00:00Z"
+                      end: "2024-01-31T23:59:59Z"
+                    statistics:
+                      avg_last_sold_price: 2500000.75
+                      min_last_sold_price: 2300000
+                      max_last_sold_price: 2700000
+                      avg_current_stock: 12.3
+                      total_trades_sum: 456
+                    profitability_score: 0.62
+                    price_trend: "stable"
+                    correlation_id: "550e8400-e29b-41d4-a716-446655440001"
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missingRequired:
+                  summary: Missing required parameters
+                  value:
+                    error:
+                      code: "VALIDATION_ERROR"
+                      message: "Invalid query parameters"
+                      details:
+                        start_date: "field required"
+                        end_date: "field required"
+                      correlation_id: "550e8400-e29b-41d4-a716-446655440002"
+                      timestamp: "2024-01-15T10:30:00Z"
+                invalidDateRange:
+                  summary: Invalid date range
+                  value:
+                    error:
+                      code: "VALIDATION_ERROR"
+                      message: "Invalid query parameters"
+                      details:
+                        end_date: "must be after start_date"
+                      correlation_id: "550e8400-e29b-41d4-a716-446655440003"
+                      timestamp: "2024-01-15T10:30:00Z"
+                missingItemIdentifier:
+                  summary: Neither item_id nor name provided
+                  value:
+                    error:
+                      code: "VALIDATION_ERROR"
+                      message: "Invalid query parameters"
+                      details:
+                        query: "Either item_id or name must be specified"
+                      correlation_id: "550e8400-e29b-41d4-a716-446655440004"
+                      timestamp: "2024-01-15T10:30:00Z"
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missingApiKey:
+                  summary: API key not provided
+                  value:
+                    error:
+                      code: "AUTHENTICATION_ERROR"
+                      message: "Missing API key"
+                      details:
+                        header: "x-api-key header is required"
+                      correlation_id: "550e8400-e29b-41d4-a716-446655440005"
+                      timestamp: "2024-01-15T10:30:00Z"
+                invalidApiKey:
+                  summary: Invalid API key
+                  value:
+                    error:
+                      code: "AUTHENTICATION_ERROR"
+                      message: "Invalid API key"
+                      details:
+                        api_key: "The provided API key is not valid"
+                      correlation_id: "550e8400-e29b-41d4-a716-446655440006"
+                      timestamp: "2024-01-15T10:30:00Z"
+        '429':
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Number of seconds to wait before retrying
+              schema:
+                type: integer
+                example: 60
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                rateLimitExceeded:
+                  summary: Too many requests
+                  value:
+                    error:
+                      code: "RATE_LIMIT_EXCEEDED"
+                      message: "Rate limit exceeded"
+                      details:
+                        limit: "100 requests per minute"
+                        retry_after: 60
+                      correlation_id: "550e8400-e29b-41d4-a716-446655440007"
+                      timestamp: "2024-01-15T10:30:00Z"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                internalError:
+                  summary: Unexpected server error
+                  value:
+                    error:
+                      code: "INTERNAL_ERROR"
+                      message: "An unexpected error occurred"
+                      details:
+                        message: "Please contact support with the correlation_id"
+                      correlation_id: "550e8400-e29b-41d4-a716-446655440008"
+                      timestamp: "2024-01-15T10:30:00Z"
+    options:
+      tags:
+        - Query
+      summary: CORS preflight request
+      description: Handles CORS preflight requests for the query endpoint
+      operationId: queryOptions
+      responses:
+        '200':
+          description: CORS preflight response
+          headers:
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+            Access-Control-Allow-Methods:
+              schema:
+                type: string
+                example: "GET,OPTIONS"
+            Access-Control-Allow-Headers:
+              schema:
+                type: string
+                example: "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token"
+            Access-Control-Max-Age:
+              schema:
+                type: integer
+                example: 3600
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: API key for authentication. Contact your administrator to obtain an API key.
+
+  schemas:
+    QueryResponse:
+      type: object
+      required:
+        - item_id
+        - item_name
+        - date_range
+        - statistics
+        - profitability_score
+        - price_trend
+        - correlation_id
+      properties:
+        item_id:
+          type: integer
+          description: Unique identifier for the item
+          example: 1001
+        item_name:
+          type: string
+          description: Display name of the item
+          example: "Black Stone (Weapon)"
+        date_range:
+          type: object
+          description: Date range of the query
+          required:
+            - start
+            - end
+          properties:
+            start:
+              type: string
+              format: date-time
+              description: Start of the date range (ISO 8601)
+              example: "2024-01-01T00:00:00Z"
+            end:
+              type: string
+              format: date-time
+              description: End of the date range (ISO 8601)
+              example: "2024-01-31T23:59:59Z"
+        statistics:
+          type: object
+          description: Computed statistics for the queried data
+          required:
+            - avg_last_sold_price
+            - min_last_sold_price
+            - max_last_sold_price
+            - avg_current_stock
+            - total_trades_sum
+          properties:
+            avg_last_sold_price:
+              type: number
+              format: double
+              description: Average last sold price across all records
+              example: 14850.50
+            min_last_sold_price:
+              type: integer
+              description: Minimum last sold price in the date range
+              example: 14000
+            max_last_sold_price:
+              type: integer
+              description: Maximum last sold price in the date range
+              example: 16000
+            avg_current_stock:
+              type: number
+              format: double
+              description: Average current stock across all records
+              example: 48.5
+            total_trades_sum:
+              type: integer
+              description: Sum of total trades across all records
+              example: 123400
+        profitability_score:
+          type: number
+          format: double
+          description: Computed profitability score (0.0 to 1.0) based on price trends and trade volume
+          minimum: 0.0
+          maximum: 1.0
+          example: 0.85
+        price_trend:
+          type: string
+          description: Overall price trend during the date range
+          enum:
+            - increasing
+            - decreasing
+            - stable
+          example: "increasing"
+        correlation_id:
+          type: string
+          format: uuid
+          description: Unique identifier for request tracing
+          example: "550e8400-e29b-41d4-a716-446655440000"
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - correlation_id
+            - timestamp
+          properties:
+            code:
+              type: string
+              description: Machine-readable error code
+              enum:
+                - VALIDATION_ERROR
+                - AUTHENTICATION_ERROR
+                - RATE_LIMIT_EXCEEDED
+                - EXTERNAL_API_ERROR
+                - DATABASE_ERROR
+                - INTERNAL_ERROR
+              example: "VALIDATION_ERROR"
+            message:
+              type: string
+              description: Human-readable error message
+              example: "Invalid query parameters"
+            details:
+              type: object
+              description: Additional error details (field-specific validation errors, etc.)
+              additionalProperties: true
+              example:
+                item_id: "must be a positive integer"
+                end_date: "must be after start_date"
+            correlation_id:
+              type: string
+              format: uuid
+              description: Unique identifier for request tracing
+              example: "550e8400-e29b-41d4-a716-446655440000"
+            timestamp:
+              type: string
+              format: date-time
+              description: Timestamp when the error occurred (ISO 8601)
+              example: "2024-01-15T10:30:00Z"

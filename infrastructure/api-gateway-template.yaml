@@ -39,6 +39,106 @@ Resources:
             Action: 'execute-api:Invoke'
             Resource: '*'
 
+  # S3 Bucket for OpenAPI spec and Swagger UI
+  APIDocsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'bdo-api-docs-${Environment}-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - '*'
+            AllowedMethods:
+              - GET
+              - HEAD
+            AllowedHeaders:
+              - '*'
+            MaxAge: 3600
+
+  # S3 Bucket Policy for public read access
+  APIDocsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref APIDocsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub '${APIDocsBucket.Arn}/*'
+
+  # API Gateway Resource: /docs
+  DocsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref BDOMarketInsightsAPI
+      ParentId: !GetAtt BDOMarketInsightsAPI.RootResourceId
+      PathPart: docs
+
+  # GET Method for /docs (redirects to Swagger UI)
+  DocsGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref BDOMarketInsightsAPI
+      ResourceId: !Ref DocsResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      Integration:
+        Type: HTTP
+        IntegrationHttpMethod: GET
+        Uri: !Sub 'http://${APIDocsBucket}.s3-website-${AWS::Region}.amazonaws.com/index.html'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Content-Type: "'text/html'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Content-Type: true
+
+  # API Gateway Resource: /openapi.yaml
+  OpenAPIResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref BDOMarketInsightsAPI
+      ParentId: !GetAtt BDOMarketInsightsAPI.RootResourceId
+      PathPart: openapi.yaml
+
+  # GET Method for /openapi.yaml
+  OpenAPIGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref BDOMarketInsightsAPI
+      ResourceId: !Ref OpenAPIResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      Integration:
+        Type: HTTP
+        IntegrationHttpMethod: GET
+        Uri: !Sub 'http://${APIDocsBucket}.s3-website-${AWS::Region}.amazonaws.com/openapi.yaml'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Content-Type: "'application/x-yaml'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Content-Type: true
+            method.response.header.Access-Control-Allow-Origin: true
+
   # API Gateway Resource: /query
   QueryResource:
     Type: AWS::ApiGateway::Resource
@@ -254,6 +354,8 @@ Resources:
     DependsOn:
       - QueryGetMethod
       - QueryOptionsMethod
+      - DocsGetMethod
+      - OpenAPIGetMethod
     Properties:
       RestApiId: !Ref BDOMarketInsightsAPI
       Description: !Sub 'Deployment for ${Environment} environment'
@@ -375,6 +477,24 @@ Outputs:
     Value: !Sub 'https://${BDOMarketInsightsAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
     Export:
       Name: !Sub 'bdo-api-endpoint-${Environment}'
+
+  APIDocsURL:
+    Description: API documentation URL (Swagger UI)
+    Value: !Sub 'https://${BDOMarketInsightsAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/docs'
+    Export:
+      Name: !Sub 'bdo-api-docs-url-${Environment}'
+
+  OpenAPISpecURL:
+    Description: OpenAPI specification URL
+    Value: !Sub 'https://${BDOMarketInsightsAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/openapi.yaml'
+    Export:
+      Name: !Sub 'bdo-openapi-spec-url-${Environment}'
+
+  APIDocsBucketName:
+    Description: S3 bucket name for API documentation
+    Value: !Ref APIDocsBucket
+    Export:
+      Name: !Sub 'bdo-api-docs-bucket-${Environment}'
 
   APIKey:
     Description: API Key ID

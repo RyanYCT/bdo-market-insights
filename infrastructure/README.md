@@ -90,6 +90,16 @@ aws apigateway get-api-key \
 
 ## API Configuration
 
+### API Documentation
+
+The API provides interactive documentation through Swagger UI and an OpenAPI 3.0 specification.
+
+**Documentation Endpoints:**
+- **Swagger UI**: `GET /docs` - Interactive API documentation (no API key required)
+- **OpenAPI Spec**: `GET /openapi.yaml` - Machine-readable API specification (no API key required)
+
+For detailed information on deploying and managing API documentation, see [API_DOCUMENTATION_README.md](API_DOCUMENTATION_README.md).
+
 ### Rate Limiting
 
 The API is configured with the following rate limits per API key:

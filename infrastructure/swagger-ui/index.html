@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BDO Market Insights API Documentation</title>
+    <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5.10.5/swagger-ui.css">
+    <style>
+        html {
+            box-sizing: border-box;
+            overflow: -moz-scrollbars-vertical;
+            overflow-y: scroll;
+        }
+
+        *,
+        *:before,
+        *:after {
+            box-sizing: inherit;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+
+        .topbar {
+            background-color: #1b1b1b;
+            padding: 10px 0;
+        }
+
+        .topbar-wrapper {
+            max-width: 1460px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        .topbar-wrapper .link {
+            color: #fff;
+            font-size: 1.5em;
+            font-weight: bold;
+            text-decoration: none;
+        }
+
+        .swagger-ui .topbar {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <div class="topbar-wrapper">
+            <a class="link" href="#">BDO Market Insights API</a>
+        </div>
+    </div>
+
+    <div id="swagger-ui"></div>
+
+    <script src="https://unpkg.com/swagger-ui-dist@5.10.5/swagger-ui-bundle.js"></script>
+    <script src="https://unpkg.com/swagger-ui-dist@5.10.5/swagger-ui-standalone-preset.js"></script>
+    <script>
+        window.onload = function() {
+            // Determine the OpenAPI spec URL based on current location
+            const currentUrl = window.location.href;
+            let openapiUrl;
+            
+            // If running locally, use a default spec URL
+            if (currentUrl.includes('localhost') || currentUrl.includes('127.0.0.1')) {
+                openapiUrl = './openapi.yaml';
+            } else {
+                // Extract the base URL and construct the OpenAPI spec URL
+                const baseUrl = currentUrl.split('/docs')[0];
+                openapiUrl = baseUrl + '/openapi.yaml';
+            }
+
+            // Initialize Swagger UI
+            const ui = SwaggerUIBundle({
+                url: openapiUrl,
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                plugins: [
+                    SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "StandaloneLayout",
+                defaultModelsExpandDepth: 1,
+                defaultModelExpandDepth: 1,
+                docExpansion: "list",
+                filter: true,
+                showRequestHeaders: true,
+                showCommonExtensions: true,
+                tryItOutEnabled: true,
+                persistAuthorization: true,
+                displayRequestDuration: true,
+                requestInterceptor: (request) => {
+                    // Add API key from localStorage if available
+                    const apiKey = localStorage.getItem('bdo-api-key');
+                    if (apiKey) {
+                        request.headers['x-api-key'] = apiKey;
+                    }
+                    return request;
+                },
+                onComplete: () => {
+                    // Add API key input field
+                    addApiKeyInput();
+                }
+            });
+
+            window.ui = ui;
+
+            // Function to add API key input field
+            function addApiKeyInput() {
+                const infoContainer = document.querySelector('.information-container');
+                if (infoContainer && !document.getElementById('api-key-input-container')) {
+                    const apiKeyContainer = document.createElement('div');
+                    apiKeyContainer.id = 'api-key-input-container';
+                    apiKeyContainer.style.cssText = 'margin: 20px 0; padding: 15px; background-color: #f7f7f7; border-radius: 4px; border: 1px solid #ddd;';
+                    
+                    const savedApiKey = localStorage.getItem('bdo-api-key') || '';
+                    
+                    apiKeyContainer.innerHTML = `
+                        <div style="margin-bottom: 10px;">
+                            <strong>API Key Configuration</strong>
+                            <p style="margin: 5px 0; color: #666; font-size: 0.9em;">
+                                Enter your API key to test the endpoints. The key will be stored in your browser's local storage.
+                            </p>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <input 
+                                type="text" 
+                                id="api-key-input" 
+                                placeholder="Enter your API key" 
+                                value="${savedApiKey}"
+                                style="flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-family: monospace;"
+                            />
+                            <button 
+                                id="save-api-key-btn" 
+                                style="padding: 8px 16px; background-color: #4990e2; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;"
+                            >
+                                Save
+                            </button>
+                            <button 
+                                id="clear-api-key-btn" 
+                                style="padding: 8px 16px; background-color: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;"
+                            >
+                                Clear
+                            </button>
+                        </div>
+                        <div id="api-key-status" style="margin-top: 10px; font-size: 0.9em;"></div>
+                    `;
+                    
+                    infoContainer.appendChild(apiKeyContainer);
+                    
+                    // Add event listeners
+                    document.getElementById('save-api-key-btn').addEventListener('click', () => {
+                        const apiKey = document.getElementById('api-key-input').value.trim();
+                        if (apiKey) {
+                            localStorage.setItem('bdo-api-key', apiKey);
+                            showStatus('API key saved successfully!', 'success');
+                        } else {
+                            showStatus('Please enter an API key', 'error');
+                        }
+                    });
+                    
+                    document.getElementById('clear-api-key-btn').addEventListener('click', () => {
+                        localStorage.removeItem('bdo-api-key');
+                        document.getElementById('api-key-input').value = '';
+                        showStatus('API key cleared', 'info');
+                    });
+                    
+                    // Show initial status if API key is saved
+                    if (savedApiKey) {
+                        showStatus('API key loaded from storage', 'success');
+                    }
+                }
+            }
+            
+            function showStatus(message, type) {
+                const statusDiv = document.getElementById('api-key-status');
+                const colors = {
+                    success: '#28a745',
+                    error: '#dc3545',
+                    info: '#17a2b8'
+                };
+                statusDiv.style.color = colors[type] || colors.info;
+                statusDiv.textContent = message;
+                
+                // Clear status after 3 seconds
+                setTimeout(() => {
+                    statusDiv.textContent = '';
+                }, 3000);
+            }
+        };
+    </script>
+</body>
+</html>

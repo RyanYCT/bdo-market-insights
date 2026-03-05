@@ -243,8 +243,8 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
   - Set up SNS topic for alarm notifications
   - _Requirements: 11.4_
 
-- [ ] 20. Implement API documentation
-  - [ ] 20.1 Create OpenAPI 3.0 specification
+- [x] 20. Implement API documentation
+  - [x] 20.1 Create OpenAPI 3.0 specification
     - Define all query endpoints with GET method
     - Include request parameter schemas
     - Include response schemas for success and errors
@@ -252,7 +252,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Add example requests and responses
     - _Requirements: 12.1, 12.2, 12.5_
   
-  - [ ] 20.2 Set up Swagger UI endpoint
+  - [x] 20.2 Set up Swagger UI endpoint
     - Configure API Gateway to serve OpenAPI spec
     - Deploy Swagger UI for interactive documentation
     - _Requirements: 12.3, 12.4_
