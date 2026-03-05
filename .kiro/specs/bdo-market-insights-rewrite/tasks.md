@@ -281,8 +281,8 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Test S3 archival
     - Test deletion logic
 
-- [ ] 22. Implement configuration management
-  - [ ] 22.1 Create central configuration module
+- [x] 22. Implement configuration management
+  - [x] 22.1 Create central configuration module
     - Define all configurable parameters with defaults
     - Load configuration from environment variables
     - Validate configuration values against constraints
@@ -290,7 +290,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Document all parameters with descriptions and valid ranges
     - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5_
   
-  - [ ] 22.2 Write property tests for configuration
+  - [x] 22.2 Write property tests for configuration
     - **Property 21: Configuration validation and defaults**
     - **Validates: Requirements 14.3, 14.4**
 
