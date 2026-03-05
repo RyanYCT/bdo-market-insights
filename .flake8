@@ -1,0 +1,42 @@
+[flake8]
+# Flake8 configuration for BDO Market Insights
+
+# Maximum line length
+max-line-length = 127
+
+# Maximum complexity
+max-complexity = 10
+
+# Exclude patterns
+exclude =
+    .git,
+    __pycache__,
+    .pytest_cache,
+    .hypothesis,
+    .venv,
+    venv,
+    env,
+    build,
+    dist,
+    *.egg-info,
+    .aws-sam,
+    node_modules,
+    infrastructure/swagger-ui
+
+# Ignore specific error codes
+ignore =
+    E203,  # Whitespace before ':' (conflicts with black)
+    E501,  # Line too long (handled by black)
+    W503,  # Line break before binary operator (conflicts with black)
+
+# Error codes to always check
+select = E,F,W,C
+
+# Show source code for errors
+show-source = True
+
+# Show statistics
+statistics = True
+
+# Count errors
+count = True

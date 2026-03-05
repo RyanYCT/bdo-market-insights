@@ -1,0 +1,457 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.11'
+  AWS_REGION: us-east-1
+  HYPOTHESIS_PROFILE: ci
+
+jobs:
+  # Job 1: Code Quality and Linting
+  lint:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      
+      - name: Run Black (code formatting check)
+        run: |
+          black --check --diff .
+        continue-on-error: false
+      
+      - name: Run Flake8 (linting)
+        run: |
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        continue-on-error: false
+      
+      - name: Run MyPy (type checking)
+        run: |
+          mypy lambda_layer/python/common/ --ignore-missing-imports
+          mypy retrieveIdList/lambda_function.py --ignore-missing-imports
+          mypy fetchData/lambda_function.py --ignore-missing-imports
+          mypy cleanData/lambda_function.py --ignore-missing-imports
+          mypy storeData/lambda_function.py --ignore-missing-imports
+          mypy queryData/lambda_function.py --ignore-missing-imports
+          mypy analyzeData/lambda_function.py --ignore-missing-imports
+          mypy retainData/lambda_function.py --ignore-missing-imports
+        continue-on-error: false
+      
+      - name: Run Bandit (security scan)
+        run: |
+          bandit -r lambda_layer/python/common/ -ll
+          bandit -r retrieveIdList/ -ll
+          bandit -r fetchData/ -ll
+          bandit -r cleanData/ -ll
+          bandit -r storeData/ -ll
+          bandit -r queryData/ -ll
+          bandit -r analyzeData/ -ll
+          bandit -r retainData/ -ll
+        continue-on-error: false
+
+  # Job 2: Unit Tests
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      
+      - name: Run unit tests with coverage
+        run: |
+          pytest tests/unit/ \
+            --cov=lambda_layer/python/common \
+            --cov=retrieveIdList \
+            --cov=fetchData \
+            --cov=cleanData \
+            --cov=storeData \
+            --cov=queryData \
+            --cov=analyzeData \
+            --cov=retainData \
+            --cov-report=xml \
+            --cov-report=term \
+            --cov-report=html \
+            --cov-fail-under=80 \
+            -v
+      
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+        continue-on-error: true
+      
+      - name: Archive coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: htmlcov/
+
+  # Job 3: Property-Based Tests
+  property-tests:
+    name: Property-Based Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      
+      - name: Run property-based tests (100+ iterations)
+        run: |
+          pytest tests/property/ \
+            --hypothesis-show-statistics \
+            --hypothesis-seed=random \
+            -v
+        env:
+          HYPOTHESIS_PROFILE: ci
+
+  # Job 4: Integration Tests
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [unit-tests, property-tests]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      
+      - name: Run integration tests
+        run: |
+          pytest tests/integration/ -v
+
+  # Job 5: Deploy Lambda Layer
+  deploy-lambda-layer:
+    name: Deploy Lambda Layer
+    runs-on: ubuntu-latest
+    needs: [unit-tests, property-tests, integration-tests]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      
+      - name: Build Lambda Layer
+        run: |
+          cd lambda_layer
+          pip install -r requirements.txt -t python/
+          zip -r lambda-layer.zip python/
+      
+      - name: Publish Lambda Layer
+        id: publish-layer
+        run: |
+          LAYER_VERSION=$(aws lambda publish-layer-version \
+            --layer-name bdo-market-insights-common \
+            --description "Common utilities for BDO Market Insights" \
+            --zip-file fileb://lambda_layer/lambda-layer.zip \
+            --compatible-runtimes python3.11 \
+            --query 'Version' \
+            --output text)
+          echo "layer_version=$LAYER_VERSION" >> $GITHUB_OUTPUT
+          echo "Published Lambda Layer version: $LAYER_VERSION"
+      
+      - name: Save layer version
+        run: |
+          echo "${{ steps.publish-layer.outputs.layer_version }}" > layer-version.txt
+      
+      - name: Upload layer version artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: layer-version
+          path: layer-version.txt
+
+  # Job 6: Deploy Lambda Functions (Blue-Green)
+  deploy-lambda-functions:
+    name: Deploy Lambda Functions
+    runs-on: ubuntu-latest
+    needs: deploy-lambda-layer
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    strategy:
+      matrix:
+        function: 
+          - retrieveIdList
+          - fetchData
+          - cleanData
+          - storeData
+          - queryData
+          - analyzeData
+          - retainData
+      fail-fast: false
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      
+      - name: Download layer version
+        uses: actions/download-artifact@v4
+        with:
+          name: layer-version
+      
+      - name: Build deployment package
+        run: |
+          cd ${{ matrix.function }}
+          mkdir -p ../build
+          cp lambda_function.py ../build/
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt -t ../build/
+          fi
+          cd ../build
+          zip -qr ../${{ matrix.function }}.zip .
+      
+      - name: Get current function configuration
+        id: current-config
+        run: |
+          CURRENT_VERSION=$(aws lambda get-function \
+            --function-name ${{ matrix.function }} \
+            --query 'Configuration.Version' \
+            --output text)
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Update Lambda function code
+        id: update-function
+        run: |
+          LAYER_VERSION=$(cat layer-version.txt)
+          LAYER_ARN="arn:aws:lambda:${{ secrets.AWS_REGION }}:${{ secrets.AWS_ACCOUNT_ID }}:layer:bdo-market-insights-common:$LAYER_VERSION"
+          
+          aws lambda update-function-code \
+            --function-name ${{ matrix.function }} \
+            --zip-file fileb://${{ matrix.function }}.zip \
+            --publish
+          
+          # Wait for update to complete
+          aws lambda wait function-updated \
+            --function-name ${{ matrix.function }}
+          
+          # Update layer configuration
+          aws lambda update-function-configuration \
+            --function-name ${{ matrix.function }} \
+            --layers "$LAYER_ARN"
+          
+          # Wait for configuration update
+          aws lambda wait function-updated \
+            --function-name ${{ matrix.function }}
+          
+          NEW_VERSION=$(aws lambda get-function \
+            --function-name ${{ matrix.function }} \
+            --query 'Configuration.Version' \
+            --output text)
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Create alias for blue-green deployment
+        run: |
+          # Update or create 'live' alias pointing to new version
+          aws lambda update-alias \
+            --function-name ${{ matrix.function }} \
+            --name live \
+            --function-version ${{ steps.update-function.outputs.new_version }} \
+            --routing-config AdditionalVersionWeights={} \
+            || aws lambda create-alias \
+              --function-name ${{ matrix.function }} \
+              --name live \
+              --function-version ${{ steps.update-function.outputs.new_version }}
+      
+      - name: Smoke test Lambda function
+        id: smoke-test
+        run: |
+          # Invoke function with test event
+          aws lambda invoke \
+            --function-name ${{ matrix.function }}:live \
+            --payload '{"test": true}' \
+            --log-type Tail \
+            response.json || echo "smoke_test_failed=true" >> $GITHUB_OUTPUT
+          
+          cat response.json
+        continue-on-error: true
+      
+      - name: Rollback on failure
+        if: steps.smoke-test.outputs.smoke_test_failed == 'true'
+        run: |
+          echo "Smoke test failed, rolling back to version ${{ steps.current-config.outputs.current_version }}"
+          aws lambda update-alias \
+            --function-name ${{ matrix.function }} \
+            --name live \
+            --function-version ${{ steps.current-config.outputs.current_version }}
+          exit 1
+
+  # Job 7: Update Step Functions State Machine
+  deploy-step-functions:
+    name: Deploy Step Functions
+    runs-on: ubuntu-latest
+    needs: deploy-lambda-functions
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      
+      - name: Update state machine definition
+        run: |
+          # Replace placeholders in state machine definition
+          sed -i "s/REGION/${{ secrets.AWS_REGION }}/g" infrastructure/step-functions-state-machine.json
+          sed -i "s/ACCOUNT/${{ secrets.AWS_ACCOUNT_ID }}/g" infrastructure/step-functions-state-machine.json
+          
+          # Update state machine
+          aws stepfunctions update-state-machine \
+            --state-machine-arn arn:aws:states:${{ secrets.AWS_REGION }}:${{ secrets.AWS_ACCOUNT_ID }}:stateMachine:bdo-market-insights-query \
+            --definition file://infrastructure/step-functions-state-machine.json
+
+  # Job 8: Update API Gateway
+  deploy-api-gateway:
+    name: Deploy API Gateway
+    runs-on: ubuntu-latest
+    needs: deploy-step-functions
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      
+      - name: Deploy API Gateway using CloudFormation
+        run: |
+          aws cloudformation deploy \
+            --template-file infrastructure/api-gateway-template.yaml \
+            --stack-name bdo-market-insights-api \
+            --parameter-overrides \
+              StateMachineArn=arn:aws:states:${{ secrets.AWS_REGION }}:${{ secrets.AWS_ACCOUNT_ID }}:stateMachine:bdo-market-insights-query \
+            --capabilities CAPABILITY_IAM \
+            --no-fail-on-empty-changeset
+      
+      - name: Create API deployment
+        run: |
+          API_ID=$(aws cloudformation describe-stacks \
+            --stack-name bdo-market-insights-api \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiId`].OutputValue' \
+            --output text)
+          
+          aws apigateway create-deployment \
+            --rest-api-id $API_ID \
+            --stage-name prod \
+            --description "Deployment from GitHub Actions"
+
+  # Job 9: Send Deployment Notification
+  notify:
+    name: Send Deployment Notification
+    runs-on: ubuntu-latest
+    needs: [deploy-lambda-functions, deploy-step-functions, deploy-api-gateway]
+    if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: Determine deployment status
+        id: status
+        run: |
+          if [ "${{ needs.deploy-lambda-functions.result }}" == "success" ] && \
+             [ "${{ needs.deploy-step-functions.result }}" == "success" ] && \
+             [ "${{ needs.deploy-api-gateway.result }}" == "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "message=Deployment completed successfully" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "message=Deployment failed - check logs for details" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Send notification
+        run: |
+          echo "Deployment Status: ${{ steps.status.outputs.status }}"
+          echo "Message: ${{ steps.status.outputs.message }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Author: ${{ github.actor }}"
+          # Add your notification service here (Slack, email, etc.)
+          # Example for Slack webhook:
+          # curl -X POST -H 'Content-type: application/json' \
+          #   --data '{"text":"${{ steps.status.outputs.message }}"}' \
+          #   ${{ secrets.SLACK_WEBHOOK_URL }}

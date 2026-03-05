@@ -323,8 +323,8 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Verify analysis results are accurate
     - _Requirements: 13.5_
 
-- [ ] 25. Set up CI/CD pipeline
-  - [ ] 25.1 Create GitHub Actions workflow
+- [x] 25. Set up CI/CD pipeline
+  - [x] 25.1 Create GitHub Actions workflow
     - Configure linting (flake8, black, mypy)
     - Configure unit test execution with coverage
     - Configure property test execution (100+ iterations)
@@ -333,7 +333,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Run security scan (bandit)
     - _Requirements: 13.1, 13.4, 13.6, 17.1_
   
-  - [ ] 25.2 Configure deployment automation
+  - [x] 25.2 Configure deployment automation
     - Deploy Lambda Layer on successful tests
     - Deploy Lambda functions with blue-green deployment
     - Update Step Functions state machine

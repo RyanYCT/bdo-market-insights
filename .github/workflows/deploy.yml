@@ -1,52 +1,48 @@
-name: Deploy Lambda Functions
+# DEPRECATED: This workflow has been replaced by ci-cd.yml
+# 
+# The new CI/CD pipeline includes:
+# - Comprehensive testing (unit, property-based, integration)
+# - Code quality checks (linting, type checking, security scanning)
+# - Blue-green deployment with automatic rollback
+# - Lambda Layer deployment
+# - Step Functions and API Gateway deployment
+# - Deployment notifications
+#
+# Please use .github/workflows/ci-cd.yml instead
+#
+# This file is kept for reference only and will be removed in a future release.
+
+name: Deploy Lambda Functions (DEPRECATED)
 
 on:
-  push:
-    branches:
-      - main
-
-  pull_request:
-    branches:
-      - main
-
+  # Disabled - use ci-cd.yml instead
   workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'This workflow is deprecated. Use ci-cd.yml instead. Type "confirm" to proceed anyway.'
+        required: true
+        default: ''
 
 jobs:
-  deploy:
+  deprecated-warning:
     runs-on: ubuntu-latest
-
-    # Discover every directory that contains a lambda_function.py
-    strategy:
-      matrix:
-        dir: [testDatabaseConnection, retrieveIdList, fetchData, cleanData, storeData, queryData, analyzeData]
-      fail-fast: false
-
+    
     steps:
-    # Pull the commit that triggered the workflow
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION }}
-
-    # Build a deployment package for the current lambda in the matrix
-    - name: Install dependencies and package ${{ matrix.dir }}
-      working-directory: ${{ matrix.dir }}
+    - name: Show deprecation warning
       run: |
-        echo "Working in: $(pwd)"
-        mkdir -p ../build
-        cp lambda_function.py ../build/
-        cd ../build
-        zip -qr ../${{ matrix.dir }}.zip .
-
-    # Update the code in AWS Lambda
-    - name: Update Lambda function code
-      run: |
-        aws lambda update-function-code \
-          --function-name ${{ matrix.dir }} \
-          --zip-file fileb://${{ matrix.dir }}.zip \
-          --publish
+        echo "=========================================="
+        echo "WARNING: This workflow is DEPRECATED"
+        echo "=========================================="
+        echo ""
+        echo "Please use the new CI/CD pipeline instead:"
+        echo "  .github/workflows/ci-cd.yml"
+        echo ""
+        echo "The new pipeline includes:"
+        echo "  - Comprehensive testing"
+        echo "  - Code quality checks"
+        echo "  - Blue-green deployment"
+        echo "  - Automatic rollback"
+        echo "  - Full infrastructure deployment"
+        echo ""
+        echo "=========================================="
+        exit 1

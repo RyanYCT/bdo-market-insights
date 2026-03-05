@@ -1,0 +1,161 @@
+name: Pull Request Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+
+env:
+  PYTHON_VERSION: '3.11'
+  HYPOTHESIS_PROFILE: ci
+
+jobs:
+  # Job 1: Code Quality
+  lint:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      
+      - name: Run Black
+        run: black --check --diff .
+      
+      - name: Run Flake8
+        run: flake8 .
+      
+      - name: Run MyPy
+        run: |
+          mypy lambda_layer/python/common/ --ignore-missing-imports
+          mypy retrieveIdList/lambda_function.py --ignore-missing-imports
+          mypy fetchData/lambda_function.py --ignore-missing-imports
+          mypy cleanData/lambda_function.py --ignore-missing-imports
+          mypy storeData/lambda_function.py --ignore-missing-imports
+          mypy queryData/lambda_function.py --ignore-missing-imports
+          mypy analyzeData/lambda_function.py --ignore-missing-imports
+          mypy retainData/lambda_function.py --ignore-missing-imports
+      
+      - name: Run Bandit
+        run: |
+          bandit -r lambda_layer/python/common/ -ll
+          bandit -r retrieveIdList/ -ll
+          bandit -r fetchData/ -ll
+          bandit -r cleanData/ -ll
+          bandit -r storeData/ -ll
+          bandit -r queryData/ -ll
+          bandit -r analyzeData/ -ll
+          bandit -r retainData/ -ll
+
+  # Job 2: Tests
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      
+      - name: Run unit tests
+        run: |
+          pytest tests/unit/ \
+            --cov=lambda_layer/python/common \
+            --cov=retrieveIdList \
+            --cov=fetchData \
+            --cov=cleanData \
+            --cov=storeData \
+            --cov=queryData \
+            --cov=analyzeData \
+            --cov=retainData \
+            --cov-report=xml \
+            --cov-report=term \
+            --cov-fail-under=80 \
+            -v
+      
+      - name: Run property-based tests
+        run: |
+          pytest tests/property/ \
+            --hypothesis-show-statistics \
+            -v
+      
+      - name: Run integration tests
+        run: |
+          pytest tests/integration/ -v
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: ./coverage.xml
+          flags: unittests
+        continue-on-error: true
+
+  # Job 3: PR Comment with Results
+  comment:
+    name: Comment Results
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    if: always()
+    
+    steps:
+      - name: Determine status
+        id: status
+        run: |
+          if [ "${{ needs.lint.result }}" == "success" ] && [ "${{ needs.test.result }}" == "success" ]; then
+            echo "status=✅ All checks passed!" >> $GITHUB_OUTPUT
+            echo "color=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=❌ Some checks failed" >> $GITHUB_OUTPUT
+            echo "color=failure" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Comment PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ steps.status.outputs.status }}';
+            const lintResult = '${{ needs.lint.result }}';
+            const testResult = '${{ needs.test.result }}';
+            
+            const body = `## PR Validation Results
+            
+            ${status}
+            
+            | Check | Status |
+            |-------|--------|
+            | Code Quality | ${lintResult === 'success' ? '✅' : '❌'} |
+            | Tests | ${testResult === 'success' ? '✅' : '❌'} |
+            
+            ${lintResult !== 'success' || testResult !== 'success' ? '⚠️ Please fix the failing checks before merging.' : ''}
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
