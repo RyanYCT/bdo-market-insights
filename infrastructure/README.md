@@ -88,6 +88,16 @@ aws apigateway get-api-key \
   --output text
 ```
 
+## Related Infrastructure
+
+This directory contains multiple infrastructure components for the BDO Market Insights system:
+
+- **API Gateway**: RESTful API endpoints for querying market data (this document)
+- **Step Functions**: Query pipeline orchestration - see [STEP_FUNCTIONS_README.md](STEP_FUNCTIONS_README.md)
+- **CloudWatch Alarms**: System-wide monitoring and alerting - see [CLOUDWATCH_ALARMS_README.md](CLOUDWATCH_ALARMS_README.md)
+- **Data Retention**: Automated data lifecycle management - see [RETENTION_SCHEDULE_README.md](RETENTION_SCHEDULE_README.md)
+- **API Documentation**: OpenAPI specification and Swagger UI - see [API_DOCUMENTATION_README.md](API_DOCUMENTATION_README.md)
+
 ## API Configuration
 
 ### API Documentation

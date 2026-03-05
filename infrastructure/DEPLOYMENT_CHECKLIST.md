@@ -136,6 +136,31 @@ aws events put-targets \
 - [ ] Lambda target configured
 - [ ] Lambda permission granted to EventBridge
 
+### 6. Data Retention Schedule
+
+```bash
+# Get retainData Lambda ARN
+RETAIN_DATA_ARN=$(aws lambda get-function \
+  --function-name retainData-dev \
+  --query 'Configuration.FunctionArn' \
+  --output text)
+
+# Deploy retention schedule
+cd infrastructure
+./deploy-retention-schedule.sh dev "$RETAIN_DATA_ARN"
+
+# Or on Windows
+deploy-retention-schedule.bat dev "%RETAIN_DATA_ARN%"
+```
+
+- [ ] S3 archive bucket created
+- [ ] Glacier lifecycle policy configured
+- [ ] IAM role for retainData Lambda created
+- [ ] EventBridge Scheduler created (monthly execution)
+- [ ] Lambda environment variables updated with bucket name
+- [ ] CloudWatch alarms for retention process created
+- [ ] Lambda permission granted to EventBridge Scheduler
+
 ## Post-Deployment Verification
 
 ### 1. API Gateway Testing
@@ -226,6 +251,41 @@ SELECT COUNT(*) FROM market_data WHERE scrape_id IN (
 - [ ] Item records created
 - [ ] MarketData records inserted
 - [ ] Indexes present and used
+
+### 6. Data Retention Testing
+
+```bash
+# Manually trigger retention Lambda
+aws lambda invoke \
+  --function-name retainData-dev \
+  --payload '{
+    "source": "manual-test",
+    "environment": "dev",
+    "retention_config": {
+      "retention_detailed_days": 90,
+      "retention_summary_days": 730
+    }
+  }' \
+  response.json
+
+cat response.json
+
+# Verify S3 archive bucket
+BUCKET_NAME=$(aws cloudformation describe-stacks \
+  --stack-name bdo-retention-schedule-dev \
+  --query 'Stacks[0].Outputs[?OutputKey==`ArchiveBucketName`].OutputValue' \
+  --output text)
+
+aws s3 ls "s3://${BUCKET_NAME}/archives/" --recursive
+```
+
+- [ ] Retention Lambda executes successfully
+- [ ] Old records aggregated into summaries
+- [ ] Aggregated records deleted from source table
+- [ ] Old summaries archived to S3 Glacier
+- [ ] Archived summaries deleted from database
+- [ ] CloudWatch metrics emitted
+- [ ] Retention alarms in OK state
 
 ## Security Verification
 

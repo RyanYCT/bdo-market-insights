@@ -1,0 +1,324 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EventBridge Scheduler and IAM permissions for BDO Market Insights Data Retention Lambda
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment name
+  
+  RetainDataFunctionName:
+    Type: String
+    Description: Name of the retainData Lambda function
+    Default: retainData
+  
+  RetainDataFunctionArn:
+    Type: String
+    Description: ARN of the retainData Lambda function
+  
+  ArchiveBucketName:
+    Type: String
+    Description: S3 bucket name for archiving old data
+    Default: bdo-market-insights-archive
+  
+  ScheduleExpression:
+    Type: String
+    Description: EventBridge schedule expression (cron or rate)
+    Default: 'cron(0 2 1 * ? *)'  # 2 AM UTC on the 1st of every month
+  
+  RetentionDetailedDays:
+    Type: Number
+    Description: Days to keep detailed market data before aggregation
+    Default: 90
+    MinValue: 1
+    MaxValue: 365
+  
+  RetentionSummaryDays:
+    Type: Number
+    Description: Days to keep summary data before archiving to Glacier
+    Default: 730
+    MinValue: 1
+    MaxValue: 3650
+
+Resources:
+  # ============================================================================
+  # S3 Bucket for Archives
+  # ============================================================================
+  
+  ArchiveBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ArchiveBucketName}-${Environment}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToGlacier
+            Status: Enabled
+            Prefix: archives/
+            Transitions:
+              - TransitionInDays: 0
+                StorageClass: GLACIER
+          - Id: DeleteOldVersions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 90
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: BDO-Market-Insights
+        - Key: Purpose
+          Value: Data-Retention-Archive
+
+  # ============================================================================
+  # IAM Role for retainData Lambda
+  # ============================================================================
+  
+  RetainDataLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'bdo-retainData-lambda-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        - 'arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess'
+      Policies:
+        - PolicyName: S3GlacierAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                  - 's3:PutObjectAcl'
+                  - 's3:GetObject'
+                  - 's3:GetObjectVersion'
+                  - 's3:ListBucket'
+                Resource:
+                  - !GetAtt ArchiveBucket.Arn
+                  - !Sub '${ArchiveBucket.Arn}/*'
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'secretsmanager:GetSecretValue'
+                  - 'secretsmanager:DescribeSecret'
+                Resource:
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:bdo-db-credentials-*'
+        - PolicyName: CloudWatchMetrics
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'cloudwatch:PutMetricData'
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    'cloudwatch:namespace': 'BDOMarketInsights/Retention'
+        - PolicyName: VPCAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ec2:CreateNetworkInterface'
+                  - 'ec2:DescribeNetworkInterfaces'
+                  - 'ec2:DeleteNetworkInterface'
+                  - 'ec2:AssignPrivateIpAddresses'
+                  - 'ec2:UnassignPrivateIpAddresses'
+                Resource: '*'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: BDO-Market-Insights
+
+  # ============================================================================
+  # EventBridge Scheduler Role
+  # ============================================================================
+  
+  EventBridgeSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'bdo-eventbridge-scheduler-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: InvokeLambda
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'lambda:InvokeFunction'
+                Resource: !Ref RetainDataFunctionArn
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: BDO-Market-Insights
+
+  # ============================================================================
+  # EventBridge Scheduler for Monthly Execution
+  # ============================================================================
+  
+  RetentionSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub 'bdo-retention-schedule-${Environment}'
+      Description: Monthly execution of data retention Lambda for BDO Market Insights
+      State: ENABLED
+      ScheduleExpression: !Ref ScheduleExpression
+      ScheduleExpressionTimezone: UTC
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+      Target:
+        Arn: !Ref RetainDataFunctionArn
+        RoleArn: !GetAtt EventBridgeSchedulerRole.Arn
+        Input: !Sub |
+          {
+            "source": "eventbridge-scheduler",
+            "environment": "${Environment}",
+            "retention_config": {
+              "retention_detailed_days": ${RetentionDetailedDays},
+              "retention_summary_days": ${RetentionSummaryDays}
+            }
+          }
+        RetryPolicy:
+          MaximumRetryAttempts: 2
+          MaximumEventAgeInSeconds: 3600
+
+  # ============================================================================
+  # Lambda Permission for EventBridge Scheduler
+  # ============================================================================
+  
+  RetainDataLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RetainDataFunctionName
+      Action: 'lambda:InvokeFunction'
+      Principal: scheduler.amazonaws.com
+      SourceArn: !GetAtt RetentionSchedule.Arn
+
+  # ============================================================================
+  # CloudWatch Alarms for Retention Lambda
+  # ============================================================================
+  
+  RetentionLambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-retainData-error-${Environment}'
+      AlarmDescription: Alert when retainData Lambda function fails
+      ActionsEnabled: true
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref RetainDataFunctionName
+      TreatMissingData: notBreaching
+
+  RetentionLambdaDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-retainData-duration-${Environment}'
+      AlarmDescription: Alert when retainData Lambda execution time exceeds 10 minutes
+      ActionsEnabled: true
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 600000
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref RetainDataFunctionName
+      TreatMissingData: notBreaching
+
+  RetentionFailureMetricAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-retention-failure-${Environment}'
+      AlarmDescription: Alert when data retention process fails
+      ActionsEnabled: true
+      MetricName: RetentionFailure
+      Namespace: BDOMarketInsights/Retention
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      TreatMissingData: notBreaching
+
+Outputs:
+  ArchiveBucketName:
+    Description: Name of the S3 bucket for data archives
+    Value: !Ref ArchiveBucket
+    Export:
+      Name: !Sub 'bdo-archive-bucket-${Environment}'
+
+  ArchiveBucketArn:
+    Description: ARN of the S3 bucket for data archives
+    Value: !GetAtt ArchiveBucket.Arn
+    Export:
+      Name: !Sub 'bdo-archive-bucket-arn-${Environment}'
+
+  RetainDataLambdaRoleArn:
+    Description: ARN of the IAM role for retainData Lambda
+    Value: !GetAtt RetainDataLambdaRole.Arn
+    Export:
+      Name: !Sub 'bdo-retainData-role-arn-${Environment}'
+
+  EventBridgeSchedulerRoleArn:
+    Description: ARN of the IAM role for EventBridge Scheduler
+    Value: !GetAtt EventBridgeSchedulerRole.Arn
+    Export:
+      Name: !Sub 'bdo-eventbridge-scheduler-role-arn-${Environment}'
+
+  RetentionScheduleName:
+    Description: Name of the EventBridge schedule for data retention
+    Value: !Ref RetentionSchedule
+    Export:
+      Name: !Sub 'bdo-retention-schedule-${Environment}'
+
+  RetentionScheduleArn:
+    Description: ARN of the EventBridge schedule for data retention
+    Value: !GetAtt RetentionSchedule.Arn
+    Export:
+      Name: !Sub 'bdo-retention-schedule-arn-${Environment}'
+

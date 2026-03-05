@@ -294,7 +294,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - **Property 21: Configuration validation and defaults**
     - **Validates: Requirements 14.3, 14.4**
 
-- [ ] 23. Schedule retention Lambda
+- [x] 23. Schedule retention Lambda
   - Configure EventBridge rule for monthly execution
   - Set up IAM permissions for S3 Glacier access
   - _Requirements: 10.5_
