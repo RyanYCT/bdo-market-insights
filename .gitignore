@@ -192,3 +192,44 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Deployment Configuration
+#  NEVER commit actual deployment configuration files with credentials
+#  Only commit .example files as templates
+config/deployment-config.sh
+config/deployment-config.*.sh
+config/*.local.sh
+.env.local
+.env.staging
+.env.production
+
+# AWS Credentials
+#  These should never be in the repository
+.aws/
+aws-credentials.json
+credentials.json
+
+# Deployment Artifacts
+#  Temporary files created during deployment
+lambda_layer/layer-version.txt
+*.zip
+deployment-artifacts/
+response.json
+
+# Secrets and Keys
+#  Any files containing secrets or API keys
+secrets.json
+api-keys.txt
+*.pem
+*.key
+*.crt
+
+# Terraform State (if using Terraform)
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# CloudFormation Outputs
+cloudformation-outputs.json
+stack-outputs.json

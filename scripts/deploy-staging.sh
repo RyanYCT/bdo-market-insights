@@ -19,8 +19,29 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Configuration
-ENVIRONMENT="staging"
+# Load configuration from config file
+CONFIG_FILE="config/deployment-config.sh"
+if [ -f "$CONFIG_FILE" ]; then
+    echo "Loading configuration from $CONFIG_FILE..."
+    source "$CONFIG_FILE"
+else
+    echo -e "${YELLOW}WARNING: $CONFIG_FILE not found${NC}"
+    echo "Using environment variables or defaults..."
+    echo ""
+    echo "To create a configuration file:"
+    echo "  1. cp config/deployment-config.example.sh config/deployment-config.sh"
+    echo "  2. Edit config/deployment-config.sh with your settings"
+    echo "  3. Run this script again"
+    echo ""
+    read -p "Continue with environment variables? (y/n) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+fi
+
+# Configuration (with fallbacks to environment variables)
+ENVIRONMENT="${ENVIRONMENT:-staging}"
 REGION="${AWS_REGION:-us-east-1}"
 ACCOUNT_ID="${AWS_ACCOUNT_ID}"
 
