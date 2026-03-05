@@ -189,6 +189,8 @@ The following alarms are configured:
 2. **API 4XX Rate**: Triggers when 4XX errors exceed 50 over 10 minutes
 3. **API Latency**: Triggers when p95 latency exceeds 2 seconds over 10 minutes
 
+For comprehensive system-wide alarms including Lambda error rates, database connection pool monitoring, and External API health, see [CLOUDWATCH_ALARMS_README.md](CLOUDWATCH_ALARMS_README.md).
+
 ### X-Ray Tracing
 
 X-Ray tracing is enabled for all API requests. Traces include:

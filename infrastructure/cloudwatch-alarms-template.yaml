@@ -1,0 +1,511 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudWatch Alarms for BDO Market Insights Monitoring
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment name
+  
+  AlarmEmailAddress:
+    Type: String
+    Description: Email address to receive alarm notifications
+    Default: ''
+  
+  RetrieveIdListFunctionName:
+    Type: String
+    Description: Name of the retrieveIdList Lambda function
+    Default: retrieveIdList
+  
+  FetchDataFunctionName:
+    Type: String
+    Description: Name of the fetchData Lambda function
+    Default: fetchData
+  
+  CleanDataFunctionName:
+    Type: String
+    Description: Name of the cleanData Lambda function
+    Default: cleanData
+  
+  StoreDataFunctionName:
+    Type: String
+    Description: Name of the storeData Lambda function
+    Default: storeData
+  
+  QueryDataFunctionName:
+    Type: String
+    Description: Name of the queryData Lambda function
+    Default: queryData
+  
+  AnalyzeDataFunctionName:
+    Type: String
+    Description: Name of the analyzeData Lambda function
+    Default: analyzeData
+
+Conditions:
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmailAddress, '']]
+
+Resources:
+  # SNS Topic for Alarm Notifications
+  AlarmNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'bdo-alarm-notifications-${Environment}'
+      DisplayName: BDO Market Insights Alarm Notifications
+      Subscription:
+        - !If
+          - HasAlarmEmail
+          - Endpoint: !Ref AlarmEmailAddress
+            Protocol: email
+          - !Ref AWS::NoValue
+
+  # SNS Topic Policy
+  AlarmNotificationTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref AlarmNotificationTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action:
+              - 'SNS:Publish'
+            Resource: !Ref AlarmNotificationTopic
+
+  # ============================================================================
+  # Lambda Error Rate Alarms (> 5%)
+  # ============================================================================
+
+  RetrieveIdListErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-retrieveIdList-error-rate-${Environment}'
+      AlarmDescription: Alert when retrieveIdList Lambda error rate exceeds 5%
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref RetrieveIdListFunctionName
+      TreatMissingData: notBreaching
+
+  FetchDataErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-fetchData-error-rate-${Environment}'
+      AlarmDescription: Alert when fetchData Lambda error rate exceeds 5%
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref FetchDataFunctionName
+      TreatMissingData: notBreaching
+
+  CleanDataErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-cleanData-error-rate-${Environment}'
+      AlarmDescription: Alert when cleanData Lambda error rate exceeds 5%
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref CleanDataFunctionName
+      TreatMissingData: notBreaching
+
+  StoreDataErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-storeData-error-rate-${Environment}'
+      AlarmDescription: Alert when storeData Lambda error rate exceeds 5%
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref StoreDataFunctionName
+      TreatMissingData: notBreaching
+
+  QueryDataErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-queryData-error-rate-${Environment}'
+      AlarmDescription: Alert when queryData Lambda error rate exceeds 5%
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref QueryDataFunctionName
+      TreatMissingData: notBreaching
+
+  AnalyzeDataErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-analyzeData-error-rate-${Environment}'
+      AlarmDescription: Alert when analyzeData Lambda error rate exceeds 5%
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AnalyzeDataFunctionName
+      TreatMissingData: notBreaching
+
+  # ============================================================================
+  # Database Connection Pool Exhaustion Alarms
+  # ============================================================================
+
+  DatabaseConnectionPoolExhaustionAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-database-connection-pool-exhaustion-${Environment}'
+      AlarmDescription: Alert when database connection pool utilization exceeds 90%
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: DatabaseConnectionPoolUtilization
+      Namespace: BDO/MarketInsights
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 90
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      TreatMissingData: notBreaching
+
+  DatabaseConnectionFailuresAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-database-connection-failures-${Environment}'
+      AlarmDescription: Alert when database connection failures occur
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: DatabaseConnectionFailures
+      Namespace: BDO/MarketInsights
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      TreatMissingData: notBreaching
+
+  SlowQueryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-slow-queries-${Environment}'
+      AlarmDescription: Alert when slow queries (>1s) are detected
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: SlowQueries
+      Namespace: BDO/MarketInsights
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      TreatMissingData: notBreaching
+
+  # ============================================================================
+  # External API Failure Alarms (> 10%)
+  # ============================================================================
+
+  ExternalAPIFailureRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-external-api-failure-rate-${Environment}'
+      AlarmDescription: Alert when External API failure rate exceeds 10%
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: ExternalAPIFailures
+      Namespace: BDO/MarketInsights
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      TreatMissingData: notBreaching
+
+  ExternalAPIRateLimitAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-external-api-rate-limit-${Environment}'
+      AlarmDescription: Alert when External API rate limits are being hit frequently
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: ExternalAPIRateLimitHits
+      Namespace: BDO/MarketInsights
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 20
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      TreatMissingData: notBreaching
+
+  ExternalAPILatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-external-api-latency-${Environment}'
+      AlarmDescription: Alert when External API response time p95 exceeds 5 seconds
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: ExternalAPILatency
+      Namespace: BDO/MarketInsights
+      ExtendedStatistic: p95
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5000
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      TreatMissingData: notBreaching
+
+  CircuitBreakerOpenAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-circuit-breaker-open-${Environment}'
+      AlarmDescription: Alert when circuit breaker opens for External API
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: CircuitBreakerOpen
+      Namespace: BDO/MarketInsights
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      TreatMissingData: notBreaching
+
+  # ============================================================================
+  # ETL Pipeline Health Alarms
+  # ============================================================================
+
+  ETLPipelineFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-etl-pipeline-failure-${Environment}'
+      AlarmDescription: Alert when ETL pipeline fails
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: ETLPipelineFailures
+      Namespace: BDO/MarketInsights
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      TreatMissingData: notBreaching
+
+  ETLPipelineDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-etl-pipeline-duration-${Environment}'
+      AlarmDescription: Alert when ETL pipeline duration exceeds expected time
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: ETLPipelineDuration
+      Namespace: BDO/MarketInsights
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 600000
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      TreatMissingData: notBreaching
+
+  # ============================================================================
+  # Query Pipeline Health Alarms
+  # ============================================================================
+
+  QueryPipelineLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-query-pipeline-latency-${Environment}'
+      AlarmDescription: Alert when query pipeline p95 latency exceeds 2 seconds
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: QueryPipelineLatency
+      Namespace: BDO/MarketInsights
+      ExtendedStatistic: p95
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 2000
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: Environment
+          Value: !Ref Environment
+      TreatMissingData: notBreaching
+
+  # ============================================================================
+  # Lambda Throttling Alarms
+  # ============================================================================
+
+  LambdaThrottlingAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-lambda-throttling-${Environment}'
+      AlarmDescription: Alert when Lambda functions are being throttled
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: Throttles
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  # ============================================================================
+  # Lambda Concurrent Execution Alarms
+  # ============================================================================
+
+  LambdaConcurrentExecutionAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-lambda-concurrent-execution-${Environment}'
+      AlarmDescription: Alert when Lambda concurrent executions approach account limit
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      OKActions:
+        - !Ref AlarmNotificationTopic
+      MetricName: ConcurrentExecutions
+      Namespace: AWS/Lambda
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 800
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  AlarmNotificationTopicArn:
+    Description: ARN of the SNS topic for alarm notifications
+    Value: !Ref AlarmNotificationTopic
+    Export:
+      Name: !Sub 'bdo-alarm-topic-arn-${Environment}'
+
+  AlarmNotificationTopicName:
+    Description: Name of the SNS topic for alarm notifications
+    Value: !GetAtt AlarmNotificationTopic.TopicName
+    Export:
+      Name: !Sub 'bdo-alarm-topic-name-${Environment}'
