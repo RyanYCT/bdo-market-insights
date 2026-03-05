@@ -1,293 +1,156 @@
-import decimal
-import json
-import logging
-import os
-from typing import Any, Dict
+"""
+retrieveIdList Lambda Function
 
+Retrieves item IDs from DynamoDB for the ETL pipeline.
+Integrates with the new architecture using LambdaRouter, structured logging,
+and Pydantic schema validation.
+"""
+
+import os
+from typing import Any, Dict, List
 import boto3
 from botocore.exceptions import ClientError
-
-# Configure logging
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
-
-class DecimalEncoder(json.JSONEncoder):
-    """Helper class to convert Decimal to int/float for JSON serialization"""
-
-    def default(self, o):
-        if isinstance(o, decimal.Decimal):
-            # If the decimal is whole number, convert to int
-            if o % 1 == 0:
-                return int(o)
-            # Else convert to float
-            else:
-                return float(o)
-
-        return super(DecimalEncoder, self).default(o)
-
-
-class LambdaRouter:
-    """Router class to handle different types of Lambda events"""
-
-    def __init__(self):
-        self.api_routes = {}
-        self.step_routes = {}
-        self.default_headers = {"Content-Type": "application/json"}
-
-    def api_route(self, method: str, path: str):
-        """Decorator to register API Gateway routes"""
-        route_key = f"{method}:{path}"
-
-        def decorator(func):
-            self.api_routes[route_key] = func
-            return func
-
-        return decorator
-
-    def step_route(self, step_name: str):
-        """Decorator to register Step Functions routes"""
-
-        def decorator(func):
-            self.step_routes[step_name] = func
-            return func
-
-        return decorator
-
-    def handle(self, event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-        """Main handler that routes requests based on the event source"""
-        logger.info(f"Event received: {json.dumps(event)}")
-
-        # Determine the event source and route
-        try:
-            # API Gateway event
-            if "httpMethod" in event or "requestContext" in event:
-                return self._handle_api_gateway(event)
-
-            # Step Functions event or default
-            else:
-                return self._handle_step_function(event)
-
-        except Exception as e:
-            logger.error(f"Error processing event: {e}")
-            # For API Gateway, return HTTP error
-            if "httpMethod" in event or "requestContext" in event:
-                return {
-                    "statusCode": 500,
-                    "headers": self.default_headers,
-                    "body": json.dumps({"error": str(e)}),
-                }
-            # For Step Functions, return plain error
-            else:
-                return {"error": str(e)}
-
-    def _handle_api_gateway(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle API Gateway events by routing to the appropriate handler"""
-        # Extract HTTP method and path from the event
-        if "requestContext" in event and "http" in event["requestContext"]:
-            # HTTP API format
-            http_method = event["requestContext"]["http"]["method"]
-            resource_path = event["requestContext"]["http"]["path"]
-        else:
-            # REST API format
-            http_method = event.get("httpMethod")
-            resource_path = event.get("resource", event.get("path", ""))
-
-        # Create the route key
-        route_key = f"{http_method}:{resource_path}"
-
-        # Find the handler function
-        handler_func = self.api_routes.get(route_key)
-
-        if not handler_func:
-            # Try to match parameterized routes
-            for config_route, config_handler in self.api_routes.items():
-                if self._is_route_match(config_route, route_key):
-                    handler_func = config_handler
-                    break
-
-        if handler_func:
-            return handler_func(event)
-        else:
-            logger.error(f"No handler found for route: {route_key}")
-            return {
-                "statusCode": 404,
-                "headers": self.default_headers,
-                "body": json.dumps({"error": f"Route not found: {route_key}"}),
-            }
-
-    def _handle_step_function(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle Step Functions events by routing to the appropriate handler"""
-        # Extract the step name from the event if available
-        step_name = event.get("step", "default")
-
-        # Find the handler function
-        handler_func = self.step_routes.get(step_name)
-        if handler_func:
-            return handler_func(event)
-        else:
-            logger.error(f"Invalid step name: {step_name}")
-            return {"error": f"Invalid step name: {step_name}"}
-
-    def _is_route_match(self, config_route: str, actual_route: str) -> bool:
-        """Check if a parameterized route matches the actual route"""
-        # Split method and path
-        config_method, config_path = config_route.split(":", 1)
-        actual_method, actual_path = actual_route.split(":", 1)
-
-        # Methods must match
-        if config_method != actual_method:
-            return False
-
-        # Check path matching
-        config_parts = config_path.split("/")
-        actual_parts = actual_path.split("/")
-
-        if len(config_parts) != len(actual_parts):
-            return False
-
-        for i, part in enumerate(config_parts):
-            if "{" in part and "}" in part:
-                # Skip parameter
-                continue
-            elif part != actual_parts[i]:
-                return False
-
-        return True
+from common import LambdaRouter, ItemIdList
+from pydantic import ValidationError
 
 
 class DynamoDBService:
-    """Service class for retrieving item IDs from DynamoDB"""
-
-    def __init__(self):
+    """Service class for retrieving item IDs from DynamoDB."""
+    
+    def __init__(self, logger):
+        """
+        Initialize DynamoDB service.
+        
+        Args:
+            logger: StructuredLogger instance for logging
+        """
         self.dynamodb = boto3.resource("dynamodb")
-
-    def get_item_id_list(self, table_name: str) -> Dict[str, Any]:
-        """Get all item IDs from DynamoDB"""
-        # In case multiple table_name are provided
-        table_names = table_name.split(",")
-        all_item_id_list = []
-
-        for table_name in table_names:
-            try:
-                table = self.dynamodb.Table(table_name)
-                projection = "id"
-
-                # Scan the entire table
-                scan_params = {"ProjectionExpression": projection}
+        self.logger = logger
+    
+    def get_item_ids(self, table_name: str) -> List[int]:
+        """
+        Retrieve all item IDs from DynamoDB table.
+        
+        Args:
+            table_name: Name of the DynamoDB table
+            
+        Returns:
+            List[int]: List of item IDs
+            
+        Raises:
+            ClientError: If DynamoDB operation fails
+            ValueError: If table is empty or data is invalid
+        """
+        self.logger.info(f"Retrieving item IDs from DynamoDB table", table_name=table_name)
+        
+        try:
+            table = self.dynamodb.Table(table_name)
+            
+            # Scan the entire table with projection
+            scan_params = {"ProjectionExpression": "id"}
+            response = table.scan(**scan_params)
+            items = response.get("Items", [])
+            
+            # Handle pagination
+            while "LastEvaluatedKey" in response:
+                self.logger.debug("Fetching next page of results", 
+                                 last_key=str(response["LastEvaluatedKey"]))
+                scan_params["ExclusiveStartKey"] = response["LastEvaluatedKey"]
                 response = table.scan(**scan_params)
-                items = response.get("Items", [])
-
-                # Handle pagination
-                while "LastEvaluatedKey" in response:
-                    scan_params["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                    response = table.scan(**scan_params)
-                    items.extend(response.get("Items", []))
-
-                # Extract item IDs and convert decimal to int
-                item_id_list = []
-                for item in items:
-                    item_id_list.append(int(item["id"]))
-
-                all_item_id_list.extend(item_id_list)
-
-            except ClientError as e:
-                logger.error(f"AWS Client Error: {e}")
-                raise
-            except KeyError as e:
-                logger.error(f"Missing required parameter: {e}")
-                raise
-            except Exception as e:
-                logger.error(f"Unexpected error: {e}")
-                raise
-
-        return {
-            "message": "Items read successfully",
-            "inputTable": table_names,
-            "itemCount": len(all_item_id_list),
-            "items": all_item_id_list,
-        }
+                items.extend(response.get("Items", []))
+            
+            # Extract and convert item IDs
+            item_ids = []
+            for item in items:
+                if "id" not in item:
+                    self.logger.warning("Item missing 'id' field", item=str(item))
+                    continue
+                # Convert Decimal to int
+                item_ids.append(int(item["id"]))
+            
+            if not item_ids:
+                raise ValueError(f"No item IDs found in table {table_name}")
+            
+            self.logger.info(f"Successfully retrieved item IDs", 
+                           item_count=len(item_ids),
+                           table_name=table_name)
+            
+            return item_ids
+            
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            self.logger.error(f"DynamoDB ClientError: {error_code}", 
+                            error=e,
+                            table_name=table_name)
+            raise
+        except Exception as e:
+            self.logger.error("Unexpected error retrieving item IDs", 
+                            error=e,
+                            table_name=table_name)
+            raise
 
 
 # Initialize router
 router = LambdaRouter()
 
-# Initialize service
-id_service = DynamoDBService()
 
-
-# API Gateway route handlers
-@router.api_route("GET", "/idlist")
-def retrieve_api(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle GET request"""
+@router.route(function_name="retrieveIdList")
+def handler(event: Dict[str, Any], context: Any, logger) -> Dict[str, Any]:
+    """
+    Lambda handler for retrieveIdList.
+    
+    Retrieves item IDs from DynamoDB and returns them in a validated format.
+    
+    Args:
+        event: Lambda event (can be from Step Functions or direct invocation)
+        context: Lambda context
+        logger: StructuredLogger instance
+        
+    Returns:
+        dict: ItemIdList schema with item_ids and correlation_id
+        
+    Raises:
+        ValidationError: If output validation fails
+        ValueError: If required parameters are missing or table is empty
+    """
+    # Get table name from event or environment variable
+    table_name = event.get("table_name") or os.getenv("DYNAMODB_TABLE_NAME")
+    
+    if not table_name:
+        raise ValueError("table_name must be provided in event or DYNAMODB_TABLE_NAME environment variable")
+    
+    logger.info("Starting retrieveIdList execution", table_name=table_name)
+    
+    # Initialize DynamoDB service
+    dynamodb_service = DynamoDBService(logger)
+    
+    # Retrieve item IDs from DynamoDB
+    item_ids = dynamodb_service.get_item_ids(table_name)
+    
+    # Validate output using Pydantic schema
     try:
-        # Parse the event
-        query_params = event.get("queryStringParameters", {}) or {}
-
-        # Get parameters from query parameters
-        table_name = query_params.get("table_name", "") or os.getenv("DYNAMODB_TABLE_NAME", "")
-
-        # Validate required parameters
-        missing_params = []
-        if not table_name:
-            missing_params.append("table_name")
-        if missing_params:
-            return {
-                "statusCode": 400,
-                "headers": router.default_headers,
-                "body": json.dumps({"error": f"Missing parameters: {', '.join(missing_params)}"}),
-            }
-
-        # Retrieve item id from DynamoDB table
-        result = id_service.get_item_id_list(table_name)
-        return {
-            "statusCode": 200,
-            "headers": router.default_headers,
-            "body": json.dumps(result, cls=DecimalEncoder),
-        }
-
-    except Exception as e:
-        logger.error(f"Unexpected errors: {e}")
-        return {
-            "statusCode": 500,
-            "headers": router.default_headers,
-            "body": json.dumps({"error": str(e)}),
-        }
+        output = ItemIdList(
+            item_ids=item_ids,
+            correlation_id=logger.correlation_id
+        )
+        
+        logger.info("Output validation successful", 
+                   item_count=len(output.item_ids))
+        
+        # Return as dict for Lambda response
+        return output.model_dump()
+        
+    except ValidationError as e:
+        logger.error("Output validation failed", error=e)
+        raise
 
 
-# Step Functions handler
-@router.step_route("default")
-def retrieve_step(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Process Step Functions"""
-    try:
-        # Get parameters from Step Functions input event object
-        table_name = event.get("table_name", "") or os.getenv("DYNAMODB_TABLE_NAME", "")
-        endpoint = event.get("endpoint")
-
-        # Validate required parameters
-        missing_params = []
-        if not table_name:
-            missing_params.append("table_name")
-        if not endpoint:
-            missing_params.append("endpoint")
-        if missing_params:
-            return {"error": f"Missing parameters: {', '.join(missing_params)}"}
-
-        # Retrieve item id from DynamoDB table
-        result = id_service.get_item_id_list(table_name)
-        return {
-            "endpoint": endpoint,
-            "tableName": table_name,
-            "itemCount": result["itemCount"],
-            "itemIDs": result["items"],
-        }
-
-    except Exception as e:
-        logger.error(f"Unexpected errors: {e}")
-        return {"error": str(e)}
-
-
-# Lambda handler function
+# Lambda entry point
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """AWS Lambda handler function"""
-    return router.handle(event, context)
+    """
+    AWS Lambda handler function.
+    
+    Entry point for Lambda invocations. Routes to the main handler
+    through LambdaRouter for consistent error handling and logging.
+    """
+    return handler(event, context)

@@ -74,15 +74,15 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
 
 ### Phase 2: ETL Pipeline Rewrite
 
-- [ ] 7. Rewrite retrieveIdList Lambda function
-  - [ ] 7.1 Implement retrieveIdList with new architecture
+- [x] 7. Rewrite retrieveIdList Lambda function
+  - [x] 7.1 Implement retrieveIdList with new architecture
     - Integrate LambdaRouter for request handling
     - Add structured logging with correlation ID
     - Implement Pydantic schema validation for output
     - Query DynamoDB for item IDs
     - _Requirements: 1.3, 2.2, 4.1, 4.3_
   
-  - [ ] 7.2 Write unit tests for retrieveIdList
+  - [x] 7.2 Write unit tests for retrieveIdList
     - Test DynamoDB query logic
     - Test error handling for missing data
     - Test correlation ID generation

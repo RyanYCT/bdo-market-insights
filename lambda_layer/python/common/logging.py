@@ -85,7 +85,7 @@ class StructuredLogger:
             'level': level,
             'function_name': self.function_name,
             'correlation_id': self.correlation_id,
-            'message': message,
+            'log_message': message,  # Use 'log_message' to avoid conflict with reserved 'msg'
         }
         
         # Add request_id if available
