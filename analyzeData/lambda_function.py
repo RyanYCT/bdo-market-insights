@@ -1,255 +1,231 @@
-import json
-import logging
-from typing import Any, Dict
+"""
+analyzeData Lambda function.
 
-import pandas as pd
+Analyzes market data and computes statistics, profitability scores, and price trends.
+Integrates with LambdaRouter for consistent request/response handling and structured logging.
+"""
 
-# Configure logging
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+import sys
+from typing import Any, Dict, List, Optional
+from datetime import datetime
 
+# Add lambda_layer to path
+sys.path.insert(0, '/opt/python')
 
-class LambdaRouter:
-    """Router class to handle different types of Lambda events"""
-
-    def __init__(self):
-        self.api_routes = {}
-        self.step_routes = {}
-        self.default_headers = {"Content-Type": "application/json"}
-
-    def api_route(self, method: str, path: str):
-        """Decorator to register API Gateway routes"""
-        route_key = f"{method}:{path}"
-
-        def decorator(func):
-            self.api_routes[route_key] = func
-            return func
-
-        return decorator
-
-    def step_route(self, step_name: str):
-        """Decorator to register Step Functions routes"""
-
-        def decorator(func):
-            self.step_routes[step_name] = func
-            return func
-
-        return decorator
-
-    def handle(self, event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-        """Main handler that routes requests based on the event source"""
-        logger.info(f"Event received: {json.dumps(event)}")
-
-        # Determine the event source and route
-        try:
-            # API Gateway event
-            if "httpMethod" in event or "requestContext" in event:
-                return self._handle_api_gateway(event)
-
-            # Step Functions event or default
-            else:
-                return self._handle_step_function(event)
-
-        except Exception as e:
-            logger.error(f"Error processing event: {e}")
-            # For API Gateway, return HTTP error
-            if "httpMethod" in event or "requestContext" in event:
-                return {
-                    "statusCode": 500,
-                    "headers": self.default_headers,
-                    "body": json.dumps({"error": str(e)}),
-                }
-            # For Step Functions, return plain error
-            else:
-                return {"error": str(e)}
-
-    def _handle_api_gateway(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle API Gateway events by routing to the appropriate handler"""
-        # Extract HTTP method and path from the event
-        if "requestContext" in event and "http" in event["requestContext"]:
-            # HTTP API format
-            http_method = event["requestContext"]["http"]["method"]
-            resource_path = event["requestContext"]["http"]["path"]
-        else:
-            # REST API format
-            http_method = event.get("httpMethod")
-            resource_path = event.get("resource", event.get("path", ""))
-
-        # Create the route key
-        route_key = f"{http_method}:{resource_path}"
-
-        # Find the handler function
-        handler_func = self.api_routes.get(route_key)
-
-        if not handler_func:
-            # Try to match parameterized routes
-            for config_route, config_handler in self.api_routes.items():
-                if self._is_route_match(config_route, route_key):
-                    handler_func = config_handler
-                    break
-
-        if handler_func:
-            return handler_func(event)
-        else:
-            logger.error(f"No handler found for route: {route_key}")
-            return {
-                "statusCode": 404,
-                "headers": self.default_headers,
-                "body": json.dumps({"error": f"Route not found: {route_key}"}),
-            }
-
-    def _handle_step_function(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle Step Functions events by routing to the appropriate handler"""
-        # Extract the step name from the event if available
-        step_name = event.get("step", "default")
-
-        # Find the handler function
-        handler_func = self.step_routes.get(step_name)
-        if handler_func:
-            return handler_func(event)
-        else:
-            logger.error(f"Invalid step name: {step_name}")
-            return {"error": f"Invalid step name: {step_name}"}
-
-    def _is_route_match(self, config_route: str, actual_route: str) -> bool:
-        """Check if a parameterized route matches the actual route"""
-        # Split method and path
-        config_method, config_path = config_route.split(":", 1)
-        actual_method, actual_path = actual_route.split(":", 1)
-
-        # Methods must match
-        if config_method != actual_method:
-            return False
-
-        # Check path matching
-        config_parts = config_path.split("/")
-        actual_parts = actual_path.split("/")
-
-        if len(config_parts) != len(actual_parts):
-            return False
-
-        for i, part in enumerate(config_parts):
-            if "{" in part and "}" in part:
-                # Skip parameter
-                continue
-            elif part != actual_parts[i]:
-                return False
-
-        return True
-
-
-class AnalysisService:
-    """Service class for data analysis"""
-
-    def __init__(self):
-        pass
-
-    def profit_analysis(self, result_set, expected_columns):
-        if not result_set:
-            return []
-
-        df = pd.DataFrame(result_set)
-        if df.empty:
-            return []
-
-        # Ensure columns are named correctly
-        if len(df.columns) != len(expected_columns):
-            return {"error": "Mismatch between result set and expected columns."}
-        if list(df.columns) != expected_columns:
-            df.columns = expected_columns
-
-        analyzed_rows = []
-        # Group by item id with its variants
-        for item_id, group in df.groupby("item_id"):
-            group = group.sort_values("sid")
-            # Get clean price (sid == 0) for this item
-            clean_row = group[group["sid"] == 0]
-            clean_price = clean_row["last_sold_price"].iloc[0] if not clean_row.empty else None
-
-            previous_price = None
-            for idx, row in group.iterrows():
-                sid = row["sid"]
-                current_price = row["last_sold_price"]
-
-                # For sid >= 1, calculate profit and rate
-                if sid == 0 or clean_price is None:
-                    profit = 0
-                    rate = 0
-                else:
-                    # Previous level price (sid - 1)
-                    prev_row = group[group["sid"] == sid - 1]
-                    previous_price = prev_row["last_sold_price"].iloc[0] if not prev_row.empty else None
-
-                    if previous_price is not None and clean_price is not None:
-                        cost = previous_price + clean_price
-                        profit = current_price - cost
-                        rate = 1 + (profit / cost) if cost > 0 else None
-                    else:
-                        profit = 0
-                        rate = 0
-
-                analyzed_rows.append(
-                    {
-                        "item_name": row["item_name"],
-                        "item_id": row["item_id"],
-                        "sid": sid,
-                        "category": row["category"],
-                        "price": current_price,
-                        "profit": profit,
-                        "rate": rate,
-                        "stock": row["current_stock"],
-                        "total_trades": row["total_trades"],
-                        "scrape_time": row["scrape_time"],
-                    }
-                )
-
-        analyzed_df = pd.DataFrame(analyzed_rows)
-        analyzed_df = analyzed_df.sort_values(
-            ["scrape_time", "item_id", "sid", "rate"], ascending=True, na_position="last"
-        )
-        return json.loads(analyzed_df.to_json(orient="records"))
+from common.router import LambdaRouter
+from common.logging import StructuredLogger
 
 
 # Initialize router
 router = LambdaRouter()
 
-# Initialize service
-analysis_service = AnalysisService()
 
-
-# Step Functions handler
-@router.step_route("default")
-def retrieve_step(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Process Step Functions"""
-    try:
-        # Get parameters from Step Functions input event object
-        item_category = event.get("itemCategory", "")
-        item_id = event.get("itemID", "")
-        columns = event.get("columns", "")
-        result_set = event.get("resultSet", [])
-
-        # Validate required parameters
-        missing_params = []
-        if not item_category:
-            missing_params.append("item_category")
-        if missing_params:
-            return {"error": f"Missing parameters: {', '.join(missing_params)}"}
-
-        result = analysis_service.profit_analysis(result_set, columns)
-
-        # return to API Gateway
+def calculate_statistics(market_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Calculate statistics from market data.
+    
+    Args:
+        market_data: List of market data records
+        
+    Returns:
+        dict: Statistics including avg/min/max prices, avg stock, total trades
+    """
+    if not market_data:
         return {
-            "statusCode": 200,
-            "body": json.dumps({"result": result}),
-            "headers": router.default_headers,
+            'avg_last_sold_price': 0,
+            'min_last_sold_price': 0,
+            'max_last_sold_price': 0,
+            'avg_current_stock': 0,
+            'total_trades_sum': 0
         }
+    
+    prices = [record['last_sold_price'] for record in market_data]
+    stocks = [record['current_stock'] for record in market_data]
+    trades = [record['total_trades'] for record in market_data]
+    
+    return {
+        'avg_last_sold_price': sum(prices) / len(prices),
+        'min_last_sold_price': min(prices),
+        'max_last_sold_price': max(prices),
+        'avg_current_stock': sum(stocks) / len(stocks),
+        'total_trades_sum': sum(trades)
+    }
 
-    except Exception as e:
-        logger.error(f"Unexpected errors: {e}")
-        return {"error": str(e)}
+
+def compute_profitability_score(market_data: List[Dict[str, Any]]) -> float:
+    """
+    Compute profitability score based on price trends.
+    
+    Score is calculated as:
+    - Price increase rate (0-0.5): (max_price - min_price) / min_price * 0.5
+    - Trade volume factor (0-0.3): min(total_trades / 10000, 0.3)
+    - Stock availability factor (0-0.2): min(avg_stock / 100, 0.2)
+    
+    Args:
+        market_data: List of market data records
+        
+    Returns:
+        float: Profitability score between 0 and 1
+    """
+    if not market_data:
+        return 0.0
+    
+    stats = calculate_statistics(market_data)
+    
+    # Price increase rate (0-0.5)
+    if stats['min_last_sold_price'] > 0:
+        price_increase = (stats['max_last_sold_price'] - stats['min_last_sold_price']) / stats['min_last_sold_price']
+        price_score = min(price_increase * 0.5, 0.5)
+    else:
+        price_score = 0.0
+    
+    # Trade volume factor (0-0.3)
+    trade_score = min(stats['total_trades_sum'] / 10000 * 0.3, 0.3)
+    
+    # Stock availability factor (0-0.2)
+    stock_score = min(stats['avg_current_stock'] / 100 * 0.2, 0.2)
+    
+    return round(price_score + trade_score + stock_score, 2)
 
 
-# Lambda handler function
+def determine_price_trend(market_data: List[Dict[str, Any]]) -> str:
+    """
+    Determine price trend (increasing, decreasing, stable).
+    
+    Trend is determined by comparing first half vs second half of data:
+    - Increasing: second half avg > first half avg by more than 5%
+    - Decreasing: second half avg < first half avg by more than 5%
+    - Stable: difference is within 5%
+    
+    Args:
+        market_data: List of market data records (sorted by time)
+        
+    Returns:
+        str: 'increasing', 'decreasing', or 'stable'
+    """
+    if not market_data or len(market_data) < 2:
+        return 'stable'
+    
+    # Sort by last_sold_time to ensure chronological order
+    sorted_data = sorted(market_data, key=lambda x: x['last_sold_time'])
+    
+    # Split into first and second half
+    mid_point = len(sorted_data) // 2
+    first_half = sorted_data[:mid_point]
+    second_half = sorted_data[mid_point:]
+    
+    # Calculate average prices
+    first_half_avg = sum(r['last_sold_price'] for r in first_half) / len(first_half)
+    second_half_avg = sum(r['last_sold_price'] for r in second_half) / len(second_half)
+    
+    # Calculate percentage change
+    if first_half_avg > 0:
+        change_percent = (second_half_avg - first_half_avg) / first_half_avg
+        
+        if change_percent > 0.05:
+            return 'increasing'
+        elif change_percent < -0.05:
+            return 'decreasing'
+    
+    return 'stable'
+
+
+@router.route()
+def handler(event: Dict[str, Any], context: Any, logger: StructuredLogger) -> Dict[str, Any]:
+    """
+    Process market data and compute analysis.
+    
+    Expected event structure:
+    {
+        "market_data": [...],  # List of market data records from queryData
+        "query_params": {...},  # Original query parameters
+        "correlation_id": "..."
+    }
+    
+    Args:
+        event: Lambda event containing market data and query params
+        context: Lambda context
+        logger: Structured logger instance
+        
+    Returns:
+        dict: Analysis results with statistics, profitability score, and trend
+    """
+    logger.info("Starting market data analysis", event_keys=list(event.keys()))
+    
+    # Extract data from event
+    market_data = event.get('market_data', [])
+    query_params = event.get('query_params', {})
+    
+    logger.info("Processing market data", record_count=len(market_data))
+    
+    # Handle empty data
+    if not market_data:
+        logger.warning("No market data to analyze")
+        return {
+            'item_id': query_params.get('item_id'),
+            'item_name': None,
+            'date_range': {
+                'start': query_params.get('start_date'),
+                'end': query_params.get('end_date')
+            },
+            'statistics': calculate_statistics([]),
+            'profitability_score': 0.0,
+            'price_trend': 'stable',
+            'record_count': 0
+        }
+    
+    # Extract item information from first record
+    first_record = market_data[0]
+    item_id = first_record.get('item_id')
+    item_name = first_record.get('item_name')
+    
+    logger.info("Analyzing item", item_id=item_id, item_name=item_name)
+    
+    # Calculate statistics
+    statistics = calculate_statistics(market_data)
+    logger.info("Statistics calculated", statistics=statistics)
+    
+    # Compute profitability score
+    profitability_score = compute_profitability_score(market_data)
+    logger.info("Profitability score computed", score=profitability_score)
+    
+    # Determine price trend
+    price_trend = determine_price_trend(market_data)
+    logger.info("Price trend determined", trend=price_trend)
+    
+    # Build response
+    result = {
+        'item_id': item_id,
+        'item_name': item_name,
+        'date_range': {
+            'start': query_params.get('start_date'),
+            'end': query_params.get('end_date')
+        },
+        'statistics': statistics,
+        'profitability_score': profitability_score,
+        'price_trend': price_trend,
+        'record_count': len(market_data)
+    }
+    
+    logger.info("Analysis completed successfully", result_summary={
+        'item_id': item_id,
+        'record_count': len(market_data),
+        'profitability_score': profitability_score,
+        'price_trend': price_trend
+    })
+    
+    return result
+
+
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """AWS Lambda handler function"""
-    return router.handle(event, context)
+    """
+    AWS Lambda handler function.
+    
+    Args:
+        event: Lambda event
+        context: Lambda context
+        
+    Returns:
+        dict: Formatted response with analysis results
+    """
+    return handler(event, context)

@@ -193,8 +193,8 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Test limit enforcement
     - Test error handling for invalid parameters
 
-- [ ] 15. Rewrite analyzeData Lambda function
-  - [ ] 15.1 Implement analyzeData with enhanced metrics
+- [x] 15. Rewrite analyzeData Lambda function
+  - [x] 15.1 Implement analyzeData with enhanced metrics
     - Integrate LambdaRouter and structured logging
     - Calculate statistics: avg/min/max last_sold_price, avg current_stock, total_trades_sum
     - Compute profitability score based on price trends
@@ -202,7 +202,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Include item name and query context in response
     - _Requirements: 4.1, 4.3_
   
-  - [ ] 15.2 Write unit tests for analyzeData
+  - [x] 15.2 Write unit tests for analyzeData
     - Test statistics calculation
     - Test profitability score computation
     - Test price trend detection
