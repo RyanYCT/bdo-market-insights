@@ -11,6 +11,12 @@ from typing import Any, Callable, Dict, Optional
 from .logging import StructuredLogger
 from .correlation import extract_correlation_id
 
+# Import Pydantic ValidationError
+try:
+    from pydantic import ValidationError as PydanticValidationError
+except ImportError:
+    PydanticValidationError = None
+
 
 class LambdaRouter:
     """
@@ -110,6 +116,16 @@ class LambdaRouter:
                     )
                     
                 except Exception as e:
+                    # Check if it's a Pydantic ValidationError
+                    if PydanticValidationError and isinstance(e, PydanticValidationError):
+                        logger.error("Pydantic validation error", error=e)
+                        return self._format_error_response(
+                            400,
+                            "VALIDATION_ERROR",
+                            str(e),
+                            correlation_id
+                        )
+                    
                     # Handle unexpected errors (500)
                     logger.error("Unexpected error in Lambda handler", error=e)
                     return self._format_error_response(

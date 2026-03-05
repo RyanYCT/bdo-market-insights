@@ -177,8 +177,8 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - **Property 27: Query context preservation**
     - **Validates: Requirements 8.3, 8.4, 8.6, 18.1, 18.3**
 
-- [ ] 14. Rewrite queryData Lambda function
-  - [ ] 14.1 Implement queryData with connection pooling
+- [x] 14. Rewrite queryData Lambda function
+  - [x] 14.1 Implement queryData with connection pooling
     - Integrate LambdaRouter and structured logging
     - Validate query parameters with Pydantic schema
     - Use DatabasePool for PostgreSQL connections
@@ -187,7 +187,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Apply limit and ordering
     - _Requirements: 5.2, 8.5, 15.1_
   
-  - [ ] 14.2 Write unit tests for queryData
+  - [x] 14.2 Write unit tests for queryData
     - Test query building for different parameter combinations
     - Test date range filtering
     - Test limit enforcement
