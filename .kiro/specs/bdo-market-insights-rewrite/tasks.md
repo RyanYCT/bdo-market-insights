@@ -259,8 +259,8 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
 
 ### Phase 5: Data Retention and Configuration
 
-- [ ] 21. Implement data retention Lambda
-  - [ ] 21.1 Create retention Lambda function
+- [x] 21. Implement data retention Lambda
+  - [x] 21.1 Create retention Lambda function
     - Integrate LambdaRouter and structured logging
     - Load retention periods from configuration
     - Aggregate MarketData older than 90 days into daily summaries
@@ -270,12 +270,12 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Log all operations with record counts and date ranges
     - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.7_
   
-  - [ ] 21.2 Write property tests for data retention
+  - [x] 21.2 Write property tests for data retention
     - **Property 17: Data aggregation for old records**
     - **Property 18: Retention operation logging**
     - **Validates: Requirements 10.2, 10.7**
   
-  - [ ] 21.3 Write unit tests for retention Lambda
+  - [x] 21.3 Write unit tests for retention Lambda
     - Test aggregation calculation accuracy
     - Test date range filtering
     - Test S3 archival
