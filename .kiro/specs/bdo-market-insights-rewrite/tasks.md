@@ -87,8 +87,8 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Test error handling for missing data
     - Test correlation ID generation
 
-- [ ] 8. Rewrite fetchData Lambda function
-  - [ ] 8.1 Implement fetchData with batching and rate limiting
+- [x] 8. Rewrite fetchData Lambda function
+  - [x] 8.1 Implement fetchData with batching and rate limiting
     - Integrate LambdaRouter and structured logging
     - Implement batch processing with configurable size limits
     - Add rate limiting for External API calls
@@ -96,13 +96,13 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Handle rate limit headers from External API
     - _Requirements: 6.5, 7.1, 7.2, 7.3, 7.4, 7.5_
   
-  - [ ] 8.2 Write property tests for batch processing
+  - [x] 8.2 Write property tests for batch processing
     - **Property 10: Batch size enforcement**
     - **Property 11: API rate limiting**
     - **Property 12: Metrics emission for API calls**
     - **Validates: Requirements 7.1, 7.2, 7.3, 7.4, 7.5**
   
-  - [ ] 8.3 Write unit tests for fetchData
+  - [x] 8.3 Write unit tests for fetchData
     - Test External API error handling
     - Test rate limit header parsing
     - Test circuit breaker integration

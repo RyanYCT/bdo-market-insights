@@ -1,304 +1,566 @@
-import decimal
-import json
-import logging
+"""
+fetchData Lambda function - Fetches market data from External API.
+
+This Lambda function:
+- Receives item IDs from retrieveIdList
+- Processes them in configurable batches
+- Calls External API with rate limiting
+- Implements retry logic with circuit breaker
+- Handles rate limit headers from External API
+- Emits CloudWatch metrics for API calls
+"""
+
 import os
-import urllib.error
+import json
+import time
 import urllib.request
-from datetime import datetime
-from typing import Any, Dict
+import urllib.error
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+import boto3
 
-# Configure logging
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
-
-class DecimalEncoder(json.JSONEncoder):
-    """Helper class to convert Decimal to int/float for JSON serialization"""
-
-    def default(self, o):
-        if isinstance(o, decimal.Decimal):
-            # If the decimal is whole number, convert to int
-            if o % 1 == 0:
-                return int(o)
-            # Else convert to float
-            else:
-                return float(o)
-
-        return super(DecimalEncoder, self).default(o)
+# Import from Lambda Layer
+from common.router import LambdaRouter
+from common.logging import StructuredLogger
+from common.retry import retry, RateLimitError, NetworkError, TemporaryUnavailableError
+from common.circuit_breaker import CircuitBreaker, CircuitBreakerError
+from common.schemas import FetchDataInput
+from pydantic import ValidationError
 
 
-class LambdaRouter:
-    """Router class to handle different types of Lambda events"""
+# Configuration from environment variables
+BASE_URL = os.getenv("BASE_URL", "https://api.arsha.io/v2")
+REGION = os.getenv("REGION", "na")
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "50"))
+MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "100"))
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+CIRCUIT_BREAKER_THRESHOLD = int(os.getenv("CIRCUIT_BREAKER_THRESHOLD", "5"))
+CIRCUIT_BREAKER_TIMEOUT = int(os.getenv("CIRCUIT_BREAKER_TIMEOUT", "60"))
 
-    def __init__(self):
-        self.api_routes = {}
-        self.step_routes = {}
-        self.default_headers = {"Content-Type": "application/json"}
+# Initialize CloudWatch client for metrics
+cloudwatch = boto3.client('cloudwatch')
 
-    def api_route(self, method: str, path: str):
-        """Decorator to register API Gateway routes"""
-        route_key = f"{method}:{path}"
+# Initialize circuit breaker (shared across invocations in same container)
+circuit_breaker = None
 
-        def decorator(func):
-            self.api_routes[route_key] = func
-            return func
 
-        return decorator
+def get_circuit_breaker(logger: StructuredLogger) -> CircuitBreaker:
+    """
+    Get or create circuit breaker instance.
+    
+    Circuit breaker is shared across invocations in the same container
+    to maintain state.
+    
+    Args:
+        logger: StructuredLogger instance
+        
+    Returns:
+        CircuitBreaker: Shared circuit breaker instance
+    """
+    global circuit_breaker
+    if circuit_breaker is None:
+        circuit_breaker = CircuitBreaker(
+            failure_threshold=CIRCUIT_BREAKER_THRESHOLD,
+            timeout=CIRCUIT_BREAKER_TIMEOUT,
+            logger=logger
+        )
+    return circuit_breaker
 
-    def step_route(self, step_name: str):
-        """Decorator to register Step Functions routes"""
 
-        def decorator(func):
-            self.step_routes[step_name] = func
-            return func
+class RateLimiter:
+    """
+    Rate limiter for External API calls.
+    
+    Tracks API calls per minute and enforces rate limits.
+    """
+    
+    def __init__(self, calls_per_minute: int, logger: StructuredLogger):
+        """
+        Initialize rate limiter.
+        
+        Args:
+            calls_per_minute: Maximum calls allowed per minute
+            logger: StructuredLogger instance
+        """
+        self.calls_per_minute = calls_per_minute
+        self.logger = logger
+        self.call_times: List[float] = []
+    
+    def wait_if_needed(self) -> None:
+        """
+        Wait if rate limit would be exceeded.
+        
+        Removes calls older than 1 minute from tracking and waits
+        if necessary to stay within rate limit.
+        """
+        current_time = time.time()
+        
+        # Remove calls older than 1 minute
+        self.call_times = [t for t in self.call_times if current_time - t < 60]
+        
+        # Check if we're at the limit
+        if len(self.call_times) >= self.calls_per_minute:
+            # Calculate wait time until oldest call expires
+            oldest_call = self.call_times[0]
+            wait_time = 60 - (current_time - oldest_call)
+            
+            if wait_time > 0:
+                self.logger.info(
+                    f"Rate limit reached, waiting {wait_time:.2f} seconds",
+                    calls_in_window=len(self.call_times),
+                    rate_limit=self.calls_per_minute
+                )
+                time.sleep(wait_time)
+                
+                # Remove expired calls after waiting
+                current_time = time.time()
+                self.call_times = [t for t in self.call_times if current_time - t < 60]
+    
+    def record_call(self) -> None:
+        """Record a new API call."""
+        self.call_times.append(time.time())
 
-        return decorator
 
-    def handle(self, event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-        """Main handler that routes requests based on the event source"""
-        logger.info(f"Event received: {json.dumps(event)}")
-
-        # Determine the event source and route
+class ExternalAPIClient:
+    """
+    Client for calling External BDO Market API.
+    
+    Handles HTTP requests with retry logic, rate limiting, and circuit breaker.
+    """
+    
+    def __init__(
+        self,
+        base_url: str,
+        region: str,
+        rate_limiter: RateLimiter,
+        circuit_breaker: CircuitBreaker,
+        logger: StructuredLogger
+    ):
+        """
+        Initialize API client.
+        
+        Args:
+            base_url: Base URL for API
+            region: Region code (e.g., 'na', 'eu')
+            rate_limiter: RateLimiter instance
+            circuit_breaker: CircuitBreaker instance
+            logger: StructuredLogger instance
+        """
+        self.base_url = base_url
+        self.region = region
+        self.rate_limiter = rate_limiter
+        self.circuit_breaker = circuit_breaker
+        self.logger = logger
+    
+    @retry(
+        max_attempts=3,
+        backoff_base=2.0,
+        retriable_exceptions=(NetworkError, RateLimitError, TemporaryUnavailableError)
+    )
+    def _make_request(self, url: str) -> Dict[str, Any]:
+        """
+        Make HTTP request with retry logic.
+        
+        Args:
+            url: Full URL to request
+            
+        Returns:
+            dict: Parsed JSON response
+            
+        Raises:
+            NetworkError: On network/connection errors
+            RateLimitError: On rate limit errors (429)
+            TemporaryUnavailableError: On temporary server errors (503)
+        """
+        start_time = time.time()
+        
         try:
-            # API Gateway event
-            if "httpMethod" in event or "requestContext" in event:
-                return self._handle_api_gateway(event)
-
-            # Step Functions event or default
-            else:
-                return self._handle_step_function(event)
-
-        except Exception as e:
-            logger.error(f"Error processing event: {e}")
-            # For API Gateway, return HTTP error
-            if "httpMethod" in event or "requestContext" in event:
-                return {
-                    "statusCode": 500,
-                    "headers": self.default_headers,
-                    "body": json.dumps({"error": str(e)}),
-                }
-            # For Step Functions, return plain error
-            else:
-                return {"error": str(e)}
-
-    def _handle_api_gateway(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle API Gateway events by routing to the appropriate handler"""
-        # Extract HTTP method and path from the event
-        if "requestContext" in event and "http" in event["requestContext"]:
-            # HTTP API format
-            http_method = event["requestContext"]["http"]["method"]
-            resource_path = event["requestContext"]["http"]["path"]
-        else:
-            # REST API format
-            http_method = event.get("httpMethod")
-            resource_path = event.get("resource", event.get("path", ""))
-
-        # Create the route key
-        route_key = f"{http_method}:{resource_path}"
-
-        # Find the handler function
-        handler_func = self.api_routes.get(route_key)
-
-        if not handler_func:
-            # Try to match parameterized routes
-            for config_route, config_handler in self.api_routes.items():
-                if self._is_route_match(config_route, route_key):
-                    handler_func = config_handler
-                    break
-
-        if handler_func:
-            return handler_func(event)
-        else:
-            logger.error(f"No handler found for route: {route_key}")
-            return {
-                "statusCode": 404,
-                "headers": self.default_headers,
-                "body": json.dumps({"error": f"Route not found: {route_key}"}),
-            }
-
-    def _handle_step_function(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle Step Functions events by routing to the appropriate handler"""
-        # Extract the step name from the event if available
-        step_name = event.get("step", "default")
-
-        # Find the handler function
-        handler_func = self.step_routes.get(step_name)
-        if handler_func:
-            return handler_func(event)
-        else:
-            logger.error(f"Invalid step name: {step_name}")
-            return {"error": f"Invalid step name: {step_name}"}
-
-    def _is_route_match(self, config_route: str, actual_route: str) -> bool:
-        """Check if a parameterized route matches the actual route"""
-        # Split method and path
-        config_method, config_path = config_route.split(":", 1)
-        actual_method, actual_path = actual_route.split(":", 1)
-
-        # Methods must match
-        if config_method != actual_method:
-            return False
-
-        # Check path matching
-        config_parts = config_path.split("/")
-        actual_parts = actual_path.split("/")
-
-        if len(config_parts) != len(actual_parts):
-            return False
-
-        for i, part in enumerate(config_parts):
-            if "{" in part and "}" in part:
-                # Skip parameter
-                continue
-            elif part != actual_parts[i]:
-                return False
-
-        return True
-
-
-class DataFetchService:
-    """Service class for fetching data from external API"""
-
-    def __init__(self):
-        self.base_url = os.getenv("BASE_URL")
-        self.version = os.getenv("VERSION")
-        self.region = os.getenv("REGION")
-
-    def fetch_data(self, url: str, param: str) -> Dict[str, Any]:
-        """Fetch data from API using urllib instead of requests"""
-        try:
-            # Construct the full URL with parameters
-            full_url = f"{url}?id={param}"
-
-            # Make the HTTP request with user agent
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 Edg/135.0.0.0"
+                "User-Agent": "BDO-Market-Insights/2.0",
+                "Accept": "application/json"
             }
-            req = urllib.request.Request(full_url, headers=headers)
-            with urllib.request.urlopen(req) as response:
+            
+            req = urllib.request.Request(url, headers=headers)
+            
+            with urllib.request.urlopen(req, timeout=30) as response:
+                response_time = time.time() - start_time
+                
+                # Emit metrics
+                self._emit_api_metrics(
+                    success=True,
+                    response_time=response_time,
+                    status_code=response.getcode()
+                )
+                
                 if response.getcode() == 200:
                     data = response.read().decode("utf-8")
                     return json.loads(data)
                 else:
-                    logger.error(f"API request failed with status code: {response.getcode()}")
+                    self.logger.warning(
+                        f"Unexpected status code: {response.getcode()}",
+                        url=url,
+                        status_code=response.getcode()
+                    )
                     return {}
+                    
         except urllib.error.HTTPError as e:
-            logger.error(f"HTTP Error: {e.code} {e.reason}")
-            raise
+            response_time = time.time() - start_time
+            
+            # Emit metrics for error
+            self._emit_api_metrics(
+                success=False,
+                response_time=response_time,
+                status_code=e.code
+            )
+            
+            if e.code == 429:
+                # Rate limit error - check for retry-after header
+                retry_after = e.headers.get('Retry-After')
+                retry_after_seconds = int(retry_after) if retry_after else 60
+                
+                self.logger.warning(
+                    "Rate limit error from API",
+                    status_code=e.code,
+                    retry_after=retry_after_seconds,
+                    url=url
+                )
+                
+                raise RateLimitError(
+                    f"API rate limit exceeded: {e.reason}",
+                    retry_after=retry_after_seconds
+                )
+            
+            elif e.code == 503:
+                # Service unavailable - temporary error
+                self.logger.warning(
+                    "Service temporarily unavailable",
+                    status_code=e.code,
+                    url=url
+                )
+                raise TemporaryUnavailableError(f"Service unavailable: {e.reason}")
+            
+            else:
+                # Other HTTP errors
+                self.logger.error(
+                    "HTTP error from API",
+                    error=e,
+                    status_code=e.code,
+                    url=url
+                )
+                raise NetworkError(f"HTTP error {e.code}: {e.reason}")
+                
         except urllib.error.URLError as e:
-            logger.error(f"URL Error: {e.reason}")
-            raise
+            response_time = time.time() - start_time
+            
+            # Emit metrics for error
+            self._emit_api_metrics(
+                success=False,
+                response_time=response_time,
+                status_code=0
+            )
+            
+            self.logger.error(
+                "URL error from API",
+                error=e,
+                url=url
+            )
+            raise NetworkError(f"URL error: {e.reason}")
+            
         except Exception as e:
-            logger.error(f"Unexpected errors: {e}")
+            response_time = time.time() - start_time
+            
+            # Emit metrics for error
+            self._emit_api_metrics(
+                success=False,
+                response_time=response_time,
+                status_code=0
+            )
+            
+            self.logger.error(
+                "Unexpected error calling API",
+                error=e,
+                url=url
+            )
+            raise NetworkError(f"Unexpected error: {str(e)}")
+    
+    def _emit_api_metrics(
+        self,
+        success: bool,
+        response_time: float,
+        status_code: int
+    ) -> None:
+        """
+        Emit CloudWatch metrics for API call.
+        
+        Args:
+            success: Whether call was successful
+            response_time: Response time in seconds
+            status_code: HTTP status code
+        """
+        try:
+            metrics = [
+                {
+                    'MetricName': 'ExternalAPICallCount',
+                    'Value': 1,
+                    'Unit': 'Count',
+                    'Dimensions': [
+                        {'Name': 'Success', 'Value': str(success)},
+                        {'Name': 'StatusCode', 'Value': str(status_code)}
+                    ]
+                },
+                {
+                    'MetricName': 'ExternalAPIResponseTime',
+                    'Value': response_time * 1000,  # Convert to milliseconds
+                    'Unit': 'Milliseconds',
+                    'Dimensions': [
+                        {'Name': 'Success', 'Value': str(success)}
+                    ]
+                }
+            ]
+            
+            cloudwatch.put_metric_data(
+                Namespace='BDOMarketInsights/ETL',
+                MetricData=metrics
+            )
+            
+        except Exception as e:
+            # Don't fail the request if metrics emission fails
+            self.logger.warning(
+                "Failed to emit CloudWatch metrics",
+                error=e
+            )
+    
+    def fetch_market_data(self, item_ids: List[int]) -> List[Dict[str, Any]]:
+        """
+        Fetch market data for a list of item IDs.
+        
+        Args:
+            item_ids: List of item IDs to fetch
+            
+        Returns:
+            list: List of market data records
+            
+        Raises:
+            CircuitBreakerError: If circuit breaker is open
+            NetworkError: On network errors after retries exhausted
+        """
+        if not item_ids:
+            self.logger.warning("No item IDs provided to fetch")
+            return []
+        
+        # Wait if rate limit would be exceeded
+        self.rate_limiter.wait_if_needed()
+        
+        # Build URL with item IDs as comma-separated list
+        item_ids_str = ",".join(str(id) for id in item_ids)
+        url = f"{self.base_url}/{self.region}/items?ids={item_ids_str}"
+        
+        self.logger.info(
+            "Fetching market data from External API",
+            item_count=len(item_ids),
+            url=url
+        )
+        
+        # Call API with circuit breaker protection
+        try:
+            data = self.circuit_breaker.call(self._make_request, url)
+            
+            # Record successful call for rate limiting
+            self.rate_limiter.record_call()
+            
+            # Extract items from response
+            items = data.get('items', []) if isinstance(data, dict) else []
+            
+            self.logger.info(
+                "Successfully fetched market data",
+                item_count=len(item_ids),
+                records_returned=len(items)
+            )
+            
+            return items
+            
+        except CircuitBreakerError as e:
+            self.logger.error(
+                "Circuit breaker is open, failing fast",
+                error=e,
+                circuit_state=self.circuit_breaker.state.value
+            )
+            raise
+        
+        except Exception as e:
+            self.logger.error(
+                "Failed to fetch market data",
+                error=e,
+                item_count=len(item_ids)
+            )
             raise
 
-    def get_data_for_endpoint(self, endpoint: str, item_id_list: list) -> Dict[str, Any]:
-        """Get data for a specific endpoint and item ID list"""
-        if not item_id_list:
-            return {"message": "No item id provided", "data": []}
 
-        # Parse number list to csv format as parameter
-        params = ",".join(str(item) for item in item_id_list)
-
-        # Construct URL
-        url = f"{self.base_url}/{self.version}/{self.region}/{endpoint}"
-        logger.info(f"URL for API request: {url}, params: {params}")
-
-        # Make API request
-        data = self.fetch_data(url, params)
-        return {"message": "Data retrieved successfully", "data": data}
+def split_into_batches(item_ids: List[int], batch_size: int, max_batch_size: int) -> List[List[int]]:
+    """
+    Split item IDs into batches of specified size.
+    
+    Args:
+        item_ids: List of item IDs
+        batch_size: Desired batch size
+        max_batch_size: Maximum allowed batch size
+        
+    Returns:
+        list: List of batches (each batch is a list of item IDs)
+    """
+    # Enforce maximum batch size
+    effective_batch_size = min(batch_size, max_batch_size)
+    
+    batches = []
+    for i in range(0, len(item_ids), effective_batch_size):
+        batch = item_ids[i:i + effective_batch_size]
+        batches.append(batch)
+    
+    return batches
 
 
 # Initialize router
 router = LambdaRouter()
 
-# Initialize services
-data_service = DataFetchService()
 
-
-# API Gateway route handlers
-@router.api_route("GET", "/fetch")
-def fetch_api(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle GET request"""
+@router.route(function_name="fetchData")
+def handler(event: Dict[str, Any], context: Any, logger: StructuredLogger) -> Dict[str, Any]:
+    """
+    Lambda handler for fetchData function.
+    
+    Args:
+        event: Lambda event containing item_ids and optional batch_size
+        context: Lambda context
+        logger: StructuredLogger instance
+        
+    Returns:
+        dict: Response containing raw market data and metadata
+    """
+    logger.info("fetchData Lambda invocation started", event_keys=list(event.keys()))
+    
     try:
-        # Parse the event
-        query_params = event.get("queryStringParameters", {}) or {}
-
-        # Get parameters from query parameters
-        endpoint = query_params.get("endpoint", "")
-        item_id_list = query_params.get("itemIDs", [])
-
-        # Validate required parameters
-        missing_params = []
-        if not endpoint:
-            missing_params.append("endpoint")
-        if not item_id_list:
-            missing_params.append("itemIDs")
-        if missing_params:
-            return {
-                "statusCode": 400,
-                "headers": router.default_headers,
-                "body": json.dumps({"error": f"Missing parameters: {', '.join(missing_params)}"}),
+        # Validate input
+        try:
+            input_data = FetchDataInput(**event)
+            logger.info(
+                "Input validated successfully",
+                item_count=len(input_data.item_ids),
+                batch_size=input_data.batch_size
+            )
+        except ValidationError as e:
+            logger.error("Input validation failed", error=e)
+            raise
+        
+        # Get configuration
+        batch_size = input_data.batch_size
+        item_ids = input_data.item_ids
+        
+        # Split into batches
+        batches = split_into_batches(item_ids, batch_size, MAX_BATCH_SIZE)
+        
+        logger.info(
+            "Split items into batches",
+            total_items=len(item_ids),
+            batch_count=len(batches),
+            batch_size=batch_size,
+            max_batch_size=MAX_BATCH_SIZE
+        )
+        
+        # Initialize rate limiter and circuit breaker
+        rate_limiter = RateLimiter(RATE_LIMIT_PER_MINUTE, logger)
+        breaker = get_circuit_breaker(logger)
+        
+        # Initialize API client
+        api_client = ExternalAPIClient(
+            base_url=BASE_URL,
+            region=REGION,
+            rate_limiter=rate_limiter,
+            circuit_breaker=breaker,
+            logger=logger
+        )
+        
+        # Fetch data for all batches
+        all_data = []
+        successful_batches = 0
+        failed_batches = 0
+        
+        for i, batch in enumerate(batches):
+            try:
+                logger.info(
+                    f"Processing batch {i+1}/{len(batches)}",
+                    batch_number=i+1,
+                    batch_size=len(batch)
+                )
+                
+                batch_data = api_client.fetch_market_data(batch)
+                all_data.extend(batch_data)
+                successful_batches += 1
+                
+            except CircuitBreakerError as e:
+                # Circuit breaker is open - fail fast for remaining batches
+                logger.error(
+                    "Circuit breaker open, stopping batch processing",
+                    error=e,
+                    processed_batches=i,
+                    remaining_batches=len(batches) - i
+                )
+                failed_batches = len(batches) - i
+                break
+                
+            except Exception as e:
+                # Log error but continue with next batch
+                logger.error(
+                    f"Failed to fetch batch {i+1}",
+                    error=e,
+                    batch_number=i+1
+                )
+                failed_batches += 1
+        
+        # Prepare response
+        scrape_time = datetime.now(timezone.utc)
+        
+        response = {
+            "raw_data": all_data,
+            "scrape_endpoint": f"{BASE_URL}/{REGION}/items",
+            "scrape_time": scrape_time.isoformat(),
+            "correlation_id": input_data.correlation_id,
+            "metadata": {
+                "total_items_requested": len(item_ids),
+                "total_records_fetched": len(all_data),
+                "batches_processed": successful_batches,
+                "batches_failed": failed_batches,
+                "batch_size": batch_size
             }
-
-        scrape_time = int(datetime.now().timestamp())
-        # Retrieve data from API
-        result = data_service.get_data_for_endpoint(endpoint, item_id_list)
-        return {
-            "statusCode": 200,
-            "headers": router.default_headers,
-            "body": json.dumps(
-                {
-                    "endpoint": endpoint,
-                    "scrapeTime": scrape_time,
-                    "data": result["data"],
-                },
-                cls=DecimalEncoder,
-            ),
         }
-
+        
+        logger.info(
+            "fetchData completed successfully",
+            records_fetched=len(all_data),
+            batches_processed=successful_batches,
+            batches_failed=failed_batches
+        )
+        
+        return response
+        
+    except ValidationError as e:
+        # Re-raise validation errors to be handled by router
+        raise
+        
     except Exception as e:
-        logger.error(f"Unexpected errors: {e}")
-        return {
-            "statusCode": 500,
-            "headers": router.default_headers,
-            "body": json.dumps({"error": str(e)}),
-        }
+        logger.error("Unexpected error in fetchData handler", error=e)
+        raise
 
 
-# Step Functions handler
-@router.step_route("default")
-def fetch_step(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Process Step Functions"""
-    try:
-        # Get parameters from event
-        endpoint = event.get("endpoint", "")
-        item_id_list = event.get("itemIDs", [])
-
-        # Validate required parameters
-        missing_params = []
-        if not endpoint:
-            missing_params.append("endpoint")
-        if not item_id_list:
-            missing_params.append("itemIDs")
-        if missing_params:
-            return {"error": f"Missing parameters: {', '.join(missing_params)}"}
-
-        scrape_time = int(datetime.now().timestamp())
-        # Retrieve data from API
-        result = data_service.get_data_for_endpoint(endpoint, item_id_list)
-        return {
-            "endpoint": endpoint,
-            "scrapeTime": scrape_time,
-            "data": result["data"],
-        }
-
-    except Exception as e:
-        logger.error(f"Unexpected errors: {e}")
-        return {"error": str(e)}
-
-
-# Lambda handler function
+# Lambda entry point
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """AWS Lambda handler function"""
-    return router.handle(event, context)
+    """
+    AWS Lambda entry point.
+    
+    Args:
+        event: Lambda event
+        context: Lambda context
+        
+    Returns:
+        dict: Lambda response
+    """
+    return handler(event, context)

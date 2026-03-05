@@ -10,7 +10,15 @@ import logging
 import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
-from pythonjsonlogger.json import JsonFormatter
+
+try:
+    from pythonjsonlogger import jsonlogger as JsonFormatter
+except ImportError:
+    try:
+        from pythonjsonlogger.json import JsonFormatter
+    except ImportError:
+        # Fallback if pythonjsonlogger is not available
+        JsonFormatter = None
 
 
 class StructuredLogger:
@@ -62,10 +70,25 @@ class StructuredLogger:
         
         # Create JSON formatter
         handler = logging.StreamHandler(sys.stdout)
-        formatter = JsonFormatter(
-            '%(timestamp)s %(level)s %(function_name)s %(correlation_id)s %(message)s'
-        )
-        handler.setFormatter(formatter)
+        
+        if JsonFormatter:
+            # Use JSON formatter if available
+            if hasattr(JsonFormatter, 'JsonFormatter'):
+                formatter = JsonFormatter.JsonFormatter(
+                    '%(timestamp)s %(level)s %(function_name)s %(correlation_id)s %(message)s'
+                )
+            else:
+                formatter = JsonFormatter(
+                    '%(timestamp)s %(level)s %(function_name)s %(correlation_id)s %(message)s'
+                )
+            handler.setFormatter(formatter)
+        else:
+            # Fallback to standard formatter
+            formatter = logging.Formatter(
+                '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+            )
+            handler.setFormatter(formatter)
+        
         self._logger.addHandler(handler)
     
     def _build_log_entry(self, message: str, level: str, **kwargs) -> Dict[str, Any]:
