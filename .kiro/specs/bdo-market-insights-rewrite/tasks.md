@@ -213,15 +213,15 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
 
 ### Phase 4: Monitoring and Observability
 
-- [ ] 17. Implement CloudWatch custom metrics
-  - [ ] 17.1 Add metrics emission to all Lambda functions
+- [x] 17. Implement CloudWatch custom metrics
+  - [x] 17.1 Add metrics emission to all Lambda functions
     - Emit ETL pipeline success/failure metrics
     - Emit query latency metrics
     - Emit External API response time metrics
     - Emit database connection pool utilization metrics
     - _Requirements: 11.1_
   
-  - [ ] 17.2 Write property test for metrics emission
+  - [x] 17.2 Write property test for metrics emission
     - **Property 19: Custom metrics emission**
     - **Validates: Requirements 11.1**
 

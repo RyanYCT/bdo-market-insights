@@ -25,6 +25,7 @@ from common.logging import StructuredLogger
 from common.retry import retry, RateLimitError, NetworkError, TemporaryUnavailableError
 from common.circuit_breaker import CircuitBreaker, CircuitBreakerError
 from common.schemas import FetchDataInput
+from common.metrics import MetricsClient
 from pydantic import ValidationError
 
 
@@ -36,9 +37,6 @@ MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "100"))
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 CIRCUIT_BREAKER_THRESHOLD = int(os.getenv("CIRCUIT_BREAKER_THRESHOLD", "5"))
 CIRCUIT_BREAKER_TIMEOUT = int(os.getenv("CIRCUIT_BREAKER_TIMEOUT", "60"))
-
-# Initialize CloudWatch client for metrics
-cloudwatch = boto3.client('cloudwatch')
 
 # Initialize circuit breaker (shared across invocations in same container)
 circuit_breaker = None
@@ -134,6 +132,7 @@ class ExternalAPIClient:
         region: str,
         rate_limiter: RateLimiter,
         circuit_breaker: CircuitBreaker,
+        metrics_client: MetricsClient,
         logger: StructuredLogger
     ):
         """
@@ -144,12 +143,14 @@ class ExternalAPIClient:
             region: Region code (e.g., 'na', 'eu')
             rate_limiter: RateLimiter instance
             circuit_breaker: CircuitBreaker instance
+            metrics_client: MetricsClient instance
             logger: StructuredLogger instance
         """
         self.base_url = base_url
         self.region = region
         self.rate_limiter = rate_limiter
         self.circuit_breaker = circuit_breaker
+        self.metrics_client = metrics_client
         self.logger = logger
     
     @retry(
@@ -185,10 +186,10 @@ class ExternalAPIClient:
             with urllib.request.urlopen(req, timeout=30) as response:
                 response_time = time.time() - start_time
                 
-                # Emit metrics
-                self._emit_api_metrics(
+                # Emit metrics using MetricsClient
+                self.metrics_client.emit_api_call(
                     success=True,
-                    response_time=response_time,
+                    response_time_ms=response_time * 1000,
                     status_code=response.getcode()
                 )
                 
@@ -206,10 +207,10 @@ class ExternalAPIClient:
         except urllib.error.HTTPError as e:
             response_time = time.time() - start_time
             
-            # Emit metrics for error
-            self._emit_api_metrics(
+            # Emit metrics using MetricsClient
+            self.metrics_client.emit_api_call(
                 success=False,
-                response_time=response_time,
+                response_time_ms=response_time * 1000,
                 status_code=e.code
             )
             
@@ -252,10 +253,10 @@ class ExternalAPIClient:
         except urllib.error.URLError as e:
             response_time = time.time() - start_time
             
-            # Emit metrics for error
-            self._emit_api_metrics(
+            # Emit metrics using MetricsClient
+            self.metrics_client.emit_api_call(
                 success=False,
-                response_time=response_time,
+                response_time_ms=response_time * 1000,
                 status_code=0
             )
             
@@ -269,10 +270,10 @@ class ExternalAPIClient:
         except Exception as e:
             response_time = time.time() - start_time
             
-            # Emit metrics for error
-            self._emit_api_metrics(
+            # Emit metrics using MetricsClient
+            self.metrics_client.emit_api_call(
                 success=False,
-                response_time=response_time,
+                response_time_ms=response_time * 1000,
                 status_code=0
             )
             
@@ -282,53 +283,6 @@ class ExternalAPIClient:
                 url=url
             )
             raise NetworkError(f"Unexpected error: {str(e)}")
-    
-    def _emit_api_metrics(
-        self,
-        success: bool,
-        response_time: float,
-        status_code: int
-    ) -> None:
-        """
-        Emit CloudWatch metrics for API call.
-        
-        Args:
-            success: Whether call was successful
-            response_time: Response time in seconds
-            status_code: HTTP status code
-        """
-        try:
-            metrics = [
-                {
-                    'MetricName': 'ExternalAPICallCount',
-                    'Value': 1,
-                    'Unit': 'Count',
-                    'Dimensions': [
-                        {'Name': 'Success', 'Value': str(success)},
-                        {'Name': 'StatusCode', 'Value': str(status_code)}
-                    ]
-                },
-                {
-                    'MetricName': 'ExternalAPIResponseTime',
-                    'Value': response_time * 1000,  # Convert to milliseconds
-                    'Unit': 'Milliseconds',
-                    'Dimensions': [
-                        {'Name': 'Success', 'Value': str(success)}
-                    ]
-                }
-            ]
-            
-            cloudwatch.put_metric_data(
-                Namespace='BDOMarketInsights/ETL',
-                MetricData=metrics
-            )
-            
-        except Exception as e:
-            # Don't fail the request if metrics emission fails
-            self.logger.warning(
-                "Failed to emit CloudWatch metrics",
-                error=e
-            )
     
     def fetch_market_data(self, item_ids: List[int]) -> List[Dict[str, Any]]:
         """
@@ -438,6 +392,9 @@ def handler(event: Dict[str, Any], context: Any, logger: StructuredLogger) -> Di
     """
     logger.info("fetchData Lambda invocation started", event_keys=list(event.keys()))
     
+    # Initialize metrics client
+    metrics = MetricsClient(namespace="BDOMarketInsights/ETL", logger=logger)
+    
     try:
         # Validate input
         try:
@@ -449,98 +406,112 @@ def handler(event: Dict[str, Any], context: Any, logger: StructuredLogger) -> Di
             )
         except ValidationError as e:
             logger.error("Input validation failed", error=e)
+            metrics.emit_etl_failure(
+                function_name="fetchData",
+                error_type="ValidationError"
+            )
             raise
         
-        # Get configuration
-        batch_size = input_data.batch_size
-        item_ids = input_data.item_ids
-        
-        # Split into batches
-        batches = split_into_batches(item_ids, batch_size, MAX_BATCH_SIZE)
-        
-        logger.info(
-            "Split items into batches",
-            total_items=len(item_ids),
-            batch_count=len(batches),
-            batch_size=batch_size,
-            max_batch_size=MAX_BATCH_SIZE
-        )
-        
-        # Initialize rate limiter and circuit breaker
-        rate_limiter = RateLimiter(RATE_LIMIT_PER_MINUTE, logger)
-        breaker = get_circuit_breaker(logger)
-        
-        # Initialize API client
-        api_client = ExternalAPIClient(
-            base_url=BASE_URL,
-            region=REGION,
-            rate_limiter=rate_limiter,
-            circuit_breaker=breaker,
-            logger=logger
-        )
-        
-        # Fetch data for all batches
-        all_data = []
-        successful_batches = 0
-        failed_batches = 0
-        
-        for i, batch in enumerate(batches):
-            try:
-                logger.info(
-                    f"Processing batch {i+1}/{len(batches)}",
-                    batch_number=i+1,
-                    batch_size=len(batch)
-                )
-                
-                batch_data = api_client.fetch_market_data(batch)
-                all_data.extend(batch_data)
-                successful_batches += 1
-                
-            except CircuitBreakerError as e:
-                # Circuit breaker is open - fail fast for remaining batches
-                logger.error(
-                    "Circuit breaker open, stopping batch processing",
-                    error=e,
-                    processed_batches=i,
-                    remaining_batches=len(batches) - i
-                )
-                failed_batches = len(batches) - i
-                break
-                
-            except Exception as e:
-                # Log error but continue with next batch
-                logger.error(
-                    f"Failed to fetch batch {i+1}",
-                    error=e,
-                    batch_number=i+1
-                )
-                failed_batches += 1
-        
-        # Prepare response
-        scrape_time = datetime.now(timezone.utc)
-        
-        response = {
-            "raw_data": all_data,
-            "scrape_endpoint": f"{BASE_URL}/{REGION}/items",
-            "scrape_time": scrape_time.isoformat(),
-            "correlation_id": input_data.correlation_id,
-            "metadata": {
-                "total_items_requested": len(item_ids),
-                "total_records_fetched": len(all_data),
-                "batches_processed": successful_batches,
-                "batches_failed": failed_batches,
-                "batch_size": batch_size
+        # Track execution latency
+        with metrics.track_latency("fetchData"):
+            # Get configuration
+            batch_size = input_data.batch_size
+            item_ids = input_data.item_ids
+            
+            # Split into batches
+            batches = split_into_batches(item_ids, batch_size, MAX_BATCH_SIZE)
+            
+            logger.info(
+                "Split items into batches",
+                total_items=len(item_ids),
+                batch_count=len(batches),
+                batch_size=batch_size,
+                max_batch_size=MAX_BATCH_SIZE
+            )
+            
+            # Initialize rate limiter and circuit breaker
+            rate_limiter = RateLimiter(RATE_LIMIT_PER_MINUTE, logger)
+            breaker = get_circuit_breaker(logger)
+            
+            # Initialize API client
+            api_client = ExternalAPIClient(
+                base_url=BASE_URL,
+                region=REGION,
+                rate_limiter=rate_limiter,
+                circuit_breaker=breaker,
+                metrics_client=metrics,
+                logger=logger
+            )
+            
+            # Fetch data for all batches
+            all_data = []
+            successful_batches = 0
+            failed_batches = 0
+            
+            for i, batch in enumerate(batches):
+                try:
+                    logger.info(
+                        f"Processing batch {i+1}/{len(batches)}",
+                        batch_number=i+1,
+                        batch_size=len(batch)
+                    )
+                    
+                    batch_data = api_client.fetch_market_data(batch)
+                    all_data.extend(batch_data)
+                    successful_batches += 1
+                    
+                except CircuitBreakerError as e:
+                    # Circuit breaker is open - fail fast for remaining batches
+                    logger.error(
+                        "Circuit breaker open, stopping batch processing",
+                        error=e,
+                        processed_batches=i,
+                        remaining_batches=len(batches) - i
+                    )
+                    failed_batches = len(batches) - i
+                    break
+                    
+                except Exception as e:
+                    # Log error but continue with next batch
+                    logger.error(
+                        f"Failed to fetch batch {i+1}",
+                        error=e,
+                        batch_number=i+1
+                    )
+                    failed_batches += 1
+            
+            # Prepare response
+            scrape_time = datetime.now(timezone.utc)
+            
+            response = {
+                "raw_data": all_data,
+                "scrape_endpoint": f"{BASE_URL}/{REGION}/items",
+                "scrape_time": scrape_time.isoformat(),
+                "correlation_id": input_data.correlation_id,
+                "metadata": {
+                    "total_items_requested": len(item_ids),
+                    "total_records_fetched": len(all_data),
+                    "batches_processed": successful_batches,
+                    "batches_failed": failed_batches,
+                    "batch_size": batch_size
+                }
             }
-        }
-        
-        logger.info(
-            "fetchData completed successfully",
-            records_fetched=len(all_data),
-            batches_processed=successful_batches,
-            batches_failed=failed_batches
-        )
-        
-        return response
+            
+            logger.info(
+                "fetchData completed successfully",
+                records_fetched=len(all_data),
+                batches_processed=successful_batches,
+                batches_failed=failed_batches
+            )
+            
+            # Emit success metric
+            metrics.emit_etl_success(
+                function_name="fetchData",
+                records_fetched=len(all_data),
+                batches_processed=successful_batches
+            )
+            
+            return response
         
     except ValidationError as e:
         # Re-raise validation errors to be handled by router
@@ -548,6 +519,10 @@ def handler(event: Dict[str, Any], context: Any, logger: StructuredLogger) -> Di
         
     except Exception as e:
         logger.error("Unexpected error in fetchData handler", error=e)
+        metrics.emit_etl_failure(
+            function_name="fetchData",
+            error_type=type(e).__name__
+        )
         raise
 
 

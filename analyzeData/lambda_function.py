@@ -14,6 +14,7 @@ sys.path.insert(0, '/opt/python')
 
 from common.router import LambdaRouter
 from common.logging import StructuredLogger
+from common.metrics import MetricsClient
 
 
 # Initialize router
@@ -152,69 +153,90 @@ def handler(event: Dict[str, Any], context: Any, logger: StructuredLogger) -> Di
     """
     logger.info("Starting market data analysis", event_keys=list(event.keys()))
     
-    # Extract data from event
-    market_data = event.get('market_data', [])
-    query_params = event.get('query_params', {})
+    # Initialize metrics client
+    metrics = MetricsClient(namespace="BDOMarketInsights/Query", logger=logger)
     
-    logger.info("Processing market data", record_count=len(market_data))
+    try:
+        # Extract data from event
+        market_data = event.get('market_data', [])
+        query_params = event.get('query_params', {})
+        
+        logger.info("Processing market data", record_count=len(market_data))
+        
+        # Track analysis latency
+        with metrics.track_latency("analyzeData", record_count=len(market_data)) as tracker:
+            # Handle empty data
+            if not market_data:
+                logger.warning("No market data to analyze")
+                return {
+                    'item_id': query_params.get('item_id'),
+                    'item_name': None,
+                    'date_range': {
+                        'start': query_params.get('start_date'),
+                        'end': query_params.get('end_date')
+                    },
+                    'statistics': calculate_statistics([]),
+                    'profitability_score': 0.0,
+                    'price_trend': 'stable',
+                    'record_count': 0
+                }
+            
+            # Extract item information from first record
+            first_record = market_data[0]
+            item_id = first_record.get('item_id')
+            item_name = first_record.get('item_name')
+            
+            logger.info("Analyzing item", item_id=item_id, item_name=item_name)
+            
+            # Calculate statistics
+            statistics = calculate_statistics(market_data)
+            logger.info("Statistics calculated", statistics=statistics)
+            
+            # Compute profitability score
+            profitability_score = compute_profitability_score(market_data)
+            logger.info("Profitability score computed", score=profitability_score)
+            
+            # Determine price trend
+            price_trend = determine_price_trend(market_data)
+            logger.info("Price trend determined", trend=price_trend)
+            
+            # Build response
+            result = {
+                'item_id': item_id,
+                'item_name': item_name,
+                'date_range': {
+                    'start': query_params.get('start_date'),
+                    'end': query_params.get('end_date')
+                },
+                'statistics': statistics,
+                'profitability_score': profitability_score,
+                'price_trend': price_trend,
+                'record_count': len(market_data)
+            }
+            
+            logger.info("Analysis completed successfully", result_summary={
+                'item_id': item_id,
+                'record_count': len(market_data),
+                'profitability_score': profitability_score,
+                'price_trend': price_trend
+            })
+            
+            # Emit query latency metric
+            metrics.emit_query_latency(
+                function_name="analyzeData",
+                latency_ms=tracker.elapsed_ms,
+                record_count=len(market_data)
+            )
+            
+            return result
     
-    # Handle empty data
-    if not market_data:
-        logger.warning("No market data to analyze")
-        return {
-            'item_id': query_params.get('item_id'),
-            'item_name': None,
-            'date_range': {
-                'start': query_params.get('start_date'),
-                'end': query_params.get('end_date')
-            },
-            'statistics': calculate_statistics([]),
-            'profitability_score': 0.0,
-            'price_trend': 'stable',
-            'record_count': 0
-        }
-    
-    # Extract item information from first record
-    first_record = market_data[0]
-    item_id = first_record.get('item_id')
-    item_name = first_record.get('item_name')
-    
-    logger.info("Analyzing item", item_id=item_id, item_name=item_name)
-    
-    # Calculate statistics
-    statistics = calculate_statistics(market_data)
-    logger.info("Statistics calculated", statistics=statistics)
-    
-    # Compute profitability score
-    profitability_score = compute_profitability_score(market_data)
-    logger.info("Profitability score computed", score=profitability_score)
-    
-    # Determine price trend
-    price_trend = determine_price_trend(market_data)
-    logger.info("Price trend determined", trend=price_trend)
-    
-    # Build response
-    result = {
-        'item_id': item_id,
-        'item_name': item_name,
-        'date_range': {
-            'start': query_params.get('start_date'),
-            'end': query_params.get('end_date')
-        },
-        'statistics': statistics,
-        'profitability_score': profitability_score,
-        'price_trend': price_trend,
-        'record_count': len(market_data)
-    }
-    
-    logger.info("Analysis completed successfully", result_summary={
-        'item_id': item_id,
-        'record_count': len(market_data),
-        'profitability_score': profitability_score,
-        'price_trend': price_trend
-    })
-    
-    return result
+    except Exception as e:
+        logger.error("Analysis failed", error=e)
+        metrics.emit_etl_failure(
+            function_name="analyzeData",
+            error_type=type(e).__name__
+        )
+        raise
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:

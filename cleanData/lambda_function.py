@@ -20,6 +20,7 @@ sys.path.insert(0, '/opt/python')
 
 from common.router import LambdaRouter, ValidationError as RouterValidationError
 from common.schemas import CleanDataInput, MarketDataRecord
+from common.metrics import MetricsClient
 from pydantic import ValidationError as PydanticValidationError
 
 
@@ -79,80 +80,108 @@ def handler(event: Dict[str, Any], context: Any, logger) -> Dict[str, Any]:
     """
     logger.info("Starting data cleaning and validation")
     
-    # Validate input
+    # Initialize metrics client
+    metrics = MetricsClient(namespace="BDOMarketInsights/ETL", logger=logger)
+    
     try:
-        input_data = CleanDataInput(**event)
-        logger.info(
-            "Input validated",
-            raw_record_count=len(input_data.raw_data)
-        )
-    except PydanticValidationError as e:
-        logger.error("Input validation failed", error=e)
-        # Re-raise as RouterValidationError so router catches it properly
-        raise RouterValidationError(str(e))
-    
-    # Transform and validate each record
-    cleaned_records = []
-    invalid_records = []
-    
-    for idx, raw_record in enumerate(input_data.raw_data):
+        # Validate input
         try:
-            # Transform to schema format
-            transformed = transform_raw_record(raw_record)
-            
-            # Validate against Pydantic schema
-            validated_record = MarketDataRecord(**transformed)
-            
-            # Add to cleaned list (serialize datetime to ISO format)
-            cleaned_records.append(validated_record.model_dump(mode='json'))
-            
+            input_data = CleanDataInput(**event)
+            logger.info(
+                "Input validated",
+                raw_record_count=len(input_data.raw_data)
+            )
         except PydanticValidationError as e:
-            # Log validation failure and skip record
-            logger.warning(
-                "Record validation failed, filtering out",
-                record_index=idx,
-                item_id=raw_record.get('itemId'),
-                validation_errors=e.errors()
+            logger.error("Input validation failed", error=e)
+            metrics.emit_etl_failure(
+                function_name="cleanData",
+                error_type="ValidationError"
             )
-            invalid_records.append({
-                'index': idx,
-                'item_id': raw_record.get('itemId'),
-                'errors': e.errors()
-            })
-        except Exception as e:
-            # Log unexpected transformation errors
-            logger.warning(
-                "Record transformation failed, filtering out",
-                record_index=idx,
-                item_id=raw_record.get('itemId'),
-                error_type=type(e).__name__,
-                error_message=str(e)
+            # Re-raise as RouterValidationError so router catches it properly
+            raise RouterValidationError(str(e))
+        
+        # Track execution latency
+        with metrics.track_latency("cleanData"):
+            # Transform and validate each record
+            cleaned_records = []
+            invalid_records = []
+            
+            for idx, raw_record in enumerate(input_data.raw_data):
+                try:
+                    # Transform to schema format
+                    transformed = transform_raw_record(raw_record)
+                    
+                    # Validate against Pydantic schema
+                    validated_record = MarketDataRecord(**transformed)
+                    
+                    # Add to cleaned list (serialize datetime to ISO format)
+                    cleaned_records.append(validated_record.model_dump(mode='json'))
+                    
+                except PydanticValidationError as e:
+                    # Log validation failure and skip record
+                    logger.warning(
+                        "Record validation failed, filtering out",
+                        record_index=idx,
+                        item_id=raw_record.get('itemId'),
+                        validation_errors=e.errors()
+                    )
+                    invalid_records.append({
+                        'index': idx,
+                        'item_id': raw_record.get('itemId'),
+                        'errors': e.errors()
+                    })
+                except Exception as e:
+                    # Log unexpected transformation errors
+                    logger.warning(
+                        "Record transformation failed, filtering out",
+                        record_index=idx,
+                        item_id=raw_record.get('itemId'),
+                        error_type=type(e).__name__,
+                        error_message=str(e)
+                    )
+                    invalid_records.append({
+                        'index': idx,
+                        'item_id': raw_record.get('itemId'),
+                        'error': str(e)
+                    })
+            
+            # Log summary
+            logger.info(
+                "Data cleaning completed",
+                total_records=len(input_data.raw_data),
+                valid_records=len(cleaned_records),
+                invalid_records=len(invalid_records)
             )
-            invalid_records.append({
-                'index': idx,
-                'item_id': raw_record.get('itemId'),
-                'error': str(e)
-            })
+            
+            # Emit success metric
+            metrics.emit_etl_success(
+                function_name="cleanData",
+                valid_records=len(cleaned_records),
+                invalid_records=len(invalid_records)
+            )
+            
+            # Return cleaned data
+            return {
+                'cleaned_data': cleaned_records,
+                'correlation_id': input_data.correlation_id,
+                'metadata': {
+                    'total_records': len(input_data.raw_data),
+                    'valid_records': len(cleaned_records),
+                    'invalid_records': len(invalid_records),
+                    'filtered_items': [r['item_id'] for r in invalid_records if 'item_id' in r]
+                }
+            }
     
-    # Log summary
-    logger.info(
-        "Data cleaning completed",
-        total_records=len(input_data.raw_data),
-        valid_records=len(cleaned_records),
-        invalid_records=len(invalid_records)
-    )
-    
-    # Return cleaned data
-    return {
-        'cleaned_data': cleaned_records,
-        'correlation_id': input_data.correlation_id,
-        'metadata': {
-            'total_records': len(input_data.raw_data),
-            'valid_records': len(cleaned_records),
-            'invalid_records': len(invalid_records),
-            'filtered_items': [r['item_id'] for r in invalid_records if 'item_id' in r]
-        }
-    }
+    except RouterValidationError:
+        # Re-raise validation errors
+        raise
+    except Exception as e:
+        logger.error("Unexpected error in cleanData", error=e)
+        metrics.emit_etl_failure(
+            function_name="cleanData",
+            error_type=type(e).__name__
+        )
+        raise
 
 
 # Lambda handler function

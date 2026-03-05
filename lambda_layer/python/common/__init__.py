@@ -45,6 +45,7 @@ from .retry import (
     ResourceNotFoundError,
 )
 from .circuit_breaker import CircuitBreaker, CircuitBreakerError, CircuitState
+from .metrics import MetricsClient, LatencyTracker
 
 __all__ = [
     "LambdaRouter",
@@ -82,4 +83,6 @@ __all__ = [
     "CircuitBreaker",
     "CircuitBreakerError",
     "CircuitState",
+    "MetricsClient",
+    "LatencyTracker",
 ]

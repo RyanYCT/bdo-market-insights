@@ -10,7 +10,7 @@ import os
 from typing import Any, Dict, List
 import boto3
 from botocore.exceptions import ClientError
-from common import LambdaRouter, ItemIdList
+from common import LambdaRouter, ItemIdList, MetricsClient
 from pydantic import ValidationError
 
 
@@ -113,35 +113,60 @@ def handler(event: Dict[str, Any], context: Any, logger) -> Dict[str, Any]:
         ValidationError: If output validation fails
         ValueError: If required parameters are missing or table is empty
     """
-    # Get table name from event or environment variable
-    table_name = event.get("table_name") or os.getenv("DYNAMODB_TABLE_NAME")
+    # Initialize metrics client
+    metrics = MetricsClient(namespace="BDOMarketInsights/ETL", logger=logger)
     
-    if not table_name:
-        raise ValueError("table_name must be provided in event or DYNAMODB_TABLE_NAME environment variable")
-    
-    logger.info("Starting retrieveIdList execution", table_name=table_name)
-    
-    # Initialize DynamoDB service
-    dynamodb_service = DynamoDBService(logger)
-    
-    # Retrieve item IDs from DynamoDB
-    item_ids = dynamodb_service.get_item_ids(table_name)
-    
-    # Validate output using Pydantic schema
     try:
-        output = ItemIdList(
-            item_ids=item_ids,
-            correlation_id=logger.correlation_id
+        # Get table name from event or environment variable
+        table_name = event.get("table_name") or os.getenv("DYNAMODB_TABLE_NAME")
+        
+        if not table_name:
+            raise ValueError("table_name must be provided in event or DYNAMODB_TABLE_NAME environment variable")
+        
+        logger.info("Starting retrieveIdList execution", table_name=table_name)
+        
+        # Track execution latency
+        with metrics.track_latency("retrieveIdList"):
+            # Initialize DynamoDB service
+            dynamodb_service = DynamoDBService(logger)
+            
+            # Retrieve item IDs from DynamoDB
+            item_ids = dynamodb_service.get_item_ids(table_name)
+            
+            # Validate output using Pydantic schema
+            try:
+                output = ItemIdList(
+                    item_ids=item_ids,
+                    correlation_id=logger.correlation_id
+                )
+                
+                logger.info("Output validation successful", 
+                           item_count=len(output.item_ids))
+                
+                # Emit success metric
+                metrics.emit_etl_success(
+                    function_name="retrieveIdList",
+                    item_count=len(output.item_ids)
+                )
+                
+                # Return as dict for Lambda response
+                return output.model_dump()
+                
+            except ValidationError as e:
+                logger.error("Output validation failed", error=e)
+                metrics.emit_etl_failure(
+                    function_name="retrieveIdList",
+                    error_type="ValidationError"
+                )
+                raise
+    
+    except Exception as e:
+        # Emit failure metric
+        error_type = type(e).__name__
+        metrics.emit_etl_failure(
+            function_name="retrieveIdList",
+            error_type=error_type
         )
-        
-        logger.info("Output validation successful", 
-                   item_count=len(output.item_ids))
-        
-        # Return as dict for Lambda response
-        return output.model_dump()
-        
-    except ValidationError as e:
-        logger.error("Output validation failed", error=e)
         raise
 
 

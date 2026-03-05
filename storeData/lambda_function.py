@@ -26,6 +26,7 @@ from common.router import LambdaRouter
 from common.database import DatabasePool
 from common.schemas import StoreDataInput, MarketDataRecord
 from common.logging import StructuredLogger
+from common.metrics import MetricsClient
 from pydantic import ValidationError
 
 
@@ -293,6 +294,9 @@ def handler(event: Dict[str, Any], context: Any, logger: StructuredLogger) -> Di
     """
     from pydantic import ValidationError as PydanticValidationError
     
+    # Initialize metrics client
+    metrics = MetricsClient(namespace="BDOMarketInsights/ETL", logger=logger)
+    
     try:
         # Validate input using Pydantic schema
         input_data = StoreDataInput(**event)
@@ -306,63 +310,92 @@ def handler(event: Dict[str, Any], context: Any, logger: StructuredLogger) -> Di
         # Handle empty data
         if not input_data.cleaned_data:
             logger.info("No data to store")
+            metrics.emit_etl_success(
+                function_name="storeData",
+                records_inserted=0
+            )
             return {
                 'message': 'No data to store',
                 'records_inserted': 0,
                 'correlation_id': input_data.correlation_id
             }
         
-        # Get database pool
-        pool = get_database_pool(logger)
-        
-        # Get configurable category_id (default: 5 for Uncategorized)
-        category_id = int(os.getenv('CATEGORY_ID', '5'))
-        
-        # Create or get MarketScrape record
-        scrape_id = get_or_create_market_scrape(
-            pool,
-            input_data.scrape_endpoint,
-            input_data.scrape_time,
-            logger
-        )
-        
-        # Create or get Item records
-        item_map = get_or_create_items(
-            pool,
-            input_data.cleaned_data,
-            category_id,
-            logger
-        )
-        
-        # Bulk insert MarketData records
-        records_inserted = bulk_insert_market_data(
-            pool,
-            input_data.cleaned_data,
-            item_map,
-            scrape_id,
-            logger
-        )
-        
-        logger.info(
-            "storeData completed successfully",
-            records_inserted=records_inserted,
-            scrape_id=scrape_id
-        )
-        
-        return {
-            'message': 'Data stored successfully',
-            'records_inserted': records_inserted,
-            'scrape_id': scrape_id,
-            'correlation_id': input_data.correlation_id
-        }
+        # Track execution latency
+        with metrics.track_latency("storeData"):
+            # Get database pool
+            pool = get_database_pool(logger)
+            
+            # Emit database pool utilization metrics
+            if hasattr(pool, 'get_pool_stats'):
+                stats = pool.get_pool_stats()
+                metrics.emit_db_pool_utilization(
+                    pool_size=stats.get('pool_size', 0),
+                    active_connections=stats.get('active', 0),
+                    idle_connections=stats.get('idle', 0)
+                )
+            
+            # Get configurable category_id (default: 5 for Uncategorized)
+            category_id = int(os.getenv('CATEGORY_ID', '5'))
+            
+            # Create or get MarketScrape record
+            scrape_id = get_or_create_market_scrape(
+                pool,
+                input_data.scrape_endpoint,
+                input_data.scrape_time,
+                logger
+            )
+            
+            # Create or get Item records
+            item_map = get_or_create_items(
+                pool,
+                input_data.cleaned_data,
+                category_id,
+                logger
+            )
+            
+            # Bulk insert MarketData records
+            records_inserted = bulk_insert_market_data(
+                pool,
+                input_data.cleaned_data,
+                item_map,
+                scrape_id,
+                logger
+            )
+            
+            logger.info(
+                "storeData completed successfully",
+                records_inserted=records_inserted,
+                scrape_id=scrape_id
+            )
+            
+            # Emit success metric
+            metrics.emit_etl_success(
+                function_name="storeData",
+                records_inserted=records_inserted
+            )
+            
+            return {
+                'message': 'Data stored successfully',
+                'records_inserted': records_inserted,
+                'scrape_id': scrape_id,
+                'correlation_id': input_data.correlation_id
+            }
         
     except PydanticValidationError as e:
         logger.error("Input validation failed", error=e)
+        metrics.emit_etl_failure(
+            function_name="storeData",
+            error_type="ValidationError"
+        )
         # Re-raise as router's ValidationError for proper 400 response
         from common.router import ValidationError
         raise ValidationError(str(e))
     except Exception as e:
         logger.error("Error storing data", error=e)
+        metrics.emit_etl_failure(
+            function_name="storeData",
+            error_type=type(e).__name__
+        )
         raise
 
 

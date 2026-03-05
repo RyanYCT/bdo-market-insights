@@ -21,6 +21,7 @@ from common.router import LambdaRouter
 from common.schemas import QueryRequest
 from common.database import DatabasePool
 from common.logging import StructuredLogger
+from common.metrics import MetricsClient
 
 # Environment variables
 DB_SECRET_NAME = os.getenv('DB_SECRET_NAME', 'bdo-db-credentials')
@@ -156,72 +157,101 @@ def handler(event: Dict[str, Any], context: Any, logger: StructuredLogger) -> Di
     """
     logger.info("Starting queryData handler", event_keys=list(event.keys()))
     
-    # Validate input with Pydantic schema
+    # Initialize metrics client
+    metrics = MetricsClient(namespace="BDOMarketInsights/Query", logger=logger)
+    
     try:
-        query_request = QueryRequest(**event)
-        logger.info(
-            "Query parameters validated",
-            item_id=query_request.item_id,
-            item_name=query_request.name,
-            category=query_request.category,
-            start_date=query_request.start_date.isoformat(),
-            end_date=query_request.end_date.isoformat(),
-            limit=query_request.limit
-        )
-    except Exception as e:
-        logger.error("Query parameter validation failed", error=e)
-        raise
-    
-    # Get database pool
-    pool = get_database_pool(logger)
-    
-    # Build query
-    query, params = build_query(
-        item_id=query_request.item_id,
-        name=query_request.name,
-        category=query_request.category,
-        start_date=query_request.start_date,
-        end_date=query_request.end_date,
-        limit=query_request.limit
-    )
-    
-    logger.info(
-        "Executing database query",
-        query_preview=query[:200],
-        param_count=len(params)
-    )
-    
-    # Execute query
-    try:
-        results = pool.execute_query(query, tuple(params))
+        # Validate input with Pydantic schema
+        try:
+            query_request = QueryRequest(**event)
+            logger.info(
+                "Query parameters validated",
+                item_id=query_request.item_id,
+                item_name=query_request.name,
+                category=query_request.category,
+                start_date=query_request.start_date.isoformat(),
+                end_date=query_request.end_date.isoformat(),
+                limit=query_request.limit
+            )
+        except Exception as e:
+            logger.error("Query parameter validation failed", error=e)
+            metrics.emit_etl_failure(
+                function_name="queryData",
+                error_type="ValidationError"
+            )
+            raise
         
-        logger.info(
-            "Query executed successfully",
-            result_count=len(results)
-        )
-        
-        # Convert datetime objects to ISO format strings
-        for row in results:
-            if 'last_sold_time' in row and row['last_sold_time']:
-                row['last_sold_time'] = row['last_sold_time'].isoformat()
-            if 'scrape_time' in row and row['scrape_time']:
-                row['scrape_time'] = row['scrape_time'].isoformat()
-        
-        return {
-            'data': results,
-            'count': len(results),
-            'query_params': {
-                'item_id': query_request.item_id,
-                'name': query_request.name,
-                'category': query_request.category,
-                'start_date': query_request.start_date.isoformat(),
-                'end_date': query_request.end_date.isoformat(),
-                'limit': query_request.limit
+        # Track query latency
+        with metrics.track_latency("queryData", item_id=str(query_request.item_id or "none")) as tracker:
+            # Get database pool
+            pool = get_database_pool(logger)
+            
+            # Emit database pool utilization metrics
+            if hasattr(pool, 'get_pool_stats'):
+                stats = pool.get_pool_stats()
+                metrics.emit_db_pool_utilization(
+                    pool_size=stats.get('pool_size', 0),
+                    active_connections=stats.get('active', 0),
+                    idle_connections=stats.get('idle', 0)
+                )
+            
+            # Build query
+            query, params = build_query(
+                item_id=query_request.item_id,
+                name=query_request.name,
+                category=query_request.category,
+                start_date=query_request.start_date,
+                end_date=query_request.end_date,
+                limit=query_request.limit
+            )
+            
+            logger.info(
+                "Executing database query",
+                query_preview=query[:200],
+                param_count=len(params)
+            )
+            
+            # Execute query
+            results = pool.execute_query(query, tuple(params))
+            
+            logger.info(
+                "Query executed successfully",
+                result_count=len(results)
+            )
+            
+            # Convert datetime objects to ISO format strings
+            for row in results:
+                if 'last_sold_time' in row and row['last_sold_time']:
+                    row['last_sold_time'] = row['last_sold_time'].isoformat()
+                if 'scrape_time' in row and row['scrape_time']:
+                    row['scrape_time'] = row['scrape_time'].isoformat()
+            
+            # Emit query latency metric
+            metrics.emit_query_latency(
+                function_name="queryData",
+                latency_ms=tracker.elapsed_ms,
+                result_count=len(results)
+            )
+            
+            return {
+                'data': results,
+                'count': len(results),
+                'query_params': {
+                    'item_id': query_request.item_id,
+                    'name': query_request.name,
+                    'category': query_request.category,
+                    'start_date': query_request.start_date.isoformat(),
+                    'end_date': query_request.end_date.isoformat(),
+                    'limit': query_request.limit
+                }
             }
-        }
         
     except Exception as e:
         logger.error("Database query failed", error=e)
+        metrics.emit_etl_failure(
+            function_name="queryData",
+            error_type=type(e).__name__
+        )
         raise
 
 
