@@ -141,7 +141,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Test bulk insert logic
     - Test transaction rollback on errors
 
-- [ ] 11. Checkpoint - Verify ETL pipeline
+- [x] 11. Checkpoint - Verify ETL pipeline
   - Ensure all tests pass, ask the user if questions arise.
 
 ### Phase 3: Query Pipeline Rewrite
