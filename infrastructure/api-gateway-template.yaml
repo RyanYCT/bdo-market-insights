@@ -1,0 +1,395 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: API Gateway configuration for BDO Market Insights Query Pipeline
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment name
+  
+  AllowedOrigins:
+    Type: CommaDelimitedList
+    Default: "https://example.com"
+    Description: Comma-separated list of allowed CORS origins
+  
+  StepFunctionsArn:
+    Type: String
+    Description: ARN of the Step Functions state machine for query pipeline
+
+Resources:
+  # API Gateway REST API
+  BDOMarketInsightsAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub 'bdo-market-insights-api-${Environment}'
+      Description: RESTful API for querying BDO market data
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Policy:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: 'execute-api:Invoke'
+            Resource: '*'
+
+  # API Gateway Resource: /query
+  QueryResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref BDOMarketInsightsAPI
+      ParentId: !GetAtt BDOMarketInsightsAPI.RootResourceId
+      PathPart: query
+
+  # GET Method for /query
+  QueryGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref BDOMarketInsightsAPI
+      ResourceId: !Ref QueryResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      RequestParameters:
+        method.request.querystring.item_id: false
+        method.request.querystring.name: false
+        method.request.querystring.category: false
+        method.request.querystring.start_date: true
+        method.request.querystring.end_date: true
+        method.request.querystring.limit: false
+      RequestValidatorId: !Ref QueryRequestValidator
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:states:action/StartSyncExecution'
+        Credentials: !GetAtt APIGatewayStepFunctionsRole.Arn
+        RequestTemplates:
+          application/json: !Sub |
+            {
+              "stateMachineArn": "${StepFunctionsArn}",
+              "input": "{\"queryStringParameters\": {\"item_id\": \"$util.escapeJavaScript($input.params('item_id'))\", \"name\": \"$util.escapeJavaScript($input.params('name'))\", \"category\": \"$util.escapeJavaScript($input.params('category'))\", \"start_date\": \"$util.escapeJavaScript($input.params('start_date'))\", \"end_date\": \"$util.escapeJavaScript($input.params('end_date'))\", \"limit\": \"$util.escapeJavaScript($input.params('limit'))\"}, \"requestContext\": {\"requestId\": \"$context.requestId\"}}"
+            }
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Content-Type: "'application/json'"
+              method.response.header.Cache-Control: "'public, max-age=300'"
+              method.response.header.Access-Control-Allow-Origin: !Sub "'${AllowedOrigins}'"
+            ResponseTemplates:
+              application/json: |
+                #set($output = $util.parseJson($input.path('$.output')))
+                $output.body
+          - StatusCode: 400
+            SelectionPattern: '4\d{2}'
+            ResponseParameters:
+              method.response.header.Content-Type: "'application/json'"
+              method.response.header.Access-Control-Allow-Origin: !Sub "'${AllowedOrigins}'"
+            ResponseTemplates:
+              application/json: |
+                {
+                  "error": "Bad Request",
+                  "message": "$input.path('$.error')"
+                }
+          - StatusCode: 500
+            SelectionPattern: '5\d{2}'
+            ResponseParameters:
+              method.response.header.Content-Type: "'application/json'"
+              method.response.header.Access-Control-Allow-Origin: !Sub "'${AllowedOrigins}'"
+            ResponseTemplates:
+              application/json: |
+                {
+                  "error": "Internal Server Error",
+                  "message": "An error occurred processing your request"
+                }
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Content-Type: true
+            method.response.header.Cache-Control: true
+            method.response.header.Access-Control-Allow-Origin: true
+          ResponseModels:
+            application/json: !Ref QueryResponseModel
+        - StatusCode: 400
+          ResponseParameters:
+            method.response.header.Content-Type: true
+            method.response.header.Access-Control-Allow-Origin: true
+        - StatusCode: 500
+          ResponseParameters:
+            method.response.header.Content-Type: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # OPTIONS Method for CORS preflight
+  QueryOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref BDOMarketInsightsAPI
+      ResourceId: !Ref QueryResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: !Sub "'${AllowedOrigins}'"
+              method.response.header.Access-Control-Max-Age: "'3600'"
+            ResponseTemplates:
+              application/json: ''
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Max-Age: true
+
+  # Request Validator
+  QueryRequestValidator:
+    Type: AWS::ApiGateway::RequestValidator
+    Properties:
+      RestApiId: !Ref BDOMarketInsightsAPI
+      Name: query-request-validator
+      ValidateRequestParameters: true
+      ValidateRequestBody: false
+
+  # Response Models
+  QueryResponseModel:
+    Type: AWS::ApiGateway::Model
+    Properties:
+      RestApiId: !Ref BDOMarketInsightsAPI
+      ContentType: application/json
+      Name: QueryResponse
+      Schema:
+        $schema: 'http://json-schema.org/draft-04/schema#'
+        type: object
+        properties:
+          item_id:
+            type: integer
+          item_name:
+            type: string
+          date_range:
+            type: object
+            properties:
+              start:
+                type: string
+                format: date-time
+              end:
+                type: string
+                format: date-time
+          statistics:
+            type: object
+            properties:
+              avg_last_sold_price:
+                type: number
+              min_last_sold_price:
+                type: integer
+              max_last_sold_price:
+                type: integer
+              avg_current_stock:
+                type: number
+              total_trades_sum:
+                type: integer
+          profitability_score:
+            type: number
+          price_trend:
+            type: string
+            enum: [increasing, decreasing, stable]
+          correlation_id:
+            type: string
+
+  # API Key
+  BDOAPIKey:
+    Type: AWS::ApiGateway::ApiKey
+    DependsOn:
+      - BDOMarketInsightsAPIDeployment
+      - BDOMarketInsightsAPIStage
+    Properties:
+      Name: !Sub 'bdo-api-key-${Environment}'
+      Description: API key for BDO Market Insights API
+      Enabled: true
+      StageKeys:
+        - RestApiId: !Ref BDOMarketInsightsAPI
+          StageName: !Ref Environment
+
+  # Usage Plan
+  BDOUsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    DependsOn:
+      - BDOMarketInsightsAPIDeployment
+      - BDOMarketInsightsAPIStage
+    Properties:
+      UsagePlanName: !Sub 'bdo-usage-plan-${Environment}'
+      Description: Usage plan for BDO Market Insights API
+      ApiStages:
+        - ApiId: !Ref BDOMarketInsightsAPI
+          Stage: !Ref Environment
+      Throttle:
+        BurstLimit: 20
+        RateLimit: 100
+      Quota:
+        Limit: 10000
+        Period: DAY
+
+  # Usage Plan Key (associates API key with usage plan)
+  BDOUsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: !Ref BDOAPIKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref BDOUsagePlan
+
+  # API Deployment
+  BDOMarketInsightsAPIDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - QueryGetMethod
+      - QueryOptionsMethod
+    Properties:
+      RestApiId: !Ref BDOMarketInsightsAPI
+      Description: !Sub 'Deployment for ${Environment} environment'
+
+  # API Stage
+  BDOMarketInsightsAPIStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref BDOMarketInsightsAPI
+      DeploymentId: !Ref BDOMarketInsightsAPIDeployment
+      StageName: !Ref Environment
+      Description: !Sub '${Environment} stage'
+      TracingEnabled: true
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          DataTraceEnabled: true
+          MetricsEnabled: true
+          ThrottlingBurstLimit: 20
+          ThrottlingRateLimit: 100
+      AccessLogSetting:
+        DestinationArn: !GetAtt APIAccessLogGroup.Arn
+        Format: '$context.requestId $context.extendedRequestId $context.identity.sourceIp $context.requestTime $context.httpMethod $context.routeKey $context.status $context.protocol $context.responseLength $context.error.message $context.identity.apiKey'
+
+  # CloudWatch Log Group for API Access Logs
+  APIAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/apigateway/bdo-market-insights-${Environment}'
+      RetentionInDays: 30
+
+  # IAM Role for API Gateway to invoke Step Functions
+  APIGatewayStepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'bdo-api-gateway-stepfunctions-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AWSStepFunctionsFullAccess'
+      Policies:
+        - PolicyName: InvokeStepFunctions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'states:StartSyncExecution'
+                  - 'states:StartExecution'
+                Resource: !Ref StepFunctionsArn
+
+  # CloudWatch Alarms for API monitoring
+  APIErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-api-error-rate-${Environment}'
+      AlarmDescription: Alert when API error rate exceeds 5%
+      MetricName: 5XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub 'bdo-market-insights-api-${Environment}'
+        - Name: Stage
+          Value: !Ref Environment
+      TreatMissingData: notBreaching
+
+  API4XXErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-api-4xx-rate-${Environment}'
+      AlarmDescription: Alert when API 4XX error rate is high
+      MetricName: 4XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 50
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub 'bdo-market-insights-api-${Environment}'
+        - Name: Stage
+          Value: !Ref Environment
+      TreatMissingData: notBreaching
+
+  APILatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-api-latency-${Environment}'
+      AlarmDescription: Alert when API latency p95 exceeds 2 seconds
+      MetricName: Latency
+      Namespace: AWS/ApiGateway
+      ExtendedStatistic: p95
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 2000
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub 'bdo-market-insights-api-${Environment}'
+        - Name: Stage
+          Value: !Ref Environment
+      TreatMissingData: notBreaching
+
+Outputs:
+  APIEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${BDOMarketInsightsAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub 'bdo-api-endpoint-${Environment}'
+
+  APIKey:
+    Description: API Key ID
+    Value: !Ref BDOAPIKey
+    Export:
+      Name: !Sub 'bdo-api-key-${Environment}'
+
+  APIId:
+    Description: API Gateway ID
+    Value: !Ref BDOMarketInsightsAPI
+    Export:
+      Name: !Sub 'bdo-api-id-${Environment}'
+
+  UsagePlanId:
+    Description: Usage Plan ID
+    Value: !Ref BDOUsagePlan
+    Export:
+      Name: !Sub 'bdo-usage-plan-${Environment}'

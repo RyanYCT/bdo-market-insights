@@ -146,8 +146,8 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
 
 ### Phase 3: Query Pipeline Rewrite
 
-- [ ] 12. Update API Gateway configuration
-  - [ ] 12.1 Configure API Gateway for GET method
+- [x] 12. Update API Gateway configuration
+  - [x] 12.1 Configure API Gateway for GET method
     - Change query endpoint from POST to GET
     - Configure query parameter extraction
     - Set up API key authentication
@@ -155,7 +155,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Set up CORS headers for approved origins
     - _Requirements: 8.1, 8.2, 9.1, 9.2, 9.3, 9.4_
   
-  - [ ] 12.2 Write property tests for API authentication
+  - [x] 12.2 Write property tests for API authentication
     - **Property 15: API key rate limiting**
     - **Property 16: API access audit logging**
     - **Validates: Requirements 9.3, 9.5**
