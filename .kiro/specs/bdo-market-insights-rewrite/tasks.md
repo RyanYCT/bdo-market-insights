@@ -208,7 +208,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Test price trend detection
     - Test edge cases (empty data, single record)
 
-- [ ] 16. Checkpoint - Verify Query pipeline
+- [x] 16. Checkpoint - Verify Query pipeline
   - Ensure all tests pass, ask the user if questions arise.
 
 ### Phase 4: Monitoring and Observability
