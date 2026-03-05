@@ -1,306 +1,372 @@
-import json
-import logging
+"""
+storeData Lambda function - Stores cleaned market data to PostgreSQL.
+
+Integrates with:
+- LambdaRouter for consistent request/response handling
+- StructuredLogger for JSON logging with correlation IDs
+- DatabasePool for PostgreSQL connection pooling
+- Pydantic schemas for input validation
+
+Implements:
+- Create or get MarketScrape record
+- Create or get Item records with category lookup
+- Bulk insert MarketData records
+- Parameterized queries for SQL injection prevention
+"""
+
 import os
+import sys
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-import psycopg2
-from psycopg2.extras import execute_values
+# Add lambda_layer to path
+sys.path.insert(0, '/opt/python')
 
-# Configure logging
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
-
-class LambdaRouter:
-    """Router class to handle different types of Lambda events"""
-
-    def __init__(self):
-        self.api_routes = {}
-        self.step_routes = {}
-        self.default_headers = {"Content-Type": "application/json"}
-
-    def api_route(self, method: str, path: str):
-        """Decorator to register API Gateway routes"""
-        route_key = f"{method}:{path}"
-
-        def decorator(func):
-            self.api_routes[route_key] = func
-            return func
-
-        return decorator
-
-    def step_route(self, step_name: str):
-        """Decorator to register Step Functions routes"""
-
-        def decorator(func):
-            self.step_routes[step_name] = func
-            return func
-
-        return decorator
-
-    def handle(self, event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-        """Main handler that routes requests based on the event source"""
-        logger.info(f"Event received: {json.dumps(event)}")
-
-        # Determine the event source and route
-        try:
-            # API Gateway event
-            if "httpMethod" in event or "requestContext" in event:
-                return self._handle_api_gateway(event)
-
-            # Step Functions event or default
-            else:
-                return self._handle_step_function(event)
-
-        except Exception as e:
-            logger.error(f"Error processing event: {e}")
-            # For API Gateway, return HTTP error
-            if "httpMethod" in event or "requestContext" in event:
-                return {
-                    "statusCode": 500,
-                    "headers": self.default_headers,
-                    "body": json.dumps({"error": str(e)}),
-                }
-            # For Step Functions, return plain error
-            else:
-                return {"error": str(e)}
-
-    def _handle_api_gateway(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle API Gateway events by routing to the appropriate handler"""
-        # Extract HTTP method and path from the event
-        if "requestContext" in event and "http" in event["requestContext"]:
-            # HTTP API format
-            http_method = event["requestContext"]["http"]["method"]
-            resource_path = event["requestContext"]["http"]["path"]
-        else:
-            # REST API format
-            http_method = event.get("httpMethod")
-            resource_path = event.get("resource", event.get("path", ""))
-
-        # Create the route key
-        route_key = f"{http_method}:{resource_path}"
-
-        # Find the handler function
-        handler_func = self.api_routes.get(route_key)
-
-        if not handler_func:
-            # Try to match parameterized routes
-            for config_route, config_handler in self.api_routes.items():
-                if self._is_route_match(config_route, route_key):
-                    handler_func = config_handler
-                    break
-
-        if handler_func:
-            return handler_func(event)
-        else:
-            logger.error(f"No handler found for route: {route_key}")
-            return {
-                "statusCode": 404,
-                "headers": self.default_headers,
-                "body": json.dumps({"error": f"Route not found: {route_key}"}),
-            }
-
-    def _handle_step_function(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle Step Functions events by routing to the appropriate handler"""
-        # Extract the step name from the event if available
-        step_name = event.get("step", "default")
-
-        # Find the handler function
-        handler_func = self.step_routes.get(step_name)
-        if handler_func:
-            return handler_func(event)
-        else:
-            logger.error(f"Invalid step name: {step_name}")
-            return {"error": f"Invalid step name: {step_name}"}
-
-    def _is_route_match(self, config_route: str, actual_route: str) -> bool:
-        """Check if a parameterized route matches the actual route"""
-        # Split method and path
-        config_method, config_path = config_route.split(":", 1)
-        actual_method, actual_path = actual_route.split(":", 1)
-
-        # Methods must match
-        if config_method != actual_method:
-            return False
-
-        # Check path matching
-        config_parts = config_path.split("/")
-        actual_parts = actual_path.split("/")
-
-        if len(config_parts) != len(actual_parts):
-            return False
-
-        for i, part in enumerate(config_parts):
-            if "{" in part and "}" in part:
-                # Skip parameter
-                continue
-            elif part != actual_parts[i]:
-                return False
-
-        return True
-
-
-class StoreDataService:
-    """Service class for storing data to PostgreSQL database"""
-
-    def __init__(self):
-        self.db_name = os.getenv("DB_NAME")
-        self.db_user = os.getenv("DB_USER")
-        self.db_password = os.getenv("DB_PASSWORD")
-        self.db_host = os.getenv("DB_HOST")
-        self.db_port = os.getenv("DB_PORT")
-
-    def store_data(self, endpoint: str, scrape_time: Any, data: List[Dict[str, Any]]) -> Dict[str, Any]:
-        if not data:
-            return {"message": "No data to store"}
-
-        try:
-            with psycopg2.connect(
-                dbname=self.db_name,
-                user=self.db_user,
-                password=self.db_password,
-                host=self.db_host,
-                port=self.db_port,
-            ) as conn:
-                with conn.cursor() as cursor:
-                    # Insert MarketScrape
-                    scrape_dt = datetime.fromtimestamp(scrape_time)
-                    cursor.execute(
-                        """
-                        INSERT INTO bdo_marketscrape (endpoint, scrape_time)
-                        VALUES (%s, %s)
-                        ON CONFLICT (scrape_time) DO UPDATE SET endpoint=EXCLUDED.endpoint
-                        RETURNING id
-                        """,
-                        (endpoint, scrape_dt),
-                    )
-                    scrape_id = cursor.fetchone()[0]
-
-                    # Batch upsert items
-                    item_rows = []
-                    for item in data:
-                        # Only set category_id = 5 for new item
-                        item_rows.append((item["id"], item["sid"], item["name"], 5))
-                    execute_values(
-                        cursor,
-                        """
-                        INSERT INTO bdo_item (item_id, sid, name, category_id)
-                        VALUES %s
-                        ON CONFLICT (item_id, sid) DO UPDATE SET name=EXCLUDED.name
-                        """,
-                        item_rows,
-                    )
-
-                    # Fetch all item ids to build item_map
-                    cursor.execute(
-                        """
-                        SELECT item_id, sid, id FROM bdo_item
-                        WHERE (item_id, sid) IN %s
-                        """,
-                        (tuple((item["id"], item["sid"]) for item in data),),
-                    )
-                    # item_map = {(item_id, sid): id}
-                    item_map = {}
-                    rows = cursor.fetchall()
-                    for row in rows:
-                        key = (row[0], row[1])
-                        value = row[2]
-                        item_map[key] = value
-
-                    # Prepare batch insert for MarketData
-                    marketdata_rows = []
-                    for item in data:
-                        item_id = item["id"]
-                        sid = item["sid"]
-                        item_fk = item_map[(item_id, sid)]
-                        current_stock = item["currentStock"]
-                        total_trades = item["totalTrades"]
-                        last_sold_price = item["lastSoldPrice"]
-                        last_sold_time = datetime.fromtimestamp(item["lastSoldTime"])
-                        marketdata_rows.append(
-                            (
-                                current_stock,
-                                total_trades,
-                                last_sold_price,
-                                last_sold_time,
-                                item_fk,
-                                scrape_id,
-                            )
-                        )
-
-                    # Batch insert MarketData with upsert
-                    execute_values(
-                        cursor,
-                        """
-                        INSERT INTO bdo_marketdata
-                        (current_stock, total_trades, last_sold_price, last_sold_time, item_id, scrape_id)
-                        VALUES %s
-                        ON CONFLICT (item_id, scrape_id) DO UPDATE SET
-                            current_stock=EXCLUDED.current_stock,
-                            total_trades=EXCLUDED.total_trades,
-                            last_sold_price=EXCLUDED.last_sold_price,
-                            last_sold_time=EXCLUDED.last_sold_time
-                        """,
-                        marketdata_rows,
-                    )
-
-                conn.commit()
-                return {
-                    "message": "Data stored successfully",
-                    "insertedCount": len(marketdata_rows),
-                    "scrape_id": scrape_id,
-                }
-        except Exception as e:
-            logger.error(f"Error storing data: {e}")
-            return {"error": f"Failed to store data: {str(e)}"}
+from common.router import LambdaRouter
+from common.database import DatabasePool
+from common.schemas import StoreDataInput, MarketDataRecord
+from common.logging import StructuredLogger
+from pydantic import ValidationError
 
 
 # Initialize router
 router = LambdaRouter()
 
-# Initialize services
-store_service = StoreDataService()
+# Initialize database pool (lazy initialization on first use)
+db_pool: Optional[DatabasePool] = None
 
 
-# Step Functions handler
-@router.step_route("default")
-def store_step(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Process Step Functions"""
+def get_database_pool(logger: StructuredLogger) -> DatabasePool:
+    """
+    Get or create database pool instance.
+    
+    Uses module-level singleton to reuse pool across invocations
+    within the same Lambda execution context.
+    
+    Args:
+        logger: Structured logger instance
+        
+    Returns:
+        DatabasePool: Database connection pool
+    """
+    global db_pool
+    
+    if db_pool is None:
+        secret_name = os.getenv('DB_SECRET_NAME', 'bdo-db-credentials')
+        pool_size = int(os.getenv('DB_POOL_SIZE', '5'))
+        
+        logger.info(
+            "Initializing database pool",
+            secret_name=secret_name,
+            pool_size=pool_size
+        )
+        
+        db_pool = DatabasePool(
+            secret_name=secret_name,
+            pool_size=pool_size,
+            logger=logger
+        )
+    
+    return db_pool
+
+
+def get_or_create_market_scrape(
+    pool: DatabasePool,
+    endpoint: str,
+    scrape_time: datetime,
+    logger: StructuredLogger
+) -> int:
+    """
+    Create or get MarketScrape record.
+    
+    Uses parameterized query with ON CONFLICT to handle duplicates.
+    
+    Args:
+        pool: Database connection pool
+        endpoint: API endpoint used for scraping
+        scrape_time: Timestamp of scrape session
+        logger: Structured logger
+        
+    Returns:
+        int: MarketScrape ID
+    """
+    logger.debug(
+        "Creating or getting MarketScrape record",
+        endpoint=endpoint,
+        scrape_time=scrape_time.isoformat()
+    )
+    
+    with pool.get_connection() as conn:
+        with conn.cursor() as cursor:
+            # Parameterized query prevents SQL injection
+            cursor.execute(
+                """
+                INSERT INTO bdo_marketscrape (endpoint, scrape_time)
+                VALUES (%s, %s)
+                ON CONFLICT (scrape_time) DO UPDATE SET endpoint=EXCLUDED.endpoint
+                RETURNING id
+                """,
+                (endpoint, scrape_time)
+            )
+            
+            scrape_id = cursor.fetchone()[0]
+            conn.commit()
+            
+            logger.debug("MarketScrape record created/retrieved", scrape_id=scrape_id)
+            
+            return scrape_id
+
+
+def get_or_create_items(
+    pool: DatabasePool,
+    records: List[MarketDataRecord],
+    category_id: int,
+    logger: StructuredLogger
+) -> Dict[tuple, int]:
+    """
+    Create or get Item records with category lookup.
+    
+    Uses bulk upsert with parameterized queries for efficiency and security.
+    
+    Args:
+        pool: Database connection pool
+        records: List of market data records
+        category_id: Category ID for items (default: 5 for Uncategorized)
+        logger: Structured logger
+        
+    Returns:
+        dict: Mapping of (item_id, sid) -> database item ID
+    """
+    logger.debug(
+        "Creating or getting Item records",
+        num_items=len(records),
+        category_id=category_id
+    )
+    
+    with pool.get_connection() as conn:
+        with conn.cursor() as cursor:
+            # Prepare item data for bulk upsert
+            # Use parameterized query with execute_values for security
+            from psycopg2.extras import execute_values
+            
+            item_rows = [
+                (record.item_id, record.sid, f"Item_{record.item_id}", category_id)
+                for record in records
+            ]
+            
+            # Bulk upsert items (parameterized)
+            execute_values(
+                cursor,
+                """
+                INSERT INTO bdo_item (item_id, sid, name, category_id)
+                VALUES %s
+                ON CONFLICT (item_id, sid) DO UPDATE SET name=EXCLUDED.name
+                """,
+                item_rows
+            )
+            
+            # Fetch item IDs (parameterized query)
+            item_keys = [(record.item_id, record.sid) for record in records]
+            cursor.execute(
+                """
+                SELECT item_id, sid, id FROM bdo_item
+                WHERE (item_id, sid) IN %s
+                """,
+                (tuple(item_keys),)
+            )
+            
+            # Build mapping
+            item_map = {}
+            for row in cursor.fetchall():
+                key = (row[0], row[1])
+                item_map[key] = row[2]
+            
+            conn.commit()
+            
+            logger.debug(
+                "Item records created/retrieved",
+                num_items=len(item_map)
+            )
+            
+            return item_map
+
+
+def bulk_insert_market_data(
+    pool: DatabasePool,
+    records: List[MarketDataRecord],
+    item_map: Dict[tuple, int],
+    scrape_id: int,
+    logger: StructuredLogger
+) -> int:
+    """
+    Bulk insert MarketData records.
+    
+    Uses parameterized batch insert with ON CONFLICT for upsert behavior.
+    
+    Args:
+        pool: Database connection pool
+        records: List of market data records
+        item_map: Mapping of (item_id, sid) -> database item ID
+        scrape_id: MarketScrape ID
+        logger: Structured logger
+        
+    Returns:
+        int: Number of records inserted
+    """
+    logger.debug(
+        "Bulk inserting MarketData records",
+        num_records=len(records),
+        scrape_id=scrape_id
+    )
+    
+    with pool.get_connection() as conn:
+        with conn.cursor() as cursor:
+            from psycopg2.extras import execute_values
+            
+            # Prepare market data rows (parameterized)
+            marketdata_rows = []
+            for record in records:
+                item_fk = item_map.get((record.item_id, record.sid))
+                if item_fk is None:
+                    logger.warning(
+                        "Item not found in map, skipping record",
+                        item_id=record.item_id,
+                        sid=record.sid
+                    )
+                    continue
+                
+                marketdata_rows.append((
+                    record.current_stock,
+                    record.total_trades,
+                    record.last_sold_price,
+                    record.last_sold_time,
+                    item_fk,
+                    scrape_id
+                ))
+            
+            if not marketdata_rows:
+                logger.warning("No market data rows to insert")
+                return 0
+            
+            # Bulk insert with upsert (parameterized)
+            execute_values(
+                cursor,
+                """
+                INSERT INTO bdo_marketdata
+                (current_stock, total_trades, last_sold_price, last_sold_time, item_id, scrape_id)
+                VALUES %s
+                ON CONFLICT (item_id, scrape_id) DO UPDATE SET
+                    current_stock=EXCLUDED.current_stock,
+                    total_trades=EXCLUDED.total_trades,
+                    last_sold_price=EXCLUDED.last_sold_price,
+                    last_sold_time=EXCLUDED.last_sold_time
+                """,
+                marketdata_rows
+            )
+            
+            affected_rows = cursor.rowcount
+            conn.commit()
+            
+            logger.info(
+                "MarketData records inserted",
+                records_inserted=affected_rows
+            )
+            
+            return affected_rows
+
+
+@router.route()
+def handler(event: Dict[str, Any], context: Any, logger: StructuredLogger) -> Dict[str, Any]:
+    """
+    Main handler for storeData Lambda function.
+    
+    Validates input, stores data to PostgreSQL using connection pooling,
+    and returns result with correlation ID.
+    
+    Args:
+        event: Lambda event containing cleaned_data, scrape_endpoint, scrape_time
+        context: Lambda context
+        logger: Structured logger with correlation ID
+        
+    Returns:
+        dict: Response with records_inserted, scrape_id, correlation_id
+    """
+    from pydantic import ValidationError as PydanticValidationError
+    
     try:
-        # Get parameters from event
-        endpoint = event.get("endpoint")
-        scrape_time = event.get("scrapeTime")
-        data = event.get("data", [])
-
-        # Validate required parameters
-        missing_params = []
-        if not endpoint:
-            missing_params.append("endpoint")
-        if not scrape_time:
-            missing_params.append("scrapeTime")
-        if not data:
-            missing_params.append("data")
-        if missing_params:
-            return {"error": f"Missing parameters: {', '.join(missing_params)}"}
-
-        # Store data in PostgreSQL database
-        result = store_service.store_data(endpoint, scrape_time, data)
-        if "error" in result:
-            return result
+        # Validate input using Pydantic schema
+        input_data = StoreDataInput(**event)
+        
+        logger.info(
+            "Processing storeData request",
+            num_records=len(input_data.cleaned_data),
+            scrape_endpoint=input_data.scrape_endpoint
+        )
+        
+        # Handle empty data
+        if not input_data.cleaned_data:
+            logger.info("No data to store")
+            return {
+                'message': 'No data to store',
+                'records_inserted': 0,
+                'correlation_id': input_data.correlation_id
+            }
+        
+        # Get database pool
+        pool = get_database_pool(logger)
+        
+        # Get configurable category_id (default: 5 for Uncategorized)
+        category_id = int(os.getenv('CATEGORY_ID', '5'))
+        
+        # Create or get MarketScrape record
+        scrape_id = get_or_create_market_scrape(
+            pool,
+            input_data.scrape_endpoint,
+            input_data.scrape_time,
+            logger
+        )
+        
+        # Create or get Item records
+        item_map = get_or_create_items(
+            pool,
+            input_data.cleaned_data,
+            category_id,
+            logger
+        )
+        
+        # Bulk insert MarketData records
+        records_inserted = bulk_insert_market_data(
+            pool,
+            input_data.cleaned_data,
+            item_map,
+            scrape_id,
+            logger
+        )
+        
+        logger.info(
+            "storeData completed successfully",
+            records_inserted=records_inserted,
+            scrape_id=scrape_id
+        )
+        
         return {
-            "endpoint": endpoint,
-            "scrapeTime": scrape_time,
-            "status": "success",
-            "insertedCount": result.get("insertedCount", 0),
-            "scrape_id": result.get("scrape_id"),
+            'message': 'Data stored successfully',
+            'records_inserted': records_inserted,
+            'scrape_id': scrape_id,
+            'correlation_id': input_data.correlation_id
         }
+        
+    except PydanticValidationError as e:
+        logger.error("Input validation failed", error=e)
+        # Re-raise as router's ValidationError for proper 400 response
+        from common.router import ValidationError
+        raise ValidationError(str(e))
     except Exception as e:
-        logger.error(f"Error processing Step Functions task: {e}")
-        return {"error": str(e)}
+        logger.error("Error storing data", error=e)
+        raise
 
 
-# Lambda handler function
+# Lambda entry point
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """AWS Lambda handler function"""
-    return router.handle(event, context)
+    """AWS Lambda handler function."""
+    return handler(event, context)

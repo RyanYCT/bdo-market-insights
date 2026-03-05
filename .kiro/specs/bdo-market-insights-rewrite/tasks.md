@@ -120,8 +120,8 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Test validation error handling
     - Test filtering of invalid records
 
-- [ ] 10. Rewrite storeData Lambda function
-  - [ ] 10.1 Implement storeData with connection pooling
+- [x] 10. Rewrite storeData Lambda function
+  - [x] 10.1 Implement storeData with connection pooling
     - Integrate LambdaRouter and structured logging
     - Use DatabasePool for PostgreSQL connections
     - Create or get MarketScrape record
@@ -130,12 +130,12 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - Use parameterized queries for SQL injection prevention
     - _Requirements: 5.2, 15.1_
   
-  - [ ] 10.2 Write property tests for database operations
+  - [x] 10.2 Write property tests for database operations
     - **Property 22: SQL parameterization prevents injection**
     - **Property 23: Slow query logging**
     - **Validates: Requirements 15.1, 15.5**
   
-  - [ ] 10.3 Write unit tests for storeData
+  - [x] 10.3 Write unit tests for storeData
     - Test MarketScrape creation
     - Test Item creation with category handling
     - Test bulk insert logic
