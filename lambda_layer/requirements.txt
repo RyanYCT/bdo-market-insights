@@ -12,3 +12,6 @@ pydantic>=2.12.0
 
 # Database driver
 psycopg2-binary==2.9.9
+
+# X-Ray tracing
+aws-xray-sdk==2.12.1

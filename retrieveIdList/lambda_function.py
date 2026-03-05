@@ -3,14 +3,21 @@ retrieveIdList Lambda Function
 
 Retrieves item IDs from DynamoDB for the ETL pipeline.
 Integrates with the new architecture using LambdaRouter, structured logging,
-and Pydantic schema validation.
+and Pydantic schema validation. Includes X-Ray tracing for observability.
 """
 
 import os
 from typing import Any, Dict, List
 import boto3
 from botocore.exceptions import ClientError
-from common import LambdaRouter, ItemIdList, MetricsClient
+from common import (
+    LambdaRouter,
+    ItemIdList,
+    MetricsClient,
+    create_subsegment,
+    add_annotation,
+    add_metadata,
+)
 from pydantic import ValidationError
 
 
@@ -43,51 +50,63 @@ class DynamoDBService:
         """
         self.logger.info(f"Retrieving item IDs from DynamoDB table", table_name=table_name)
         
-        try:
-            table = self.dynamodb.Table(table_name)
-            
-            # Scan the entire table with projection
-            scan_params = {"ProjectionExpression": "id"}
-            response = table.scan(**scan_params)
-            items = response.get("Items", [])
-            
-            # Handle pagination
-            while "LastEvaluatedKey" in response:
-                self.logger.debug("Fetching next page of results", 
-                                 last_key=str(response["LastEvaluatedKey"]))
-                scan_params["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        # Create X-Ray subsegment for DynamoDB operation
+        with create_subsegment('DynamoDB.Scan'):
+            try:
+                table = self.dynamodb.Table(table_name)
+                
+                # Add X-Ray annotations for filtering
+                add_annotation('table_name', table_name)
+                add_annotation('operation', 'scan')
+                
+                # Scan the entire table with projection
+                scan_params = {"ProjectionExpression": "id"}
                 response = table.scan(**scan_params)
-                items.extend(response.get("Items", []))
-            
-            # Extract and convert item IDs
-            item_ids = []
-            for item in items:
-                if "id" not in item:
-                    self.logger.warning("Item missing 'id' field", item=str(item))
-                    continue
-                # Convert Decimal to int
-                item_ids.append(int(item["id"]))
-            
-            if not item_ids:
-                raise ValueError(f"No item IDs found in table {table_name}")
-            
-            self.logger.info(f"Successfully retrieved item IDs", 
-                           item_count=len(item_ids),
-                           table_name=table_name)
-            
-            return item_ids
-            
-        except ClientError as e:
-            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-            self.logger.error(f"DynamoDB ClientError: {error_code}", 
-                            error=e,
-                            table_name=table_name)
-            raise
-        except Exception as e:
-            self.logger.error("Unexpected error retrieving item IDs", 
-                            error=e,
-                            table_name=table_name)
-            raise
+                items = response.get("Items", [])
+                
+                # Handle pagination
+                page_count = 1
+                while "LastEvaluatedKey" in response:
+                    self.logger.debug("Fetching next page of results", 
+                                     last_key=str(response["LastEvaluatedKey"]))
+                    scan_params["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                    response = table.scan(**scan_params)
+                    items.extend(response.get("Items", []))
+                    page_count += 1
+                
+                # Add X-Ray metadata
+                add_metadata('page_count', page_count, 'dynamodb')
+                add_metadata('total_items', len(items), 'dynamodb')
+                
+                # Extract and convert item IDs
+                item_ids = []
+                for item in items:
+                    if "id" not in item:
+                        self.logger.warning("Item missing 'id' field", item=str(item))
+                        continue
+                    # Convert Decimal to int
+                    item_ids.append(int(item["id"]))
+                
+                if not item_ids:
+                    raise ValueError(f"No item IDs found in table {table_name}")
+                
+                self.logger.info(f"Successfully retrieved item IDs", 
+                               item_count=len(item_ids),
+                               table_name=table_name)
+                
+                return item_ids
+                
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+                self.logger.error(f"DynamoDB ClientError: {error_code}", 
+                                error=e,
+                                table_name=table_name)
+                raise
+            except Exception as e:
+                self.logger.error("Unexpected error retrieving item IDs", 
+                                error=e,
+                                table_name=table_name)
+                raise
 
 
 # Initialize router
@@ -116,6 +135,10 @@ def handler(event: Dict[str, Any], context: Any, logger) -> Dict[str, Any]:
     # Initialize metrics client
     metrics = MetricsClient(namespace="BDOMarketInsights/ETL", logger=logger)
     
+    # Add X-Ray annotations for the Lambda function
+    add_annotation('function_name', 'retrieveIdList')
+    add_annotation('correlation_id', logger.correlation_id)
+    
     try:
         # Get table name from event or environment variable
         table_name = event.get("table_name") or os.getenv("DYNAMODB_TABLE_NAME")
@@ -142,6 +165,12 @@ def handler(event: Dict[str, Any], context: Any, logger) -> Dict[str, Any]:
                 
                 logger.info("Output validation successful", 
                            item_count=len(output.item_ids))
+                
+                # Add X-Ray metadata
+                add_metadata('output', {
+                    'item_count': len(output.item_ids),
+                    'table_name': table_name
+                }, 'retrieveIdList')
                 
                 # Emit success metric
                 metrics.emit_etl_success(

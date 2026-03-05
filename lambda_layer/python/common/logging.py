@@ -20,6 +20,16 @@ except ImportError:
         # Fallback if pythonjsonlogger is not available
         JsonFormatter = None
 
+# Import X-Ray utilities
+try:
+    from common.xray import get_trace_id, is_xray_enabled
+except ImportError:
+    # Fallback if xray module not available
+    def get_trace_id():
+        return None
+    def is_xray_enabled():
+        return False
+
 
 class StructuredLogger:
     """
@@ -114,6 +124,12 @@ class StructuredLogger:
         # Add request_id if available
         if self.request_id:
             entry['request_id'] = self.request_id
+        
+        # Add X-Ray trace ID if available
+        if is_xray_enabled():
+            trace_id = get_trace_id()
+            if trace_id:
+                entry['xray_trace_id'] = trace_id
         
         # Add context fields
         entry.update(self._context_fields)

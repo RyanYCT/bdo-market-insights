@@ -6,6 +6,7 @@ This package provides shared utilities for all Lambda functions:
 - StructuredLogger: JSON logging with correlation IDs
 - Correlation ID utilities: Generation and propagation
 - Pydantic schemas: Input/output validation
+- X-Ray tracing: Distributed tracing utilities
 """
 
 from .router import LambdaRouter
@@ -46,6 +47,16 @@ from .retry import (
 )
 from .circuit_breaker import CircuitBreaker, CircuitBreakerError, CircuitState
 from .metrics import MetricsClient, LatencyTracker
+from .xray import (
+    is_xray_enabled,
+    get_trace_id,
+    get_trace_header,
+    create_subsegment,
+    trace_function,
+    add_annotation,
+    add_metadata,
+    initialize_xray,
+)
 
 __all__ = [
     "LambdaRouter",
@@ -85,4 +96,12 @@ __all__ = [
     "CircuitState",
     "MetricsClient",
     "LatencyTracker",
+    "is_xray_enabled",
+    "get_trace_id",
+    "get_trace_header",
+    "create_subsegment",
+    "trace_function",
+    "add_annotation",
+    "add_metadata",
+    "initialize_xray",
 ]

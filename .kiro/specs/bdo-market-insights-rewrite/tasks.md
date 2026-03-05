@@ -225,14 +225,14 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
     - **Property 19: Custom metrics emission**
     - **Validates: Requirements 11.1**
 
-- [ ] 18. Enable X-Ray tracing
-  - [ ] 18.1 Configure X-Ray for all Lambda functions
+- [x] 18. Enable X-Ray tracing
+  - [x] 18.1 Configure X-Ray for all Lambda functions
     - Enable X-Ray tracing in Lambda configuration
     - Add X-Ray SDK instrumentation to code
     - Include X-Ray trace IDs in structured logs
     - _Requirements: 11.2, 11.5_
   
-  - [ ] 18.2 Write property test for X-Ray integration
+  - [x] 18.2 Write property test for X-Ray integration
     - **Property 20: X-Ray trace ID in logs**
     - **Validates: Requirements 11.5**
 
