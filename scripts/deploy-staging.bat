@@ -140,7 +140,7 @@ echo Step 4/9: Deploying Lambda Functions
 echo ==========================================
 echo.
 
-set FUNCTIONS=retrieveIdList fetchData cleanData storeData queryData analyzeData retainData
+set FUNCTIONS=src/retrieveIdList src/fetchData src/cleanData src/storeData src/queryData src/analyzeData src/retainData
 
 for %%F in (%FUNCTIONS%) do (
     echo.

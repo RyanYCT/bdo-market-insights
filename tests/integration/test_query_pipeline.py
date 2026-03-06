@@ -51,8 +51,8 @@ class TestQueryPipelineIntegration:
         - Query context preservation
         - Response format and headers
         """
-        from queryData.lambda_function import lambda_handler as query_handler
-        from analyzeData.lambda_function import lambda_handler as analyze_handler
+        from src.queryData.lambda_function import lambda_handler as query_handler
+        from src.analyzeData.lambda_function import lambda_handler as analyze_handler
         
         mock_context = Mock()
         mock_context.function_name = "test-function"
@@ -213,8 +213,8 @@ class TestQueryPipelineIntegration:
         
         Verifies GET parameter transformation for name-based queries.
         """
-        from queryData.lambda_function import lambda_handler as query_handler
-        from analyzeData.lambda_function import lambda_handler as analyze_handler
+        from src.queryData.lambda_function import lambda_handler as query_handler
+        from src.analyzeData.lambda_function import lambda_handler as analyze_handler
         
         mock_context = Mock()
         mock_context.function_name = "test-function"
@@ -305,8 +305,8 @@ class TestQueryPipelineIntegration:
         
         Verifies analyzeData returns appropriate response for no data.
         """
-        from queryData.lambda_function import lambda_handler as query_handler
-        from analyzeData.lambda_function import lambda_handler as analyze_handler
+        from src.queryData.lambda_function import lambda_handler as query_handler
+        from src.analyzeData.lambda_function import lambda_handler as analyze_handler
         
         mock_context = Mock()
         mock_context.function_name = "test-function"
@@ -369,7 +369,7 @@ class TestQueryPipelineIntegration:
         
         Verifies invalid parameters are rejected with appropriate errors.
         """
-        from queryData.lambda_function import lambda_handler as query_handler
+        from src.queryData.lambda_function import lambda_handler as query_handler
         
         mock_context = Mock()
         mock_context.function_name = "test-function"
@@ -396,8 +396,8 @@ class TestQueryPipelineIntegration:
         Verifies original query parameters are available to analyzeData
         along with queryData results.
         """
-        from queryData.lambda_function import lambda_handler as query_handler
-        from analyzeData.lambda_function import lambda_handler as analyze_handler
+        from src.queryData.lambda_function import lambda_handler as query_handler
+        from src.analyzeData.lambda_function import lambda_handler as analyze_handler
         
         mock_context = Mock()
         mock_context.function_name = "test-function"

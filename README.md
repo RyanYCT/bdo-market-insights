@@ -32,13 +32,13 @@ The application is built using AWS Lambda and orchestrated via Step Functions. I
 
 This project includes comprehensive documentation organized by purpose and workflow.
 
-> 📊 **Visual Guide:** See [DOCUMENTATION_MAP.md](DOCUMENTATION_MAP.md) for a visual overview with workflows and learning paths.
+> 📊 **Visual Guide:** See [DOCUMENTATION_MAP.md](docs/guides/DOCUMENTATION_MAP.md) for a visual overview with workflows and learning paths.
 
 ### � Quick Start
 
 **New to the project?** Start here:
-1. **[QUICK_START.md](QUICK_START.md)** - Deploy in 3 steps
-2. **[CREDENTIALS_SETUP_GUIDE.md](CREDENTIALS_SETUP_GUIDE.md)** - Setup AWS credentials
+1. **[QUICK_START.md](docs/deployment/QUICK_START.md)** - Deploy in 3 steps
+2. **[CREDENTIALS_SETUP_GUIDE.md](docs/deployment/CREDENTIALS_SETUP_GUIDE.md)** - Setup AWS credentials
 3. **[STAGING_DEPLOYMENT_GUIDE.md](infrastructure/STAGING_DEPLOYMENT_GUIDE.md)** - Detailed deployment
 
 ### 📚 Documentation Categories
@@ -46,13 +46,13 @@ This project includes comprehensive documentation organized by purpose and workf
 <details>
 <summary><b>🚀 Getting Started (3 docs)</b> - Click to expand</summary>
 
-1. **[QUICK_START.md](QUICK_START.md)** - Quick reference for deploying to staging
+1. **[QUICK_START.md](docs/deployment/QUICK_START.md)** - Quick reference for deploying to staging
    - **Use when:** You want to deploy quickly
 
-2. **[CREDENTIALS_SETUP_GUIDE.md](CREDENTIALS_SETUP_GUIDE.md)** - Complete guide for AWS credentials setup
+2. **[CREDENTIALS_SETUP_GUIDE.md](docs/deployment/CREDENTIALS_SETUP_GUIDE.md)** - Complete guide for AWS credentials setup
    - **Use when:** Setting up AWS credentials for the first time
 
-3. **[DEPLOYMENT_SECURITY_SUMMARY.md](DEPLOYMENT_SECURITY_SUMMARY.md)** - Security overview
+3. **[DEPLOYMENT_SECURITY_SUMMARY.md](docs/deployment/DEPLOYMENT_SECURITY_SUMMARY.md)** - Security overview
    - **Use when:** Understanding security approach
 
 </details>
@@ -83,10 +83,10 @@ This project includes comprehensive documentation organized by purpose and workf
 9. **[infrastructure/STAGING_DEPLOYMENT_README.md](infrastructure/STAGING_DEPLOYMENT_README.md)** - Deployment overview
    - **Use when:** Quick reference for deployment
 
-10. **[STAGING_DEPLOYMENT_SUMMARY.md](STAGING_DEPLOYMENT_SUMMARY.md)** - Deployment summary
+10. **[STAGING_DEPLOYMENT_SUMMARY.md](docs/deployment/STAGING_DEPLOYMENT_SUMMARY.md)** - Deployment summary
     - **Use when:** Understanding what gets deployed
 
-11. **[DEPLOYMENT.md](DEPLOYMENT.md)** - General deployment documentation
+11. **[DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md)** - General deployment documentation
     - **Use when:** Understanding deployment strategies
 
 </details>
@@ -136,7 +136,7 @@ This project includes comprehensive documentation organized by purpose and workf
 <details>
 <summary><b>📊 Additional (3 docs)</b> - Click to expand</summary>
 
-21. **[CHANGELOG.md](CHANGELOG.md)** - Version history and changes
+21. **[CHANGELOG.md](docs/CHANGELOG.md)** - Version history and changes
     - **Use when:** Checking version history
 
 22. **[lambda_layer/README.md](lambda_layer/README.md)** - Lambda Layer documentation
@@ -151,11 +151,11 @@ This project includes comprehensive documentation organized by purpose and workf
 
 | Need to... | Read this |
 |------------|-----------|
-| Deploy quickly | [QUICK_START.md](QUICK_START.md) |
-| Setup AWS credentials | [CREDENTIALS_SETUP_GUIDE.md](CREDENTIALS_SETUP_GUIDE.md) |
+| Deploy quickly | [QUICK_START.md](docs/deployment/QUICK_START.md) |
+| Setup AWS credentials | [CREDENTIALS_SETUP_GUIDE.md](docs/deployment/CREDENTIALS_SETUP_GUIDE.md) |
 | Deploy step-by-step | [STAGING_DEPLOYMENT_GUIDE.md](infrastructure/STAGING_DEPLOYMENT_GUIDE.md) |
 | Validate deployment | [STAGING_DEPLOYMENT_CHECKLIST.md](infrastructure/STAGING_DEPLOYMENT_CHECKLIST.md) |
-| Understand security | [DEPLOYMENT_SECURITY_SUMMARY.md](DEPLOYMENT_SECURITY_SUMMARY.md) |
+| Understand security | [DEPLOYMENT_SECURITY_SUMMARY.md](docs/deployment/DEPLOYMENT_SECURITY_SUMMARY.md) |
 | Troubleshoot issues | [STAGING_DEPLOYMENT_GUIDE.md](infrastructure/STAGING_DEPLOYMENT_GUIDE.md#troubleshooting) |
 | Understand architecture | [design.md](.kiro/specs/bdo-market-insights-rewrite/design.md) |
 | Setup monitoring | [CLOUDWATCH_ALARMS_README.md](infrastructure/CLOUDWATCH_ALARMS_README.md) |
@@ -200,7 +200,7 @@ On each push to the `main` branch:
 - All Lambda packages are zipped and deployed using AWS CLI.
 - The deployment flow is described in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
 
-For manual deployment to staging, see the [Documentation](#documentation) section above, starting with [QUICK_START.md](QUICK_START.md)
+For manual deployment to staging, see the [Documentation](#documentation) section above, starting with [QUICK_START.md](docs/deployment/QUICK_START.md)
 
 ## Architecture
 
@@ -211,7 +211,7 @@ For manual deployment to staging, see the [Documentation](#documentation) sectio
 - **Discord Bot** act as client, rendering report in community channel
 - **Django** act as client, rendering report in dashboard, charts and tables
 
-![Architecture](./img/architecture/arch_light_bg.png)
+![Architecture](./docs/architecture/arch_light_bg.png)
 
 ## Workflow
 

@@ -25,7 +25,7 @@ sys.path.insert(0, 'lambda_layer/python')
 
 # Add fetchData to path
 from pathlib import Path
-fetch_data_path = Path(__file__).parent.parent.parent / "fetchData"
+fetch_data_path = Path(__file__).parent.parent.parent / "src" / "fetchData"
 sys.path.insert(0, str(fetch_data_path))
 
 # Import from fetchData

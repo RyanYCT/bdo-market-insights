@@ -31,13 +31,13 @@ lint-flake8:
 lint-mypy:
 	@echo "Running MyPy (type checking)..."
 	mypy lambda_layer/python/common/ --ignore-missing-imports
-	mypy retrieveIdList/lambda_function.py --ignore-missing-imports
-	mypy fetchData/lambda_function.py --ignore-missing-imports
-	mypy cleanData/lambda_function.py --ignore-missing-imports
-	mypy storeData/lambda_function.py --ignore-missing-imports
-	mypy queryData/lambda_function.py --ignore-missing-imports
-	mypy analyzeData/lambda_function.py --ignore-missing-imports
-	mypy retainData/lambda_function.py --ignore-missing-imports
+	mypy src/retrieveIdList/lambda_function.py --ignore-missing-imports
+	mypy src/fetchData/lambda_function.py --ignore-missing-imports
+	mypy src/cleanData/lambda_function.py --ignore-missing-imports
+	mypy src/storeData/lambda_function.py --ignore-missing-imports
+	mypy src/queryData/lambda_function.py --ignore-missing-imports
+	mypy src/analyzeData/lambda_function.py --ignore-missing-imports
+	mypy src/retainData/lambda_function.py --ignore-missing-imports
 
 format:
 	@echo "Formatting code with Black..."
@@ -46,13 +46,13 @@ format:
 security:
 	@echo "Running Bandit (security scan)..."
 	bandit -r lambda_layer/python/common/ -ll
-	bandit -r retrieveIdList/ -ll
-	bandit -r fetchData/ -ll
-	bandit -r cleanData/ -ll
-	bandit -r storeData/ -ll
-	bandit -r queryData/ -ll
-	bandit -r analyzeData/ -ll
-	bandit -r retainData/ -ll
+	bandit -r src/retrieveIdList/ -ll
+	bandit -r src/fetchData/ -ll
+	bandit -r src/cleanData/ -ll
+	bandit -r src/storeData/ -ll
+	bandit -r src/queryData/ -ll
+	bandit -r src/analyzeData/ -ll
+	bandit -r src/retainData/ -ll
 
 test-unit:
 	@echo "Running unit tests..."
@@ -74,13 +74,13 @@ coverage:
 	@echo "Running tests with coverage..."
 	pytest tests/unit/ \
 		--cov=lambda_layer/python/common \
-		--cov=retrieveIdList \
-		--cov=fetchData \
-		--cov=cleanData \
-		--cov=storeData \
-		--cov=queryData \
-		--cov=analyzeData \
-		--cov=retainData \
+		--cov=src/retrieveIdList \
+		--cov=src/fetchData \
+		--cov=src/cleanData \
+		--cov=src/storeData \
+		--cov=src/queryData \
+		--cov=src/analyzeData \
+		--cov=src/retainData \
 		--cov-report=html \
 		--cov-report=term \
 		--cov-fail-under=80 \

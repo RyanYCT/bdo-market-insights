@@ -25,7 +25,7 @@ sys.path.insert(0, 'lambda_layer/python')
 
 # Add cleanData to path
 from pathlib import Path
-clean_data_path = Path(__file__).parent.parent.parent / "cleanData"
+clean_data_path = Path(__file__).parent.parent.parent / "src" / "cleanData"
 sys.path.insert(0, str(clean_data_path))
 
 # Import from cleanData

@@ -51,25 +51,25 @@ jobs:
       - name: Run MyPy (type checking)
         run: |
           mypy lambda_layer/python/common/ --ignore-missing-imports
-          mypy retrieveIdList/lambda_function.py --ignore-missing-imports
-          mypy fetchData/lambda_function.py --ignore-missing-imports
-          mypy cleanData/lambda_function.py --ignore-missing-imports
-          mypy storeData/lambda_function.py --ignore-missing-imports
-          mypy queryData/lambda_function.py --ignore-missing-imports
-          mypy analyzeData/lambda_function.py --ignore-missing-imports
-          mypy retainData/lambda_function.py --ignore-missing-imports
+          mypy src/retrieveIdList/lambda_function.py --ignore-missing-imports
+          mypy src/fetchData/lambda_function.py --ignore-missing-imports
+          mypy src/cleanData/lambda_function.py --ignore-missing-imports
+          mypy src/storeData/lambda_function.py --ignore-missing-imports
+          mypy src/queryData/lambda_function.py --ignore-missing-imports
+          mypy src/analyzeData/lambda_function.py --ignore-missing-imports
+          mypy src/retainData/lambda_function.py --ignore-missing-imports
         continue-on-error: false
       
       - name: Run Bandit (security scan)
         run: |
           bandit -r lambda_layer/python/common/ -ll
-          bandit -r retrieveIdList/ -ll
-          bandit -r fetchData/ -ll
-          bandit -r cleanData/ -ll
-          bandit -r storeData/ -ll
-          bandit -r queryData/ -ll
-          bandit -r analyzeData/ -ll
-          bandit -r retainData/ -ll
+          bandit -r src/retrieveIdList/ -ll
+          bandit -r src/fetchData/ -ll
+          bandit -r src/cleanData/ -ll
+          bandit -r src/storeData/ -ll
+          bandit -r src/queryData/ -ll
+          bandit -r src/analyzeData/ -ll
+          bandit -r src/retainData/ -ll
         continue-on-error: false
 
   # Job 2: Unit Tests
@@ -97,13 +97,13 @@ jobs:
         run: |
           pytest tests/unit/ \
             --cov=lambda_layer/python/common \
-            --cov=retrieveIdList \
-            --cov=fetchData \
-            --cov=cleanData \
-            --cov=storeData \
-            --cov=queryData \
-            --cov=analyzeData \
-            --cov=retainData \
+            --cov=src/retrieveIdList \
+            --cov=src/fetchData \
+            --cov=src/cleanData \
+            --cov=src/storeData \
+            --cov=src/queryData \
+            --cov=src/analyzeData \
+            --cov=src/retainData \
             --cov-report=xml \
             --cov-report=term \
             --cov-report=html \
@@ -243,13 +243,13 @@ jobs:
     strategy:
       matrix:
         function: 
-          - retrieveIdList
-          - fetchData
-          - cleanData
-          - storeData
-          - queryData
-          - analyzeData
-          - retainData
+          - src/retrieveIdList
+          - src/fetchData
+          - src/cleanData
+          - src/storeData
+          - src/queryData
+          - src/analyzeData
+          - src/retainData
       fail-fast: false
     
     steps:

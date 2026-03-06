@@ -22,13 +22,13 @@ echo "Step 1/5: Deploying Lambda Layer..."
 echo ""
 echo "Step 2/5: Deploying Lambda Functions..."
 FUNCTIONS=(
-    "retrieveIdList"
-    "fetchData"
-    "cleanData"
-    "storeData"
-    "queryData"
-    "analyzeData"
-    "retainData"
+    "src/retrieveIdList"
+    "src/fetchData"
+    "src/cleanData"
+    "src/storeData"
+    "src/queryData"
+    "src/analyzeData"
+    "src/retainData"
 )
 
 for FUNCTION in "${FUNCTIONS[@]}"; do

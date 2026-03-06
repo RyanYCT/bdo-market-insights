@@ -48,10 +48,10 @@ class TestETLPipelineIntegration:
         - Final data is stored in database
         """
         # Import Lambda handlers
-        from retrieveIdList.lambda_function import lambda_handler as retrieve_handler
-        from fetchData.lambda_function import lambda_handler as fetch_handler
-        from cleanData.lambda_function import lambda_handler as clean_handler
-        from storeData.lambda_function import lambda_handler as store_handler
+        from src.retrieveIdList.lambda_function import lambda_handler as retrieve_handler
+        from src.fetchData.lambda_function import lambda_handler as fetch_handler
+        from src.cleanData.lambda_function import lambda_handler as clean_handler
+        from src.storeData.lambda_function import lambda_handler as store_handler
         
         # Create mock context
         mock_context = Mock()
@@ -190,10 +190,10 @@ class TestETLPipelineIntegration:
         
         Verifies that invalid records are filtered and don't reach storeData.
         """
-        from retrieveIdList.lambda_function import lambda_handler as retrieve_handler
-        from fetchData.lambda_function import lambda_handler as fetch_handler
-        from cleanData.lambda_function import lambda_handler as clean_handler
-        from storeData.lambda_function import lambda_handler as store_handler
+        from src.retrieveIdList.lambda_function import lambda_handler as retrieve_handler
+        from src.fetchData.lambda_function import lambda_handler as fetch_handler
+        from src.cleanData.lambda_function import lambda_handler as clean_handler
+        from src.storeData.lambda_function import lambda_handler as store_handler
         
         mock_context = Mock()
         mock_context.function_name = "test-function"
@@ -258,10 +258,10 @@ class TestETLPipelineIntegration:
         
         Verifies correlation ID remains consistent across all stages.
         """
-        from retrieveIdList.lambda_function import lambda_handler as retrieve_handler
-        from fetchData.lambda_function import lambda_handler as fetch_handler
-        from cleanData.lambda_function import lambda_handler as clean_handler
-        from storeData.lambda_function import lambda_handler as store_handler
+        from src.retrieveIdList.lambda_function import lambda_handler as retrieve_handler
+        from src.fetchData.lambda_function import lambda_handler as fetch_handler
+        from src.cleanData.lambda_function import lambda_handler as clean_handler
+        from src.storeData.lambda_function import lambda_handler as store_handler
         
         mock_context = Mock()
         mock_context.function_name = "test-function"
@@ -360,7 +360,7 @@ class TestETLPipelineIntegration:
         
         Verifies error handling when no item IDs are found.
         """
-        from retrieveIdList.lambda_function import lambda_handler as retrieve_handler
+        from src.retrieveIdList.lambda_function import lambda_handler as retrieve_handler
         
         mock_context = Mock()
         mock_context.function_name = "test-function"

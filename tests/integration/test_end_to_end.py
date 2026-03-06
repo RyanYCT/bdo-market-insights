@@ -50,12 +50,12 @@ class TestEndToEnd:
         3. Verifying analysis results match the inserted data
         """
         # Import all Lambda handlers
-        from retrieveIdList.lambda_function import lambda_handler as retrieve_handler
-        from fetchData.lambda_function import lambda_handler as fetch_handler
-        from cleanData.lambda_function import lambda_handler as clean_handler
-        from storeData.lambda_function import lambda_handler as store_handler
-        from queryData.lambda_function import lambda_handler as query_handler
-        from analyzeData.lambda_function import lambda_handler as analyze_handler
+        from src.retrieveIdList.lambda_function import lambda_handler as retrieve_handler
+        from src.fetchData.lambda_function import lambda_handler as fetch_handler
+        from src.cleanData.lambda_function import lambda_handler as clean_handler
+        from src.storeData.lambda_function import lambda_handler as store_handler
+        from src.queryData.lambda_function import lambda_handler as query_handler
+        from src.analyzeData.lambda_function import lambda_handler as analyze_handler
         
         mock_context = Mock()
         mock_context.function_name = "test-function"
@@ -278,12 +278,12 @@ class TestEndToEnd:
         
         Verifies that data for different items is stored and retrieved correctly.
         """
-        from retrieveIdList.lambda_function import lambda_handler as retrieve_handler
-        from fetchData.lambda_function import lambda_handler as fetch_handler
-        from cleanData.lambda_function import lambda_handler as clean_handler
-        from storeData.lambda_function import lambda_handler as store_handler
-        from queryData.lambda_function import lambda_handler as query_handler
-        from analyzeData.lambda_function import lambda_handler as analyze_handler
+        from src.retrieveIdList.lambda_function import lambda_handler as retrieve_handler
+        from src.fetchData.lambda_function import lambda_handler as fetch_handler
+        from src.cleanData.lambda_function import lambda_handler as clean_handler
+        from src.storeData.lambda_function import lambda_handler as store_handler
+        from src.queryData.lambda_function import lambda_handler as query_handler
+        from src.analyzeData.lambda_function import lambda_handler as analyze_handler
         
         mock_context = Mock()
         mock_context.function_name = "test-function"
