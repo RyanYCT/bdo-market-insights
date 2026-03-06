@@ -12,7 +12,6 @@ from hypothesis import given, strategies as st, settings
 
 # Mock psycopg2 before importing DatabasePool
 import sys
-sys.path.insert(0, 'lambda_layer/python')
 
 # Create mock psycopg2 module
 mock_psycopg2 = MagicMock()

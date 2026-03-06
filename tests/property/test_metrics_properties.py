@@ -21,9 +21,7 @@ sys.modules['psycopg2'] = MagicMock()
 sys.modules['psycopg2.pool'] = MagicMock()
 sys.modules['psycopg2.extras'] = MagicMock()
 
-# Add lambda_layer to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../lambda_layer/python'))
-
+# Import from common
 from common.metrics import MetricsClient, LatencyTracker
 
 

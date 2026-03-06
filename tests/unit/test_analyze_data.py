@@ -18,15 +18,8 @@ mock_psycopg2.DatabaseError = type('DatabaseError', (Exception,), {})
 sys.modules['psycopg2'] = mock_psycopg2
 sys.modules['psycopg2.pool'] = mock_psycopg2.pool
 
-# Add lambda_layer to path
-sys.path.insert(0, 'lambda_layer/python')
-
-# Add analyzeData to path
-from pathlib import Path
-analyze_data_path = Path(__file__).parent.parent.parent / "analyzeData"
-sys.path.insert(0, str(analyze_data_path))
-
-from lambda_function import (
+# Import from analyzeData Lambda function
+from analyzeData.lambda_function import (
     calculate_statistics,
     compute_profitability_score,
     determine_price_trend,

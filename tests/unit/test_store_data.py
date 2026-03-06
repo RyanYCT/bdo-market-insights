@@ -21,15 +21,8 @@ sys.modules['psycopg2'] = mock_psycopg2
 sys.modules['psycopg2.pool'] = mock_psycopg2.pool
 sys.modules['psycopg2.extras'] = mock_psycopg2.extras
 
-# Add lambda_layer to path
-sys.path.insert(0, 'lambda_layer/python')
-
-# Add storeData to path
-from pathlib import Path
-store_data_path = Path(__file__).parent.parent.parent / "storeData"
-sys.path.insert(0, str(store_data_path))
-
-from lambda_function import (
+# Import from storeData Lambda function
+from storeData.lambda_function import (
     get_or_create_market_scrape,
     get_or_create_items,
     bulk_insert_market_data,

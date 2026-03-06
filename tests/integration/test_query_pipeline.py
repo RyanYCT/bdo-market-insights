@@ -25,11 +25,6 @@ sys.modules['psycopg2'] = mock_psycopg2
 sys.modules['psycopg2.pool'] = mock_psycopg2.pool
 sys.modules['psycopg2.extras'] = mock_psycopg2.extras
 
-# Add paths
-sys.path.insert(0, 'lambda_layer/python')
-sys.path.insert(0, 'queryData')
-sys.path.insert(0, 'analyzeData')
-
 
 @pytest.mark.integration
 class TestQueryPipelineIntegration:

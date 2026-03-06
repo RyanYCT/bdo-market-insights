@@ -12,7 +12,6 @@ from hypothesis import given, strategies as st, settings, assume
 
 # Mock psycopg2 before importing common modules
 import sys
-sys.path.insert(0, 'lambda_layer/python')
 
 # Create mock psycopg2 module to avoid import errors
 mock_psycopg2 = MagicMock()

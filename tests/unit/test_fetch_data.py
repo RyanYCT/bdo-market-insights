@@ -20,16 +20,8 @@ mock_psycopg2.DatabaseError = type('DatabaseError', (Exception,), {})
 sys.modules['psycopg2'] = mock_psycopg2
 sys.modules['psycopg2.pool'] = mock_psycopg2.pool
 
-# Add lambda_layer to path
-sys.path.insert(0, 'lambda_layer/python')
-
-# Add fetchData to path
-from pathlib import Path
-fetch_data_path = Path(__file__).parent.parent.parent / "src" / "fetchData"
-sys.path.insert(0, str(fetch_data_path))
-
-# Import from fetchData
-from lambda_function import (
+# Import from fetchData Lambda function
+from fetchData.lambda_function import (
     ExternalAPIClient,
     RateLimiter,
     split_into_batches,

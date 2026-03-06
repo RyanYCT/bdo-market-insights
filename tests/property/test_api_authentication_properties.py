@@ -15,7 +15,6 @@ from collections import defaultdict
 
 # Import schemas from lambda layer
 import sys
-sys.path.insert(0, 'lambda_layer/python')
 
 
 # Mock API Gateway request/response structures

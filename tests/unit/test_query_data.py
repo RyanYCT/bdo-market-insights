@@ -19,15 +19,8 @@ mock_psycopg2.DatabaseError = type('DatabaseError', (Exception,), {})
 sys.modules['psycopg2'] = mock_psycopg2
 sys.modules['psycopg2.pool'] = mock_psycopg2.pool
 
-# Add lambda_layer to path
-sys.path.insert(0, 'lambda_layer/python')
-
-# Add queryData to path
-from pathlib import Path
-query_data_path = Path(__file__).parent.parent.parent / "queryData"
-sys.path.insert(0, str(query_data_path))
-
-from lambda_function import (
+# Import from queryData Lambda function
+from queryData.lambda_function import (
     build_query,
     handler,
     lambda_handler

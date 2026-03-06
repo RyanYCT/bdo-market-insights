@@ -11,12 +11,10 @@ from decimal import Decimal
 from hypothesis import given, strategies as st, settings, assume
 from unittest.mock import Mock, MagicMock, patch
 import sys
+from pathlib import Path
 
-# Import retention Lambda
-sys.path.insert(0, 'retainData')
-sys.path.insert(0, 'lambda_layer/python')
-
-from lambda_function import (
+# Import from retainData Lambda function
+from retainData.lambda_function import (
     aggregate_old_market_data,
     delete_aggregated_records,
     archive_old_summaries_to_s3,

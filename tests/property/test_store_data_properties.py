@@ -14,7 +14,6 @@ from datetime import datetime, timezone
 
 # Mock psycopg2 before importing
 import sys
-sys.path.insert(0, 'lambda_layer/python')
 
 # Create mock psycopg2 module
 mock_psycopg2 = MagicMock()
@@ -29,12 +28,8 @@ sys.modules['psycopg2.extras'] = mock_psycopg2.extras
 from common.database import DatabasePool
 from common.schemas import MarketDataRecord
 
-# Add storeData to path
-from pathlib import Path
-store_data_path = Path(__file__).parent.parent.parent / "storeData"
-sys.path.insert(0, str(store_data_path))
-
-from lambda_function import (
+# Import from storeData Lambda function
+from storeData.lambda_function import (
     get_or_create_market_scrape,
     get_or_create_items,
     bulk_insert_market_data

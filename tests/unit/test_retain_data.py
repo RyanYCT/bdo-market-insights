@@ -14,12 +14,10 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import Mock, MagicMock, patch, call
 import sys
+from pathlib import Path
 
-# Import retention Lambda
-sys.path.insert(0, 'retainData')
-sys.path.insert(0, 'lambda_layer/python')
-
-from lambda_function import (
+# Import from retainData Lambda function
+from retainData.lambda_function import (
     load_retention_config,
     aggregate_old_market_data,
     delete_aggregated_records,

@@ -17,9 +17,7 @@ sys.modules['psycopg2'] = MagicMock()
 sys.modules['psycopg2.pool'] = MagicMock()
 sys.modules['psycopg2.extras'] = MagicMock()
 
-# Add lambda_layer to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../lambda_layer/python'))
-
+# Import from common
 from common.logging import StructuredLogger
 
 # Import X-Ray utilities

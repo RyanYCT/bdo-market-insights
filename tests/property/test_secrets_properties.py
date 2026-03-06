@@ -12,7 +12,6 @@ from hypothesis import given, strategies as st, settings
 
 # Import SecretsManagerClient from lambda layer
 import sys
-sys.path.insert(0, 'lambda_layer/python')
 from common.secrets import (
     SecretsManagerClient,
     SecretNotFoundError,

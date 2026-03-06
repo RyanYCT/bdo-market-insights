@@ -12,7 +12,6 @@ from pydantic import ValidationError
 
 # Import schemas from lambda layer
 import sys
-sys.path.insert(0, 'lambda_layer/python')
 from common.schemas import (
     QueryRequest,
     MarketDataRecord,

@@ -11,16 +11,8 @@ from unittest.mock import Mock, patch, MagicMock
 from decimal import Decimal
 from botocore.exceptions import ClientError
 
-# Mock psycopg2 before importing common modules
-sys.modules['psycopg2'] = MagicMock()
-sys.modules['psycopg2.pool'] = MagicMock()
-sys.modules['psycopg2.extras'] = MagicMock()
-
-# Add retrieveIdList to path
-retrieve_path = Path(__file__).parent.parent.parent / "retrieveIdList"
-sys.path.insert(0, str(retrieve_path))
-
-from lambda_function import DynamoDBService, handler, lambda_handler
+# Import from retrieveIdList Lambda function
+from retrieveIdList.lambda_function import DynamoDBService, handler, lambda_handler
 
 
 class TestDynamoDBService:
