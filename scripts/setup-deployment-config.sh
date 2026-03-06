@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 echo -e "${BLUE}=============================="
-echo -e "Deployment Configuration Setup"
+echo "Deployment Configuration Setup"
 echo -e "==============================${NC}"
 echo ""
 echo "This script will help you create a deployment configuration file."

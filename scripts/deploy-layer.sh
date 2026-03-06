@@ -37,16 +37,49 @@ fi
 
 # Install dependencies
 echo "Installing dependencies..."
-pip install -r requirements.txt -t "$BUILD_DIR/python/" --upgrade
+# Check if Docker is available for Lambda-compatible builds
+if command -v docker &> /dev/null; then
+    echo "Using Docker to build Lambda-compatible packages..."
+    
+    # Prevent Git Bash from converting paths on Windows
+    export MSYS_NO_PATHCONV=1
+    
+    docker run --rm \
+        --entrypoint /bin/bash \
+        -v "$(pwd):/var/task" \
+        -w /var/task \
+        public.ecr.aws/lambda/python:3.11 \
+        -c "pip install -r requirements.txt -t ${BUILD_DIR}/python/ --upgrade"
+else
+    echo "Docker not found. Installing locally (may not be Lambda-compatible on Windows)..."
+    pip install -r requirements.txt -t "$BUILD_DIR/python/" --upgrade --platform manylinux2014_x86_64 --only-binary=:all:
+fi
 
 # Create zip file
 echo "Creating deployment package..."
 cd "$BUILD_DIR"
-zip -r ../lambda-layer.zip python/ -q
+
+# Use PowerShell on Windows, zip on Unix
+if command -v powershell.exe &> /dev/null; then
+    echo "Using PowerShell to create zip..."
+    powershell.exe -Command "Compress-Archive -Path python/* -DestinationPath ../lambda-layer.zip -Force"
+elif command -v zip &> /dev/null; then
+    echo "Using zip to create package..."
+    zip -r ../lambda-layer.zip python/ -q
+else
+    echo "Error: Neither zip nor PowerShell found!"
+    exit 1
+fi
+
 cd ..
 
 # Get file size
-SIZE=$(du -h lambda-layer.zip | cut -f1)
+if command -v du &> /dev/null; then
+    SIZE=$(du -h lambda-layer.zip | cut -f1)
+else
+    # Use PowerShell on Windows
+    SIZE=$(powershell.exe -Command "(Get-Item lambda-layer.zip).Length / 1MB | ForEach-Object { '{0:N2} MB' -f \$_ }")
+fi
 echo "Package size: $SIZE"
 
 # Publish layer

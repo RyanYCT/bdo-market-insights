@@ -13,13 +13,24 @@ Parameters:
     Description: Environment name
   
   AllowedOrigins:
-    Type: CommaDelimitedList
+    Type: String
     Default: "https://example.com"
-    Description: Comma-separated list of allowed CORS origins
+    Description: Allowed CORS origin (single origin or comma-separated list)
   
   StepFunctionsArn:
     Type: String
     Description: ARN of the Step Functions state machine for query pipeline
+  
+  EnableLogging:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Enable CloudWatch Logs for API Gateway (requires CloudWatch Logs role to be configured)
+
+Conditions:
+  EnableLoggingCondition: !Equals [!Ref EnableLogging, "true"]
 
 Resources:
   # API Gateway REST API
@@ -372,14 +383,16 @@ Resources:
       MethodSettings:
         - ResourcePath: '/*'
           HttpMethod: '*'
-          LoggingLevel: INFO
-          DataTraceEnabled: true
+          LoggingLevel: !If [EnableLoggingCondition, INFO, 'OFF']
+          DataTraceEnabled: !If [EnableLoggingCondition, true, false]
           MetricsEnabled: true
           ThrottlingBurstLimit: 20
           ThrottlingRateLimit: 100
-      AccessLogSetting:
-        DestinationArn: !GetAtt APIAccessLogGroup.Arn
-        Format: '$context.requestId $context.extendedRequestId $context.identity.sourceIp $context.requestTime $context.httpMethod $context.routeKey $context.status $context.protocol $context.responseLength $context.error.message $context.identity.apiKey'
+      AccessLogSetting: !If
+        - EnableLoggingCondition
+        - DestinationArn: !GetAtt APIAccessLogGroup.Arn
+          Format: '$context.requestId $context.extendedRequestId $context.identity.sourceIp $context.requestTime $context.httpMethod $context.routeKey $context.status $context.protocol $context.responseLength $context.error.message $context.identity.apiKey'
+        - !Ref AWS::NoValue
 
   # CloudWatch Log Group for API Access Logs
   APIAccessLogGroup:
