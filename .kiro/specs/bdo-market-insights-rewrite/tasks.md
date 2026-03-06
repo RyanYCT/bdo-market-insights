@@ -352,7 +352,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
   - Create CloudWatch alarms
   - Configure EventBridge Scheduler for ETL and retention
 
-- [ ] 27. Run staging validation
+- [x] 27. Run staging validation
   - Execute ETL pipeline manually and verify success
   - Test query API with various parameters
   - Verify API key authentication works
