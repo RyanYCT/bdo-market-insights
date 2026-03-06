@@ -28,6 +28,220 @@ The application is built using AWS Lambda and orchestrated via Step Functions. I
     1. Generate structured data for Discord bot response and web content rendering
     2. Identify top performing items, trends and sales anomaly
 
+## Documentation
+
+This project includes comprehensive documentation organized by purpose and workflow. Follow the guides in order for the best experience.
+
+> 📊 **Visual Guide:** See [DOCUMENTATION_MAP.md](DOCUMENTATION_MAP.md) for a visual overview of all documentation with workflows and learning paths.
+
+### 📚 Documentation Index
+
+#### 🚀 Getting Started (Start Here!)
+
+1. **[QUICK_START.md](QUICK_START.md)** - Quick reference for deploying to staging
+   - 3-step deployment process
+   - Essential commands
+   - Troubleshooting tips
+   - **Use when:** You want to deploy quickly
+
+2. **[CREDENTIALS_SETUP_GUIDE.md](CREDENTIALS_SETUP_GUIDE.md)** - Complete guide for AWS credentials setup
+   - AWS CLI profile configuration
+   - AWS SSO setup
+   - Security best practices
+   - Troubleshooting credentials
+   - **Use when:** Setting up AWS credentials for the first time
+
+3. **[DEPLOYMENT_SECURITY_SUMMARY.md](DEPLOYMENT_SECURITY_SUMMARY.md)** - Security overview
+   - Configuration management system
+   - What's protected vs. what's public
+   - Security checklist
+   - **Use when:** Understanding security approach
+
+#### 🔧 Configuration
+
+4. **[config/README.md](config/README.md)** - Configuration management guide
+   - Configuration file structure
+   - Environment-specific configs
+   - Using configuration in scripts
+   - **Use when:** Managing deployment configuration
+
+5. **[.env.example](.env.example)** - Environment variables template
+   - Template for environment variables
+   - Copy to `.env` and customize
+   - **Use when:** Setting up environment variables
+
+6. **[config/deployment-config.example.sh](config/deployment-config.example.sh)** - Deployment configuration template
+   - Complete configuration template
+   - Copy to `config/deployment-config.sh` and customize
+   - **Use when:** Creating deployment configuration
+
+#### 🚢 Deployment Guides
+
+7. **[infrastructure/STAGING_DEPLOYMENT_GUIDE.md](infrastructure/STAGING_DEPLOYMENT_GUIDE.md)** - Comprehensive deployment guide
+   - Step-by-step deployment instructions
+   - Prerequisites and setup
+   - Verification procedures
+   - Testing instructions
+   - Monitoring setup
+   - Troubleshooting
+   - **Use when:** Deploying manually or need detailed instructions
+
+8. **[infrastructure/STAGING_DEPLOYMENT_CHECKLIST.md](infrastructure/STAGING_DEPLOYMENT_CHECKLIST.md)** - Deployment validation checklist
+   - Pre-deployment checklist
+   - Deployment steps checklist
+   - Post-deployment validation
+   - Functional testing
+   - Security validation
+   - **Use when:** Ensuring all deployment steps are completed
+
+9. **[infrastructure/STAGING_DEPLOYMENT_README.md](infrastructure/STAGING_DEPLOYMENT_README.md)** - Deployment overview
+   - Quick start guide
+   - Component details
+   - Verification commands
+   - Common issues
+   - **Use when:** Quick reference for deployment
+
+10. **[STAGING_DEPLOYMENT_SUMMARY.md](STAGING_DEPLOYMENT_SUMMARY.md)** - Deployment summary
+    - What was created
+    - Deployment components
+    - How to deploy
+    - Next steps
+    - **Use when:** Understanding what gets deployed
+
+11. **[DEPLOYMENT.md](DEPLOYMENT.md)** - General deployment documentation
+    - Automated deployment (CI/CD)
+    - Manual deployment
+    - Blue-green deployment
+    - Rollback procedures
+    - **Use when:** Understanding deployment strategies
+
+#### 🏗️ Infrastructure
+
+12. **[infrastructure/README.md](infrastructure/README.md)** - Infrastructure overview
+    - API Gateway configuration
+    - Rate limiting
+    - CORS configuration
+    - Monitoring
+    - **Use when:** Understanding API Gateway setup
+
+13. **[infrastructure/STEP_FUNCTIONS_README.md](infrastructure/STEP_FUNCTIONS_README.md)** - Step Functions documentation
+    - State machine configuration
+    - Query pipeline orchestration
+    - Error handling
+    - **Use when:** Understanding Step Functions workflow
+
+14. **[infrastructure/CLOUDWATCH_ALARMS_README.md](infrastructure/CLOUDWATCH_ALARMS_README.md)** - CloudWatch alarms guide
+    - Alarm configuration
+    - Monitoring metrics
+    - Alert notifications
+    - **Use when:** Setting up monitoring and alerts
+
+15. **[infrastructure/API_DOCUMENTATION_README.md](infrastructure/API_DOCUMENTATION_README.md)** - API documentation guide
+    - OpenAPI specification
+    - Swagger UI setup
+    - API endpoints
+    - **Use when:** Setting up API documentation
+
+16. **[infrastructure/RETENTION_SCHEDULE_README.md](infrastructure/RETENTION_SCHEDULE_README.md)** - Data retention guide
+    - Retention policies
+    - Archival process
+    - Configuration
+    - **Use when:** Setting up data retention
+
+#### 📜 Scripts
+
+17. **[scripts/README.md](scripts/README.md)** - Deployment scripts documentation
+    - Script overview
+    - Usage instructions
+    - Common workflows
+    - **Use when:** Understanding deployment scripts
+
+#### 🎯 Specification Documents
+
+18. **[.kiro/specs/bdo-market-insights-rewrite/requirements.md](.kiro/specs/bdo-market-insights-rewrite/requirements.md)** - Requirements specification
+    - Functional requirements
+    - Acceptance criteria
+    - System constraints
+    - **Use when:** Understanding system requirements
+
+19. **[.kiro/specs/bdo-market-insights-rewrite/design.md](.kiro/specs/bdo-market-insights-rewrite/design.md)** - Design specification
+    - Architecture design
+    - Component interfaces
+    - Data models
+    - Correctness properties
+    - **Use when:** Understanding system design
+
+20. **[.kiro/specs/bdo-market-insights-rewrite/tasks.md](.kiro/specs/bdo-market-insights-rewrite/tasks.md)** - Implementation tasks
+    - Task breakdown
+    - Implementation phases
+    - Progress tracking
+    - **Use when:** Tracking implementation progress
+
+#### 📊 Additional Documentation
+
+21. **[CHANGELOG.md](CHANGELOG.md)** - Version history and changes
+    - Release notes
+    - Breaking changes
+    - Bug fixes
+    - **Use when:** Checking version history
+
+22. **[lambda_layer/README.md](lambda_layer/README.md)** - Lambda Layer documentation
+    - Layer structure
+    - Dependencies
+    - Usage
+    - **Use when:** Understanding shared code
+
+23. **[lambda_layer/XRAY_CONFIGURATION.md](lambda_layer/XRAY_CONFIGURATION.md)** - X-Ray tracing setup
+    - X-Ray configuration
+    - Tracing setup
+    - Debugging
+    - **Use when:** Setting up distributed tracing
+
+### 📖 Documentation Workflow
+
+#### For First-Time Setup:
+1. Start with **QUICK_START.md**
+2. Follow **CREDENTIALS_SETUP_GUIDE.md** to configure AWS
+3. Review **DEPLOYMENT_SECURITY_SUMMARY.md** for security understanding
+4. Use **STAGING_DEPLOYMENT_GUIDE.md** for detailed deployment steps
+5. Validate with **STAGING_DEPLOYMENT_CHECKLIST.md**
+
+#### For Deployment:
+1. **QUICK_START.md** - Quick reference
+2. **scripts/deploy-staging.sh** - Run deployment
+3. **STAGING_DEPLOYMENT_CHECKLIST.md** - Validate deployment
+
+#### For Troubleshooting:
+1. **STAGING_DEPLOYMENT_GUIDE.md** - Troubleshooting section
+2. **CREDENTIALS_SETUP_GUIDE.md** - Credentials issues
+3. **infrastructure/README.md** - Infrastructure issues
+4. **scripts/README.md** - Script issues
+
+#### For Understanding Architecture:
+1. **design.md** - System design
+2. **requirements.md** - System requirements
+3. **infrastructure/README.md** - Infrastructure overview
+4. **STEP_FUNCTIONS_README.md** - Workflow orchestration
+
+### 🔍 Quick Reference
+
+| Need to... | Read this |
+|------------|-----------|
+| Deploy quickly | [QUICK_START.md](QUICK_START.md) |
+| Setup AWS credentials | [CREDENTIALS_SETUP_GUIDE.md](CREDENTIALS_SETUP_GUIDE.md) |
+| Deploy step-by-step | [STAGING_DEPLOYMENT_GUIDE.md](infrastructure/STAGING_DEPLOYMENT_GUIDE.md) |
+| Validate deployment | [STAGING_DEPLOYMENT_CHECKLIST.md](infrastructure/STAGING_DEPLOYMENT_CHECKLIST.md) |
+| Understand security | [DEPLOYMENT_SECURITY_SUMMARY.md](DEPLOYMENT_SECURITY_SUMMARY.md) |
+| Configure settings | [config/README.md](config/README.md) |
+| Troubleshoot issues | [STAGING_DEPLOYMENT_GUIDE.md](infrastructure/STAGING_DEPLOYMENT_GUIDE.md#troubleshooting) |
+| Understand architecture | [design.md](.kiro/specs/bdo-market-insights-rewrite/design.md) |
+| Check requirements | [requirements.md](.kiro/specs/bdo-market-insights-rewrite/requirements.md) |
+| Track tasks | [tasks.md](.kiro/specs/bdo-market-insights-rewrite/tasks.md) |
+| Use deployment scripts | [scripts/README.md](scripts/README.md) |
+| Setup monitoring | [CLOUDWATCH_ALARMS_README.md](infrastructure/CLOUDWATCH_ALARMS_README.md) |
+| Configure API Gateway | [infrastructure/README.md](infrastructure/README.md) |
+| Setup data retention | [RETENTION_SCHEDULE_README.md](infrastructure/RETENTION_SCHEDULE_README.md) |
+
 ## Deployment
 
 Deployment is automated via GitHub Actions.
@@ -35,6 +249,8 @@ Deployment is automated via GitHub Actions.
 On each push to the `main` branch:
 - All Lambda packages are zipped and deployed using AWS CLI.
 - The deployment flow is described in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
+
+For manual deployment to staging, see the [Documentation](#documentation) section above, starting with [QUICK_START.md](QUICK_START.md)
 
 ## Architecture
 
