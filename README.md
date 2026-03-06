@@ -30,200 +30,124 @@ The application is built using AWS Lambda and orchestrated via Step Functions. I
 
 ## Documentation
 
-This project includes comprehensive documentation organized by purpose and workflow. Follow the guides in order for the best experience.
+This project includes comprehensive documentation organized by purpose and workflow.
 
-> 📊 **Visual Guide:** See [DOCUMENTATION_MAP.md](DOCUMENTATION_MAP.md) for a visual overview of all documentation with workflows and learning paths.
+> 📊 **Visual Guide:** See [DOCUMENTATION_MAP.md](DOCUMENTATION_MAP.md) for a visual overview with workflows and learning paths.
 
-### 📚 Documentation Index
+### � Quick Start
 
-#### 🚀 Getting Started (Start Here!)
+**New to the project?** Start here:
+1. **[QUICK_START.md](QUICK_START.md)** - Deploy in 3 steps
+2. **[CREDENTIALS_SETUP_GUIDE.md](CREDENTIALS_SETUP_GUIDE.md)** - Setup AWS credentials
+3. **[STAGING_DEPLOYMENT_GUIDE.md](infrastructure/STAGING_DEPLOYMENT_GUIDE.md)** - Detailed deployment
+
+### 📚 Documentation Categories
+
+<details>
+<summary><b>🚀 Getting Started (3 docs)</b> - Click to expand</summary>
 
 1. **[QUICK_START.md](QUICK_START.md)** - Quick reference for deploying to staging
-   - 3-step deployment process
-   - Essential commands
-   - Troubleshooting tips
    - **Use when:** You want to deploy quickly
 
 2. **[CREDENTIALS_SETUP_GUIDE.md](CREDENTIALS_SETUP_GUIDE.md)** - Complete guide for AWS credentials setup
-   - AWS CLI profile configuration
-   - AWS SSO setup
-   - Security best practices
-   - Troubleshooting credentials
    - **Use when:** Setting up AWS credentials for the first time
 
 3. **[DEPLOYMENT_SECURITY_SUMMARY.md](DEPLOYMENT_SECURITY_SUMMARY.md)** - Security overview
-   - Configuration management system
-   - What's protected vs. what's public
-   - Security checklist
    - **Use when:** Understanding security approach
 
-#### 🔧 Configuration
+</details>
+
+<details>
+<summary><b>🔧 Configuration (3 docs)</b> - Click to expand</summary>
 
 4. **[config/README.md](config/README.md)** - Configuration management guide
-   - Configuration file structure
-   - Environment-specific configs
-   - Using configuration in scripts
    - **Use when:** Managing deployment configuration
 
 5. **[.env.example](.env.example)** - Environment variables template
-   - Template for environment variables
-   - Copy to `.env` and customize
    - **Use when:** Setting up environment variables
 
 6. **[config/deployment-config.example.sh](config/deployment-config.example.sh)** - Deployment configuration template
-   - Complete configuration template
-   - Copy to `config/deployment-config.sh` and customize
    - **Use when:** Creating deployment configuration
 
-#### 🚢 Deployment Guides
+</details>
+
+<details>
+<summary><b>🚢 Deployment Guides (5 docs)</b> - Click to expand</summary>
 
 7. **[infrastructure/STAGING_DEPLOYMENT_GUIDE.md](infrastructure/STAGING_DEPLOYMENT_GUIDE.md)** - Comprehensive deployment guide
-   - Step-by-step deployment instructions
-   - Prerequisites and setup
-   - Verification procedures
-   - Testing instructions
-   - Monitoring setup
-   - Troubleshooting
    - **Use when:** Deploying manually or need detailed instructions
 
 8. **[infrastructure/STAGING_DEPLOYMENT_CHECKLIST.md](infrastructure/STAGING_DEPLOYMENT_CHECKLIST.md)** - Deployment validation checklist
-   - Pre-deployment checklist
-   - Deployment steps checklist
-   - Post-deployment validation
-   - Functional testing
-   - Security validation
    - **Use when:** Ensuring all deployment steps are completed
 
 9. **[infrastructure/STAGING_DEPLOYMENT_README.md](infrastructure/STAGING_DEPLOYMENT_README.md)** - Deployment overview
-   - Quick start guide
-   - Component details
-   - Verification commands
-   - Common issues
    - **Use when:** Quick reference for deployment
 
 10. **[STAGING_DEPLOYMENT_SUMMARY.md](STAGING_DEPLOYMENT_SUMMARY.md)** - Deployment summary
-    - What was created
-    - Deployment components
-    - How to deploy
-    - Next steps
     - **Use when:** Understanding what gets deployed
 
 11. **[DEPLOYMENT.md](DEPLOYMENT.md)** - General deployment documentation
-    - Automated deployment (CI/CD)
-    - Manual deployment
-    - Blue-green deployment
-    - Rollback procedures
     - **Use when:** Understanding deployment strategies
 
-#### 🏗️ Infrastructure
+</details>
+
+<details>
+<summary><b>🏗️ Infrastructure (5 docs)</b> - Click to expand</summary>
 
 12. **[infrastructure/README.md](infrastructure/README.md)** - Infrastructure overview
-    - API Gateway configuration
-    - Rate limiting
-    - CORS configuration
-    - Monitoring
     - **Use when:** Understanding API Gateway setup
 
 13. **[infrastructure/STEP_FUNCTIONS_README.md](infrastructure/STEP_FUNCTIONS_README.md)** - Step Functions documentation
-    - State machine configuration
-    - Query pipeline orchestration
-    - Error handling
     - **Use when:** Understanding Step Functions workflow
 
 14. **[infrastructure/CLOUDWATCH_ALARMS_README.md](infrastructure/CLOUDWATCH_ALARMS_README.md)** - CloudWatch alarms guide
-    - Alarm configuration
-    - Monitoring metrics
-    - Alert notifications
     - **Use when:** Setting up monitoring and alerts
 
 15. **[infrastructure/API_DOCUMENTATION_README.md](infrastructure/API_DOCUMENTATION_README.md)** - API documentation guide
-    - OpenAPI specification
-    - Swagger UI setup
-    - API endpoints
     - **Use when:** Setting up API documentation
 
 16. **[infrastructure/RETENTION_SCHEDULE_README.md](infrastructure/RETENTION_SCHEDULE_README.md)** - Data retention guide
-    - Retention policies
-    - Archival process
-    - Configuration
     - **Use when:** Setting up data retention
 
-#### 📜 Scripts
+</details>
+
+<details>
+<summary><b>📜 Scripts (1 doc)</b> - Click to expand</summary>
 
 17. **[scripts/README.md](scripts/README.md)** - Deployment scripts documentation
-    - Script overview
-    - Usage instructions
-    - Common workflows
     - **Use when:** Understanding deployment scripts
 
-#### 🎯 Specification Documents
+</details>
+
+<details>
+<summary><b>🎯 Specifications (3 docs)</b> - Click to expand</summary>
 
 18. **[.kiro/specs/bdo-market-insights-rewrite/requirements.md](.kiro/specs/bdo-market-insights-rewrite/requirements.md)** - Requirements specification
-    - Functional requirements
-    - Acceptance criteria
-    - System constraints
     - **Use when:** Understanding system requirements
 
 19. **[.kiro/specs/bdo-market-insights-rewrite/design.md](.kiro/specs/bdo-market-insights-rewrite/design.md)** - Design specification
-    - Architecture design
-    - Component interfaces
-    - Data models
-    - Correctness properties
     - **Use when:** Understanding system design
 
 20. **[.kiro/specs/bdo-market-insights-rewrite/tasks.md](.kiro/specs/bdo-market-insights-rewrite/tasks.md)** - Implementation tasks
-    - Task breakdown
-    - Implementation phases
-    - Progress tracking
     - **Use when:** Tracking implementation progress
 
-#### 📊 Additional Documentation
+</details>
+
+<details>
+<summary><b>📊 Additional (3 docs)</b> - Click to expand</summary>
 
 21. **[CHANGELOG.md](CHANGELOG.md)** - Version history and changes
-    - Release notes
-    - Breaking changes
-    - Bug fixes
     - **Use when:** Checking version history
 
 22. **[lambda_layer/README.md](lambda_layer/README.md)** - Lambda Layer documentation
-    - Layer structure
-    - Dependencies
-    - Usage
     - **Use when:** Understanding shared code
 
 23. **[lambda_layer/XRAY_CONFIGURATION.md](lambda_layer/XRAY_CONFIGURATION.md)** - X-Ray tracing setup
-    - X-Ray configuration
-    - Tracing setup
-    - Debugging
     - **Use when:** Setting up distributed tracing
 
-### 📖 Documentation Workflow
+</details>
 
-#### For First-Time Setup:
-1. Start with **QUICK_START.md**
-2. Follow **CREDENTIALS_SETUP_GUIDE.md** to configure AWS
-3. Review **DEPLOYMENT_SECURITY_SUMMARY.md** for security understanding
-4. Use **STAGING_DEPLOYMENT_GUIDE.md** for detailed deployment steps
-5. Validate with **STAGING_DEPLOYMENT_CHECKLIST.md**
-
-#### For Deployment:
-1. **QUICK_START.md** - Quick reference
-2. **scripts/deploy-staging.sh** - Run deployment
-3. **STAGING_DEPLOYMENT_CHECKLIST.md** - Validate deployment
-
-#### For Troubleshooting:
-1. **STAGING_DEPLOYMENT_GUIDE.md** - Troubleshooting section
-2. **CREDENTIALS_SETUP_GUIDE.md** - Credentials issues
-3. **infrastructure/README.md** - Infrastructure issues
-4. **scripts/README.md** - Script issues
-
-#### For Understanding Architecture:
-1. **design.md** - System design
-2. **requirements.md** - System requirements
-3. **infrastructure/README.md** - Infrastructure overview
-4. **STEP_FUNCTIONS_README.md** - Workflow orchestration
-
-### 🔍 Quick Reference
+### � Quick Reference
 
 | Need to... | Read this |
 |------------|-----------|
@@ -232,15 +156,41 @@ This project includes comprehensive documentation organized by purpose and workf
 | Deploy step-by-step | [STAGING_DEPLOYMENT_GUIDE.md](infrastructure/STAGING_DEPLOYMENT_GUIDE.md) |
 | Validate deployment | [STAGING_DEPLOYMENT_CHECKLIST.md](infrastructure/STAGING_DEPLOYMENT_CHECKLIST.md) |
 | Understand security | [DEPLOYMENT_SECURITY_SUMMARY.md](DEPLOYMENT_SECURITY_SUMMARY.md) |
-| Configure settings | [config/README.md](config/README.md) |
 | Troubleshoot issues | [STAGING_DEPLOYMENT_GUIDE.md](infrastructure/STAGING_DEPLOYMENT_GUIDE.md#troubleshooting) |
 | Understand architecture | [design.md](.kiro/specs/bdo-market-insights-rewrite/design.md) |
-| Check requirements | [requirements.md](.kiro/specs/bdo-market-insights-rewrite/requirements.md) |
-| Track tasks | [tasks.md](.kiro/specs/bdo-market-insights-rewrite/tasks.md) |
-| Use deployment scripts | [scripts/README.md](scripts/README.md) |
 | Setup monitoring | [CLOUDWATCH_ALARMS_README.md](infrastructure/CLOUDWATCH_ALARMS_README.md) |
-| Configure API Gateway | [infrastructure/README.md](infrastructure/README.md) |
-| Setup data retention | [RETENTION_SCHEDULE_README.md](infrastructure/RETENTION_SCHEDULE_README.md) |
+
+### 📖 Documentation Workflows
+
+<details>
+<summary><b>First-Time Setup</b> - Click to expand</summary>
+
+1. Start with **QUICK_START.md**
+2. Follow **CREDENTIALS_SETUP_GUIDE.md** to configure AWS
+3. Review **DEPLOYMENT_SECURITY_SUMMARY.md** for security understanding
+4. Use **STAGING_DEPLOYMENT_GUIDE.md** for detailed deployment steps
+5. Validate with **STAGING_DEPLOYMENT_CHECKLIST.md**
+
+</details>
+
+<details>
+<summary><b>Quick Deployment</b> - Click to expand</summary>
+
+1. **QUICK_START.md** - Quick reference
+2. Run `./scripts/deploy-staging.sh`
+3. **STAGING_DEPLOYMENT_CHECKLIST.md** - Validate deployment
+
+</details>
+
+<details>
+<summary><b>Troubleshooting</b> - Click to expand</summary>
+
+1. **STAGING_DEPLOYMENT_GUIDE.md** - Troubleshooting section
+2. **CREDENTIALS_SETUP_GUIDE.md** - Credentials issues
+3. **infrastructure/README.md** - Infrastructure issues
+4. **scripts/README.md** - Script issues
+
+</details>
 
 ## Deployment
 
@@ -261,7 +211,7 @@ For manual deployment to staging, see the [Documentation](#documentation) sectio
 - **Discord Bot** act as client, rendering report in community channel
 - **Django** act as client, rendering report in dashboard, charts and tables
 
-![Architecture](./img/arch_light_bg.png)
+![Architecture](./img/architecture/arch_light_bg.png)
 
 ## Workflow
 
@@ -324,7 +274,7 @@ When API Gateway receive a request, it triggers the Step Function to process the
 
 It could be test in [Postman](https://www.postman.com/ryanyip-2272909/my-site/collection/z9iztub/my-site-s-restful-api), and there are more examples under POST request.
 
-![postman workspace](./img/postman_workspace_light.png)
+![postman workspace](./img/tools/postman_workspace_light.png)
 
 ### POST request body
 ```json
@@ -383,7 +333,7 @@ The return of these end game items seem very attractive.
 
 **Visualize**
 
-![Scatter](./img/return_scatter.png)
+![Scatter](./img/examples/return_scatter.png)
 
 (Green line at rate 7 is the balance point of level 5 item, p.s. success rate from level 4 to level 5 is around 15%)
 
@@ -445,7 +395,7 @@ In this case, Ocean Haze Ring vs Deboreka Necklace.
 
 **Visualize Price & Volume Trends**
 
-![Trends of Ocean Haze Ring](./img/ocean_haze_ring_trends.png)
+![Trends of Ocean Haze Ring](./img/examples/ocean_haze_ring_trends.png)
 
 **Trends of Deboreka Necklace**
 | Record           | price        | stock | volume |
@@ -460,7 +410,7 @@ In this case, Ocean Haze Ring vs Deboreka Necklace.
 
 **Visualize Price & Volume Trends**
 
-![Trends of Deboreka Necklace](./img/deboreka_necklace_trends.png)
+![Trends of Deboreka Necklace](./img/examples/deboreka_necklace_trends.png)
 
 **Conclusion**
 
