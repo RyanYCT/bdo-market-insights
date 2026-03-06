@@ -362,7 +362,7 @@ This implementation plan follows a phased approach to rewrite the BDO Market Ins
   - Check custom metrics are being emitted
   - Test error scenarios and verify error handling
 
-- [ ] 28. Deploy to production
+- [x] 28. Deploy to production
   - Deploy using blue-green deployment strategy
   - Monitor CloudWatch metrics for 24 hours
   - Verify ETL pipeline runs on schedule
