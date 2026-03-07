@@ -32,163 +32,101 @@ The application is built using AWS Lambda and orchestrated via Step Functions. I
 
 This project includes comprehensive documentation organized by purpose and workflow.
 
-> 📊 **Visual Guide:** See [DOCUMENTATION_MAP.md](docs/guides/DOCUMENTATION_MAP.md) for a visual overview with workflows and learning paths.
+> 📊 **Visual Guide**: See [DOCUMENTATION_MAP.md](docs/guides/DOCUMENTATION_MAP.md) for a visual overview with workflows and learning paths.
 
-### � Quick Start
+### 🚀 Quick Start
 
-**New to the project?** Start here:
-1. **[QUICK_START.md](docs/deployment/QUICK_START.md)** - Deploy in 3 steps
+1. **[DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md)** - Complete deployment guide (staging & production)
 2. **[CREDENTIALS_SETUP_GUIDE.md](docs/deployment/CREDENTIALS_SETUP_GUIDE.md)** - Setup AWS credentials
-3. **[STAGING_DEPLOYMENT_GUIDE.md](infrastructure/STAGING_DEPLOYMENT_GUIDE.md)** - Detailed deployment
+3. **[INFRASTRUCTURE_GUIDE.md](docs/infrastructure/INFRASTRUCTURE_GUIDE.md)** - Infrastructure components guide
 
-### 📚 Documentation Categories
+### 📚 Core Documentation
 
 <details>
-<summary><b>🚀 Getting Started (3 docs)</b> - Click to expand</summary>
+<summary><b>Deployment</b>: - Click to expand</summary>
 
-1. **[QUICK_START.md](docs/deployment/QUICK_START.md)** - Quick reference for deploying to staging
-   - **Use when:** You want to deploy quickly
-
-2. **[CREDENTIALS_SETUP_GUIDE.md](docs/deployment/CREDENTIALS_SETUP_GUIDE.md)** - Complete guide for AWS credentials setup
-   - **Use when:** Setting up AWS credentials for the first time
-
-3. **[DEPLOYMENT_SECURITY_SUMMARY.md](docs/deployment/DEPLOYMENT_SECURITY_SUMMARY.md)** - Security overview
-   - **Use when:** Understanding security approach
+- **[DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md)** - Complete guide for staging and production deployment
+  - Quick Start, Prerequisites, Staging, Production, Validation, Monitoring, Rollback, Troubleshooting
+- **[CREDENTIALS_SETUP_GUIDE.md](docs/deployment/CREDENTIALS_SETUP_GUIDE.md)** - AWS credentials setup
+- **[DEPLOYMENT_SECURITY_SUMMARY.md](docs/deployment/DEPLOYMENT_SECURITY_SUMMARY.md)** - Security overview
 
 </details>
 
 <details>
-<summary><b>🔧 Configuration (3 docs)</b> - Click to expand</summary>
+<summary><b>Infrastructure</b>: - Click to expand</summary>
 
-4. **[config/README.md](config/README.md)** - Configuration management guide
-   - **Use when:** Managing deployment configuration
+- **[INFRASTRUCTURE_GUIDE.md](docs/infrastructure/INFRASTRUCTURE_GUIDE.md)** - Complete infrastructure guide
+  - API Gateway, Step Functions, CloudWatch Alarms, API Documentation, Data Retention
+- **[config/README.md](config/README.md)** - Configuration management
+- **[scripts/README.md](scripts/README.md)** - Deployment scripts
 
-5. **[.env.example](.env.example)** - Environment variables template
-   - **Use when:** Setting up environment variables
+</details>
 
-6. **[config/deployment-config.example.sh](config/deployment-config.example.sh)** - Deployment configuration template
-   - **Use when:** Creating deployment configuration
+
+<details>
+<summary><b>Detailed Reference</b>: - Click to expand</summary>
+
+- **[infrastructure/README.md](infrastructure/README.md)** - API Gateway detailed reference
+- **[infrastructure/STEP_FUNCTIONS_README.md](infrastructure/STEP_FUNCTIONS_README.md)** - Step Functions detailed reference
+- **[infrastructure/CLOUDWATCH_ALARMS_README.md](infrastructure/CLOUDWATCH_ALARMS_README.md)** - CloudWatch alarms detailed reference
+- **[infrastructure/API_DOCUMENTATION_README.md](infrastructure/API_DOCUMENTATION_README.md)** - API documentation detailed reference
+- **[infrastructure/RETENTION_SCHEDULE_README.md](infrastructure/RETENTION_SCHEDULE_README.md)** - Data retention detailed reference
 
 </details>
 
 <details>
-<summary><b>🚢 Deployment Guides (5 docs)</b> - Click to expand</summary>
+<summary><b>Development</b>: - Click to expand</summary>
 
-7. **[infrastructure/STAGING_DEPLOYMENT_GUIDE.md](infrastructure/STAGING_DEPLOYMENT_GUIDE.md)** - Comprehensive deployment guide
-   - **Use when:** Deploying manually or need detailed instructions
-
-8. **[infrastructure/STAGING_DEPLOYMENT_CHECKLIST.md](infrastructure/STAGING_DEPLOYMENT_CHECKLIST.md)** - Deployment validation checklist
-   - **Use when:** Ensuring all deployment steps are completed
-
-9. **[infrastructure/STAGING_DEPLOYMENT_README.md](infrastructure/STAGING_DEPLOYMENT_README.md)** - Deployment overview
-   - **Use when:** Quick reference for deployment
-
-10. **[STAGING_DEPLOYMENT_SUMMARY.md](docs/deployment/STAGING_DEPLOYMENT_SUMMARY.md)** - Deployment summary
-    - **Use when:** Understanding what gets deployed
-
-11. **[DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md)** - General deployment documentation
-    - **Use when:** Understanding deployment strategies
+- **[.kiro/specs/bdo-market-insights-rewrite/requirements.md](.kiro/specs/bdo-market-insights-rewrite/requirements.md)** - Requirements
+- **[.kiro/specs/bdo-market-insights-rewrite/design.md](.kiro/specs/bdo-market-insights-rewrite/design.md)** - Design
+- **[.kiro/specs/bdo-market-insights-rewrite/tasks.md](.kiro/specs/bdo-market-insights-rewrite/tasks.md)** - Tasks
+- **[lambda_layer/README.md](lambda_layer/README.md)** - Lambda Layer documentation
+- **[lambda_layer/XRAY_CONFIGURATION.md](lambda_layer/XRAY_CONFIGURATION.md)** - X-Ray tracing setup
+- **[CHANGELOG.md](docs/CHANGELOG.md)** - Version history
 
 </details>
 
-<details>
-<summary><b>🏗️ Infrastructure (5 docs)</b> - Click to expand</summary>
-
-12. **[infrastructure/README.md](infrastructure/README.md)** - Infrastructure overview
-    - **Use when:** Understanding API Gateway setup
-
-13. **[infrastructure/STEP_FUNCTIONS_README.md](infrastructure/STEP_FUNCTIONS_README.md)** - Step Functions documentation
-    - **Use when:** Understanding Step Functions workflow
-
-14. **[infrastructure/CLOUDWATCH_ALARMS_README.md](infrastructure/CLOUDWATCH_ALARMS_README.md)** - CloudWatch alarms guide
-    - **Use when:** Setting up monitoring and alerts
-
-15. **[infrastructure/API_DOCUMENTATION_README.md](infrastructure/API_DOCUMENTATION_README.md)** - API documentation guide
-    - **Use when:** Setting up API documentation
-
-16. **[infrastructure/RETENTION_SCHEDULE_README.md](infrastructure/RETENTION_SCHEDULE_README.md)** - Data retention guide
-    - **Use when:** Setting up data retention
-
-</details>
-
-<details>
-<summary><b>📜 Scripts (1 doc)</b> - Click to expand</summary>
-
-17. **[scripts/README.md](scripts/README.md)** - Deployment scripts documentation
-    - **Use when:** Understanding deployment scripts
-
-</details>
-
-<details>
-<summary><b>🎯 Specifications (3 docs)</b> - Click to expand</summary>
-
-18. **[.kiro/specs/bdo-market-insights-rewrite/requirements.md](.kiro/specs/bdo-market-insights-rewrite/requirements.md)** - Requirements specification
-    - **Use when:** Understanding system requirements
-
-19. **[.kiro/specs/bdo-market-insights-rewrite/design.md](.kiro/specs/bdo-market-insights-rewrite/design.md)** - Design specification
-    - **Use when:** Understanding system design
-
-20. **[.kiro/specs/bdo-market-insights-rewrite/tasks.md](.kiro/specs/bdo-market-insights-rewrite/tasks.md)** - Implementation tasks
-    - **Use when:** Tracking implementation progress
-
-</details>
-
-<details>
-<summary><b>📊 Additional (3 docs)</b> - Click to expand</summary>
-
-21. **[CHANGELOG.md](docs/CHANGELOG.md)** - Version history and changes
-    - **Use when:** Checking version history
-
-22. **[lambda_layer/README.md](lambda_layer/README.md)** - Lambda Layer documentation
-    - **Use when:** Understanding shared code
-
-23. **[lambda_layer/XRAY_CONFIGURATION.md](lambda_layer/XRAY_CONFIGURATION.md)** - X-Ray tracing setup
-    - **Use when:** Setting up distributed tracing
-
-</details>
-
-### � Quick Reference
+### 📖 Quick Reference
 
 | Need to... | Read this |
 |------------|-----------|
-| Deploy quickly | [QUICK_START.md](docs/deployment/QUICK_START.md) |
+| Deploy to staging | [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#staging-deployment) |
+| Deploy to production | [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#production-deployment) |
 | Setup AWS credentials | [CREDENTIALS_SETUP_GUIDE.md](docs/deployment/CREDENTIALS_SETUP_GUIDE.md) |
-| Deploy step-by-step | [STAGING_DEPLOYMENT_GUIDE.md](infrastructure/STAGING_DEPLOYMENT_GUIDE.md) |
-| Validate deployment | [STAGING_DEPLOYMENT_CHECKLIST.md](infrastructure/STAGING_DEPLOYMENT_CHECKLIST.md) |
+| Validate deployment | [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#validation) |
 | Understand security | [DEPLOYMENT_SECURITY_SUMMARY.md](docs/deployment/DEPLOYMENT_SECURITY_SUMMARY.md) |
-| Troubleshoot issues | [STAGING_DEPLOYMENT_GUIDE.md](infrastructure/STAGING_DEPLOYMENT_GUIDE.md#troubleshooting) |
+| Troubleshoot issues | [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#troubleshooting) |
+| Understand API Gateway | [INFRASTRUCTURE_GUIDE.md](docs/infrastructure/INFRASTRUCTURE_GUIDE.md#api-gateway) |
+| Setup monitoring | [INFRASTRUCTURE_GUIDE.md](docs/infrastructure/INFRASTRUCTURE_GUIDE.md#cloudwatch-alarms) |
 | Understand architecture | [design.md](.kiro/specs/bdo-market-insights-rewrite/design.md) |
-| Setup monitoring | [CLOUDWATCH_ALARMS_README.md](infrastructure/CLOUDWATCH_ALARMS_README.md) |
+| Use deployment scripts | [scripts/README.md](scripts/README.md) |
 
 ### 📖 Documentation Workflows
 
 <details>
-<summary><b>First-Time Setup</b> - Click to expand</summary>
+<summary><b>First-Time Setup</b>: - Click to expand</summary>
 
-1. Start with **QUICK_START.md**
-2. Follow **CREDENTIALS_SETUP_GUIDE.md** to configure AWS
-3. Review **DEPLOYMENT_SECURITY_SUMMARY.md** for security understanding
-4. Use **STAGING_DEPLOYMENT_GUIDE.md** for detailed deployment steps
-5. Validate with **STAGING_DEPLOYMENT_CHECKLIST.md**
-
-</details>
-
-<details>
-<summary><b>Quick Deployment</b> - Click to expand</summary>
-
-1. **QUICK_START.md** - Quick reference
-2. Run `./scripts/deploy-staging.sh`
-3. **STAGING_DEPLOYMENT_CHECKLIST.md** - Validate deployment
+1. Read [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#quick-start)
+2. Follow [CREDENTIALS_SETUP_GUIDE.md](docs/deployment/CREDENTIALS_SETUP_GUIDE.md)
+3. Review [DEPLOYMENT_SECURITY_SUMMARY.md](docs/deployment/DEPLOYMENT_SECURITY_SUMMARY.md)
+4. Deploy using [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#staging-deployment)
 
 </details>
 
 <details>
-<summary><b>Troubleshooting</b> - Click to expand</summary>
+<summary><b>Quick Deployment</b>: - Click to expand</summary>
 
-1. **STAGING_DEPLOYMENT_GUIDE.md** - Troubleshooting section
-2. **CREDENTIALS_SETUP_GUIDE.md** - Credentials issues
-3. **infrastructure/README.md** - Infrastructure issues
-4. **scripts/README.md** - Script issues
+1. Run `./scripts/deploy-staging.sh`
+2. Validate with [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#validation)
+
+</details>
+
+<details>
+<summary><b>Troubleshooting</b>: - Click to expand</summary>
+
+1. Check [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#troubleshooting)
+2. Review [INFRASTRUCTURE_GUIDE.md](docs/infrastructure/INFRASTRUCTURE_GUIDE.md#troubleshooting)
+3. Check [scripts/README.md](scripts/README.md#troubleshooting)
 
 </details>
 
