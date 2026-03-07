@@ -215,9 +215,9 @@ jobs:
         run: |
           LAYER_VERSION=$(aws lambda publish-layer-version \
             --layer-name bdo-market-insights-common \
-            --description "Common utilities for BDO Market Insights" \
+            --description "Common utilities for BDO Market Insights ETL pipeline - Python 3.14" \
             --zip-file fileb://lambda_layer/lambda-layer.zip \
-            --compatible-runtimes python3.11 \
+            --compatible-runtimes python3.14 \
             --query 'Version' \
             --output text)
           echo "layer_version=$LAYER_VERSION" >> $GITHUB_OUTPUT

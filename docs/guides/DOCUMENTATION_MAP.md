@@ -259,7 +259,7 @@ graph TD
 
 ### Tools Documentation
 - [AWS CLI](https://docs.aws.amazon.com/cli/)
-- [Python 3.11](https://docs.python.org/3.11/)
+- [Python 3.14](https://docs.python.org/3.14/)
 - [Pydantic](https://docs.pydantic.dev/)
 - [Hypothesis](https://hypothesis.readthedocs.io/)
 

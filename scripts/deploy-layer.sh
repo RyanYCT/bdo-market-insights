@@ -6,7 +6,7 @@ set -e
 
 # Configuration
 LAYER_NAME="bdo-market-insights-common"
-PYTHON_VERSION="python3.11"
+PYTHON_VERSION="python3.14"
 REGION="${AWS_REGION:-us-east-1}"
 
 echo "=========================================="
@@ -48,7 +48,7 @@ if command -v docker &> /dev/null; then
         --entrypoint /bin/bash \
         -v "$(pwd):/var/task" \
         -w /var/task \
-        public.ecr.aws/lambda/python:3.11 \
+        public.ecr.aws/lambda/python:3.14 \
         -c "pip install -r requirements.txt -t ${BUILD_DIR}/python/ --upgrade"
 else
     echo "Docker not found. Installing locally (may not be Lambda-compatible on Windows)..."
@@ -57,21 +57,22 @@ fi
 
 # Create zip file
 echo "Creating deployment package..."
-cd "$BUILD_DIR"
+# Stay in lambda_layer directory and zip the build/python directory
+# This preserves the python/ directory structure required by Lambda layers
 
 # Use PowerShell on Windows, zip on Unix
 if command -v powershell.exe &> /dev/null; then
     echo "Using PowerShell to create zip..."
-    powershell.exe -Command "Compress-Archive -Path python/* -DestinationPath ../lambda-layer.zip -Force"
+    powershell.exe -Command "Compress-Archive -Path ${BUILD_DIR}/python -DestinationPath lambda-layer.zip -Force"
 elif command -v zip &> /dev/null; then
     echo "Using zip to create package..."
+    cd "$BUILD_DIR"
     zip -r ../lambda-layer.zip python/ -q
+    cd ..
 else
     echo "Error: Neither zip nor PowerShell found!"
     exit 1
 fi
-
-cd ..
 
 # Get file size
 if command -v du &> /dev/null; then
@@ -86,7 +87,7 @@ echo "Package size: $SIZE"
 echo "Publishing Lambda Layer..."
 LAYER_VERSION=$(aws lambda publish-layer-version \
     --layer-name "$LAYER_NAME" \
-    --description "Common utilities for BDO Market Insights - $(date +%Y-%m-%d)" \
+    --description "Common utilities for BDO Market Insights ETL pipeline - Python 3.14 - $(date +%Y-%m-%d)" \
     --zip-file fileb://lambda-layer.zip \
     --compatible-runtimes "$PYTHON_VERSION" \
     --region "$REGION" \

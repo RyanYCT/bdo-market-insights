@@ -34,7 +34,7 @@ echo [OK] AWS CLI found
 
 where python >nul 2>nul
 if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Python not found. Please install Python 3.11+.
+    echo [ERROR] Python not found. Please install Python 3.14+.
     exit /b 1
 )
 echo [OK] Python found

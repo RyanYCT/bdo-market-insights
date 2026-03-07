@@ -109,7 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Increased Lambda timeout from 30s to 60s (#125)
-- Updated Python runtime to 3.11 (#126)
+- Updated Python runtime to 3.14 (#126)
 
 ### Fixed
 - Fixed connection pool exhaustion issue (#127)

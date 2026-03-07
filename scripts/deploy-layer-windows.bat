@@ -6,7 +6,7 @@ setlocal enabledelayedexpansion
 
 REM Configuration
 set LAYER_NAME=bdo-market-insights-common
-set PYTHON_VERSION=python3.11
+set PYTHON_VERSION=python3.14
 if "%AWS_REGION%"=="" set AWS_REGION=us-east-1
 set REGION=%AWS_REGION%
 
@@ -40,7 +40,7 @@ REM Check if Docker is available
 docker --version >nul 2>&1
 if %errorlevel% equ 0 (
     echo Using Docker to build Lambda-compatible packages...
-    docker run --rm --entrypoint /bin/bash -v "%cd%:/var/task" -w /var/task public.ecr.aws/lambda/python:3.11 -c "pip install -r requirements.txt -t %BUILD_DIR%/python/ --upgrade"
+    docker run --rm --entrypoint /bin/bash -v "%cd%:/var/task" -w /var/task public.ecr.aws/lambda/python:3.14 -c "pip install -r requirements.txt -t %BUILD_DIR%/python/ --upgrade"
 ) else (
     echo Docker not found. Attempting to install with platform-specific wheels...
     pip install -r requirements.txt -t "%BUILD_DIR%\python\" --upgrade --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.11
@@ -53,9 +53,9 @@ if %errorlevel% neq 0 (
 
 REM Create zip file
 echo Creating deployment package...
-cd "%BUILD_DIR%"
-powershell -command "Compress-Archive -Path python\* -DestinationPath ..\lambda-layer.zip -Force"
-cd ..
+REM Stay in lambda_layer directory and zip the build/python directory
+REM This preserves the python/ directory structure required by Lambda layers
+powershell -command "Compress-Archive -Path %BUILD_DIR%\python -DestinationPath lambda-layer.zip -Force"
 
 REM Get file size
 for %%A in (lambda-layer.zip) do set SIZE=%%~zA
@@ -64,7 +64,7 @@ echo Package size: %SIZE_MB% MB
 
 REM Publish layer
 echo Publishing Lambda Layer...
-for /f "tokens=*" %%i in ('aws lambda publish-layer-version --layer-name "%LAYER_NAME%" --description "Common utilities for BDO Market Insights - %date%" --zip-file fileb://lambda-layer.zip --compatible-runtimes "%PYTHON_VERSION%" --region "%REGION%" --query "Version" --output text') do set LAYER_VERSION=%%i
+for /f "tokens=*" %%i in ('aws lambda publish-layer-version --layer-name "%LAYER_NAME%" --description "Common utilities for BDO Market Insights ETL pipeline - Python 3.14 - %date%" --zip-file fileb://lambda-layer.zip --compatible-runtimes "%PYTHON_VERSION%" --region "%REGION%" --query "Version" --output text') do set LAYER_VERSION=%%i
 
 echo ==========================================
 echo Lambda Layer published successfully!

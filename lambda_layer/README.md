@@ -97,9 +97,9 @@ zip -r lambda_layer.zip python/
 ```bash
 aws lambda publish-layer-version \
     --layer-name bdo-market-insights-common \
-    --description "Shared utilities for BDO Market Insights" \
+    --description "Common utilities for BDO Market Insights ETL pipeline - Python 3.14" \
     --zip-file fileb://lambda_layer.zip \
-    --compatible-runtimes python3.11
+    --compatible-runtimes python3.14
 ```
 
 4. Attach to Lambda functions:
@@ -111,7 +111,7 @@ aws lambda update-function-configuration \
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.14+
 - python-json-logger 2.0.7+
 
 ## Testing

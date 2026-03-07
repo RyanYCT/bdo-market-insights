@@ -11,7 +11,7 @@ pydantic>=2.12.0
 # boto3==1.34.0  # Usually provided by Lambda runtime
 
 # Database driver
-psycopg2-binary==2.9.9
+psycopg2-binary==2.9.11
 
 # X-Ray tracing
 aws-xray-sdk==2.12.1

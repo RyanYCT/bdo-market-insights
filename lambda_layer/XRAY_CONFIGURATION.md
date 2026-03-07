@@ -31,7 +31,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: retrieveIdList
-      Runtime: python3.11
+      Runtime: python3.14
       Handler: lambda_function.lambda_handler
       TracingConfig:
         Mode: Active  # Enable X-Ray tracing
@@ -42,7 +42,7 @@ Resources:
 ```hcl
 resource "aws_lambda_function" "retrieve_id_list" {
   function_name = "retrieveIdList"
-  runtime       = "python3.11"
+  runtime       = "python3.14"
   handler       = "lambda_function.lambda_handler"
   
   tracing_config {

@@ -87,7 +87,7 @@ fi
 print_success "AWS CLI found"
 
 if ! command -v python3 &> /dev/null; then
-    print_error "Python 3 not found. Please install Python 3.11+."
+    print_error "Python 3 not found. Please install Python 3.14+."
     exit 1
 fi
 print_success "Python 3 found"

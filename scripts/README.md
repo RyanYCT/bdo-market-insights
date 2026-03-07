@@ -122,7 +122,7 @@ Sends deployment notifications to configured channels.
 
 ### Required Tools
 - AWS CLI v2
-- Python 3.11+
+- Python 3.14+
 - jq (for JSON parsing)
 - zip
 

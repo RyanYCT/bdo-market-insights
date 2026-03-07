@@ -123,7 +123,7 @@ echo "" >> config/deployment-config.sh
 echo "# Lambda Configuration" >> config/deployment-config.sh
 echo "export LAMBDA_TIMEOUT=\"300\"" >> config/deployment-config.sh
 echo "export LAMBDA_MEMORY_SIZE=\"512\"" >> config/deployment-config.sh
-echo "export LAMBDA_RUNTIME=\"python3.11\"" >> config/deployment-config.sh
+echo "export LAMBDA_RUNTIME=\"python3.14\"" >> config/deployment-config.sh
 
 # Secrets Manager
 echo "" >> config/deployment-config.sh

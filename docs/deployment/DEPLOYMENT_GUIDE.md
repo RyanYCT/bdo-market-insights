@@ -47,7 +47,7 @@ bash scripts/deploy-production.sh
 ### Required Tools
 
 - **AWS CLI v2** - [Installation guide](https://aws.amazon.com/cli/)
-- **Python 3.11+** - Check with `python3 --version`
+- **Python 3.14+** - Check with `python3 --version`
 - **Git** - For version control
 - **Make** (optional) - For convenience commands
 
