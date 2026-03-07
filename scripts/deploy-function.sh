@@ -71,33 +71,83 @@ else
 fi
 echo "Package size: $SIZE"
 
-# Calculate SHA256 of the new package
-if command -v sha256sum &> /dev/null; then
-    NEW_SHA256=$(sha256sum "$FUNCTION_NAME.zip" | cut -d' ' -f1)
-elif command -v shasum &> /dev/null; then
-    NEW_SHA256=$(shasum -a 256 "$FUNCTION_NAME.zip" | cut -d' ' -f1)
-else
-    # Use PowerShell on Windows
-    NEW_SHA256=$(powershell.exe -Command "(Get-FileHash -Algorithm SHA256 $FUNCTION_NAME.zip).Hash.ToLower()")
-fi
-echo "Package SHA256: $NEW_SHA256"
+# Check if code has changed by comparing with deployed version
+echo "Checking if code has changed..."
+CODE_UPDATED=false
 
-# Get current function SHA256
-CURRENT_SHA256=$(aws lambda get-function \
+# Try to download current function code
+CURRENT_CODE_URL=$(aws lambda get-function \
     --function-name "$FUNCTION_NAME" \
     --region "$REGION" \
-    --query 'Configuration.CodeSha256' \
+    --query 'Code.Location' \
     --output text 2>/dev/null || echo "")
 
-echo "Current SHA256: $CURRENT_SHA256"
-
-# Check if code has changed
-if [ "$NEW_SHA256" == "$CURRENT_SHA256" ]; then
-    echo "Code has not changed. Skipping function code update."
-    CODE_UPDATED=false
+if [ -n "$CURRENT_CODE_URL" ] && [ "$CURRENT_CODE_URL" != "None" ]; then
+    echo "Downloading current deployed code for comparison..."
+    
+    # Download current code
+    if command -v curl &> /dev/null; then
+        curl -s "$CURRENT_CODE_URL" -o current-code.zip
+    elif command -v wget &> /dev/null; then
+        wget -q "$CURRENT_CODE_URL" -O current-code.zip
+    else
+        # Use PowerShell on Windows
+        powershell.exe -Command "Invoke-WebRequest -Uri '$CURRENT_CODE_URL' -OutFile current-code.zip" > /dev/null 2>&1
+    fi
+    
+    if [ -f current-code.zip ]; then
+        # Compare file contents by extracting and comparing
+        mkdir -p compare-current compare-new
+        
+        # Extract both zips
+        if command -v unzip &> /dev/null; then
+            unzip -q current-code.zip -d compare-current 2>/dev/null || true
+            unzip -q "$FUNCTION_NAME.zip" -d compare-new 2>/dev/null || true
+        else
+            # Use PowerShell on Windows
+            powershell.exe -Command "Expand-Archive -Path current-code.zip -DestinationPath compare-current -Force" 2>/dev/null || true
+            powershell.exe -Command "Expand-Archive -Path $FUNCTION_NAME.zip -DestinationPath compare-new -Force" 2>/dev/null || true
+        fi
+        
+        # Compare the lambda_function.py files (main code)
+        if [ -f compare-current/lambda_function.py ] && [ -f compare-new/lambda_function.py ]; then
+            if command -v diff &> /dev/null; then
+                if diff -q compare-current/lambda_function.py compare-new/lambda_function.py > /dev/null 2>&1; then
+                    echo "Code has not changed (lambda_function.py is identical)."
+                    CODE_UPDATED=false
+                else
+                    echo "Code has changed (lambda_function.py differs)."
+                    CODE_UPDATED=true
+                fi
+            else
+                # Use PowerShell Compare-Object on Windows
+                DIFF_RESULT=$(powershell.exe -Command "if ((Get-FileHash compare-current/lambda_function.py).Hash -eq (Get-FileHash compare-new/lambda_function.py).Hash) { 'same' } else { 'different' }")
+                if [ "$DIFF_RESULT" == "same" ]; then
+                    echo "Code has not changed (lambda_function.py is identical)."
+                    CODE_UPDATED=false
+                else
+                    echo "Code has changed (lambda_function.py differs)."
+                    CODE_UPDATED=true
+                fi
+            fi
+        else
+            echo "Could not extract files for comparison. Assuming code changed."
+            CODE_UPDATED=true
+        fi
+        
+        # Cleanup comparison directories
+        rm -rf compare-current compare-new current-code.zip
+    else
+        echo "Could not download current code. Assuming code changed."
+        CODE_UPDATED=true
+    fi
 else
-    echo "Code has changed. Updating function code..."
+    echo "Function not found or first deployment. Will deploy code."
     CODE_UPDATED=true
+fi
+
+if [ "$CODE_UPDATED" = true ]; then
+    echo "Updating function code..."
     
     # Update function code
     aws lambda update-function-code \

@@ -212,6 +212,7 @@ credentials.json
 # Deployment Artifacts
 #  Temporary files created during deployment
 lambda_layer/layer-version.txt
+lambda_layer/.last-requirements-hash
 *.zip
 deployment-artifacts/
 response.json

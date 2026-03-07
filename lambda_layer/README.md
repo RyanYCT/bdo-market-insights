@@ -80,7 +80,43 @@ corr_id = extract_correlation_id(event)
 
 ## Deployment
 
-To deploy this Lambda Layer:
+The Lambda Layer can be deployed using the automated deployment script or manually.
+
+### Automated Deployment (Recommended)
+
+Use the deployment script which includes change detection:
+
+```bash
+# From project root
+./scripts/deploy-layer.sh
+```
+
+The script will:
+1. Build the layer with all dependencies
+2. Compare with the currently deployed version
+3. Only upload if changes are detected (dependencies or code)
+4. Save the new layer version number
+
+**Change Detection:**
+
+The deployment script uses `.last-requirements-hash` to track dependency changes:
+- Contains the SHA256 hash of `requirements.txt` from the last successful deployment
+- Automatically created/updated by `deploy-layer.sh`
+- Used to detect if dependencies have changed between deployments
+- If this file is missing, the script assumes dependencies have changed
+
+**To force a layer redeployment:**
+```bash
+# Delete the hash file to force redeployment
+rm lambda_layer/.last-requirements-hash
+./scripts/deploy-layer.sh
+```
+
+**Note:** Do not manually edit `.last-requirements-hash`. It is managed automatically by the deployment script.
+
+### Manual Deployment
+
+To deploy this Lambda Layer manually:
 
 1. Install dependencies:
 ```bash
