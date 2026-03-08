@@ -4,6 +4,34 @@ This directory contains shell scripts for deploying the BDO Market Insights appl
 
 ## Scripts Overview
 
+### setup-iam-roles.sh
+Sets up IAM roles and permissions required for the BDO Market Insights application.
+
+**Usage:**
+```bash
+./scripts/setup-iam-roles.sh
+```
+
+**What it does:**
+- Creates Step Functions execution role
+- Creates EventBridge Scheduler role
+- Adds CloudWatch metrics permissions to all Lambda functions
+- Configures necessary IAM policies
+
+**When to run:**
+- Before initial deployment
+- After deploying new Lambda functions
+- When Lambda functions need CloudWatch metrics permissions
+
+**Environment Variables:**
+```bash
+export AWS_REGION=us-east-1
+export AWS_ACCOUNT_ID=123456789012
+export ENVIRONMENT=staging  # or production
+```
+
+**Note:** This script requires IAM admin permissions to create and modify roles.
+
 ### deploy-all.sh
 Orchestrates the complete deployment process:
 1. Deploy Lambda Layer
@@ -157,18 +185,43 @@ chmod +x scripts/*.sh
 ### Initial Deployment
 
 ```bash
-# 1. Deploy layer
+# 1. Setup IAM roles and permissions
+./scripts/setup-iam-roles.sh
+
+# 2. Deploy layer
 ./scripts/deploy-layer.sh
 
-# 2. Deploy all functions
+# 3. Deploy all functions
 for func in retrieveIdList fetchData cleanData storeData queryData analyzeData retainData; do
     ./scripts/deploy-function.sh $func
 done
 
-# 3. Deploy infrastructure
+# 4. Add CloudWatch permissions (if not done in step 1)
+./scripts/setup-iam-roles.sh
+
+# 5. Deploy infrastructure
 ./scripts/deploy-step-functions.sh
 ./scripts/deploy-api-gateway.sh
 cd infrastructure && ./deploy-alarms.sh && cd ..
+```
+
+### Add CloudWatch Metrics Permissions
+
+If you encounter "Failed to emit metric" errors:
+
+```bash
+# Run the setup script to add permissions to all Lambda functions
+./scripts/setup-iam-roles.sh
+```
+
+Or use the dedicated fix script:
+
+```bash
+# Windows
+scripts\fix-cloudwatch-permissions.bat
+
+# Unix/Linux/Mac
+./scripts/fix-cloudwatch-permissions.sh
 ```
 
 ### Update Single Function

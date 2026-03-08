@@ -125,15 +125,109 @@ aws iam put-role-policy \
 
 echo "EventBridge Scheduler role configured successfully"
 
+# Add CloudWatch Metrics permissions to Lambda execution roles
 echo ""
 echo "=========================================="
-echo "IAM Roles Setup Complete!"
+echo "Configuring CloudWatch Metrics Permissions"
+echo "=========================================="
+
+# List of Lambda functions that need CloudWatch metrics permissions
+LAMBDA_FUNCTIONS=(
+    "retrieveIdList"
+    "fetchData"
+    "cleanData"
+    "storeData"
+    "queryData"
+    "analyzeData"
+    "retainData"
+)
+
+# CloudWatch metrics policy
+METRICS_POLICY_NAME="CloudWatchMetricsPolicy"
+METRICS_POLICY_DOCUMENT='{
+    "Version": "2012-10-17",
+    "Statement": [{
+        "Effect": "Allow",
+        "Action": "cloudwatch:PutMetricData",
+        "Resource": "*",
+        "Condition": {
+            "StringEquals": {
+                "cloudwatch:namespace": "BDOMarketInsights/ETL"
+            }
+        }
+    }]
+}'
+
+echo ""
+echo "Adding CloudWatch metrics permissions to Lambda functions..."
+
+SUCCESS_COUNT=0
+FAILED_COUNT=0
+SKIPPED_COUNT=0
+
+for FUNCTION_NAME in "${LAMBDA_FUNCTIONS[@]}"; do
+    echo ""
+    echo "Processing: $FUNCTION_NAME"
+    
+    # Get the function's role ARN
+    ROLE_ARN=$(aws lambda get-function-configuration \
+        --function-name "$FUNCTION_NAME" \
+        --region "$REGION" \
+        --query 'Role' \
+        --output text 2>/dev/null || echo "")
+    
+    if [ -z "$ROLE_ARN" ] || [ "$ROLE_ARN" == "None" ]; then
+        echo "  ⚠ Function not found or has no role. Skipping."
+        echo "  (This is normal if the function hasn't been deployed yet)"
+        ((SKIPPED_COUNT++))
+        continue
+    fi
+    
+    # Extract role name from ARN
+    ROLE_NAME_LAMBDA=$(echo "$ROLE_ARN" | awk -F'/' '{print $NF}')
+    echo "  Role: $ROLE_NAME_LAMBDA"
+    
+    # Add or update the policy
+    if aws iam put-role-policy \
+        --role-name "$ROLE_NAME_LAMBDA" \
+        --policy-name "$METRICS_POLICY_NAME" \
+        --policy-document "$METRICS_POLICY_DOCUMENT" \
+        --region "$REGION" 2>/dev/null; then
+        echo "  ✓ CloudWatch metrics permission added"
+        ((SUCCESS_COUNT++))
+    else
+        echo "  ✗ Failed to add permission"
+        ((FAILED_COUNT++))
+    fi
+done
+
+echo ""
+echo "=========================================="
+echo "IAM Setup Complete!"
 echo "=========================================="
 echo ""
 echo "Created/Updated roles:"
-echo "  - $ROLE_NAME"
-echo "  - $SCHEDULER_ROLE_NAME"
+echo "  - $ROLE_NAME (Step Functions)"
+echo "  - $SCHEDULER_ROLE_NAME (EventBridge Scheduler)"
 echo ""
+echo "Lambda CloudWatch Metrics Permissions:"
+echo "  - Successfully updated: $SUCCESS_COUNT"
+echo "  - Failed: $FAILED_COUNT"
+echo "  - Skipped (not deployed): $SKIPPED_COUNT"
+echo ""
+
+if [ $SKIPPED_COUNT -gt 0 ]; then
+    echo "Note: Some Lambda functions were skipped because they haven't been deployed yet."
+    echo "Run this script again after deploying Lambda functions to add their permissions."
+    echo ""
+fi
+
+if [ $FAILED_COUNT -gt 0 ]; then
+    echo "⚠ Warning: Some Lambda functions failed to update."
+    echo "You may need to run this script with appropriate IAM permissions."
+    echo ""
+fi
+
 echo "You can now run the deployment script."
 
 exit 0
