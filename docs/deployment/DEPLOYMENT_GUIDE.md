@@ -17,18 +17,25 @@ Complete guide for deploying the BDO Market Insights serverless application to s
 
 ## Quick Start
 
-### Deploy to Staging in 3 Steps
+### Deploy to Staging in 5 Steps
 
 ```bash
-# 1. Setup configuration (one-time)
+# 1. Setup IAM permissions (one-time)
+# See docs/deployment/IAM_SETUP_GUIDE.md for complete instructions
+# Replace YOUR_ACCOUNT_ID in iam-policy-template.json and attach to your IAM user
+
+# 2. Setup IAM roles
+./scripts/setup-iam-roles.sh
+
+# 3. Setup configuration (one-time)
 chmod +x scripts/setup-deployment-config.sh
 ./scripts/setup-deployment-config.sh
 
-# 2. Verify AWS access
+# 4. Verify AWS access
 source config/deployment-config.sh
 aws sts get-caller-identity
 
-# 3. Deploy to staging
+# 5. Deploy to staging
 chmod +x scripts/deploy-staging.sh
 ./scripts/deploy-staging.sh
 ```
@@ -53,17 +60,27 @@ bash scripts/deploy-production.sh
 
 ### AWS Permissions
 
-The deployment user/role needs:
+The deployment user/role needs permissions to manage AWS resources.
 
+**See [IAM_SETUP_GUIDE.md](IAM_SETUP_GUIDE.md) for complete setup instructions.**
+
+**Quick summary:**
+1. Replace `YOUR_ACCOUNT_ID` in `iam-policy-template.json` with your AWS account ID
+2. Attach the policy to your IAM user (inline or managed policy)
+3. Run `./scripts/setup-iam-roles.sh` to configure IAM roles
+
+**What the policy provides:**
 - Lambda: Full access (create, update, publish functions and layers)
 - IAM: Create and manage roles for Lambda functions
 - CloudFormation: Full access for stack management
 - API Gateway: Full access
 - Step Functions: Full access
-- CloudWatch: Create and manage alarms, log groups
+- CloudWatch: Create and manage alarms, log groups, publish metrics
 - Secrets Manager: Create and manage secrets
 - EventBridge Scheduler: Create and manage schedules
-- S3: Access to deployment buckets
+- DynamoDB, S3, SNS, X-Ray: Project-specific access
+
+All permissions are scoped to BDO-specific resources following the principle of least privilege.
 
 ### Configuration Methods
 
@@ -117,15 +134,9 @@ You'll need during setup:
 
 ### Automated Deployment (Recommended)
 
-**Linux/macOS:**
 ```bash
 chmod +x scripts/deploy-staging.sh
 ./scripts/deploy-staging.sh
-```
-
-**Windows:**
-```cmd
-scripts\deploy-staging.bat
 ```
 
 The script will guide you through:
@@ -488,6 +499,7 @@ bash scripts/validate-staging.sh
 6. X-Ray distributed tracing
 7. Custom CloudWatch metrics
 8. Error handling scenarios
+8. Error handling scenarios
 
 ### Production Validation
 
@@ -675,6 +687,33 @@ Consider rollback if:
 ## Troubleshooting
 
 ### Common Issues
+
+#### 0. IAM Permission Denied Errors
+
+**Symptom:** Scripts fail with "AccessDenied" or "not authorized to perform" errors
+
+**Examples:**
+```
+User: arn:aws:iam::YOUR_ACCOUNT_ID:user/bdo-market-insights is not authorized 
+to perform: iam:PutRolePolicy on resource: role retrieveIdList-role-nc31m9mk
+```
+
+**Solution:**
+
+See [IAM_SETUP_GUIDE.md](IAM_SETUP_GUIDE.md) for complete instructions. Quick summary:
+
+1. **Attach IAM policy to your user**:
+   - Replace `YOUR_ACCOUNT_ID` in `iam-policy-template.json`
+   - Attach policy to your IAM user (see IAM_SETUP_GUIDE.md for commands)
+   - Run `./scripts/setup-iam-roles.sh`
+
+2. **Use AWS Console** (Alternative):
+   - See [IAM_SETUP_GUIDE.md - Manual Fix](IAM_SETUP_GUIDE.md#manual-fix-aws-console)
+   - Manually attach policy via IAM console
+
+3. **Use AWS CloudShell** (If you have console access):
+   - CloudShell typically has admin permissions
+   - Run fix commands from there
 
 #### 1. Secrets Manager Access Denied
 

@@ -36,9 +36,10 @@ This project includes comprehensive documentation organized by purpose and workf
 
 ### 🚀 Quick Start
 
-1. **[DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md)** - Complete deployment guide (staging & production)
-2. **[CREDENTIALS_SETUP_GUIDE.md](docs/deployment/CREDENTIALS_SETUP_GUIDE.md)** - Setup AWS credentials
-3. **[INFRASTRUCTURE_GUIDE.md](docs/infrastructure/INFRASTRUCTURE_GUIDE.md)** - Infrastructure components guide
+1. **[IAM_SETUP_GUIDE.md](docs/deployment/IAM_SETUP_GUIDE.md)** - IAM permissions setup
+2. **[DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md)** - Complete deployment guide (staging & production)
+3. **[CREDENTIALS_SETUP_GUIDE.md](docs/deployment/CREDENTIALS_SETUP_GUIDE.md)** - Setup AWS credentials
+4. **[INFRASTRUCTURE_GUIDE.md](docs/infrastructure/INFRASTRUCTURE_GUIDE.md)** - Infrastructure components guide
 
 ### 📚 Core Documentation
 
@@ -86,47 +87,61 @@ This project includes comprehensive documentation organized by purpose and workf
 
 </details>
 
+<details>
+<summary><b>Lambda Functions</b>: - Click to expand</summary>
+
+- **[src/retrieveIdList/USAGE_EXAMPLES.md](src/retrieveIdList/USAGE_EXAMPLES.md)** - retrieveIdList function usage
+
+</details>
+
 ### 📖 Quick Reference
 
 | Need to... | Read this |
 |------------|-----------|
+| **Setup & Deploy** | |
+| IAM permissions | [IAM_SETUP_GUIDE.md](docs/deployment/IAM_SETUP_GUIDE.md) |
+| AWS credentials | [CREDENTIALS_SETUP_GUIDE.md](docs/deployment/CREDENTIALS_SETUP_GUIDE.md) |
 | Deploy to staging | [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#staging-deployment) |
 | Deploy to production | [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#production-deployment) |
-| Setup AWS credentials | [CREDENTIALS_SETUP_GUIDE.md](docs/deployment/CREDENTIALS_SETUP_GUIDE.md) |
 | Validate deployment | [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#validation) |
-| Understand security | [DEPLOYMENT_SECURITY_SUMMARY.md](docs/deployment/DEPLOYMENT_SECURITY_SUMMARY.md) |
-| Troubleshoot issues | [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#troubleshooting) |
-| Understand API Gateway | [INFRASTRUCTURE_GUIDE.md](docs/infrastructure/INFRASTRUCTURE_GUIDE.md#api-gateway) |
-| Setup monitoring | [INFRASTRUCTURE_GUIDE.md](docs/infrastructure/INFRASTRUCTURE_GUIDE.md#cloudwatch-alarms) |
-| Understand architecture | [design.md](.kiro/specs/bdo-market-insights-rewrite/design.md) |
-| Use deployment scripts | [scripts/README.md](scripts/README.md) |
+| **Troubleshooting** | |
+| IAM issues | [IAM_SETUP_GUIDE.md](docs/deployment/IAM_SETUP_GUIDE.md#troubleshooting) |
+| Deployment | [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#troubleshooting) |
+| **Understanding** | |
+| Architecture | [design.md](.kiro/specs/bdo-market-insights-rewrite/design.md) |
+| Infrastructure | [INFRASTRUCTURE_GUIDE.md](docs/infrastructure/INFRASTRUCTURE_GUIDE.md) |
+| Security | [DEPLOYMENT_SECURITY_SUMMARY.md](docs/deployment/DEPLOYMENT_SECURITY_SUMMARY.md) |
 
 ### 📖 Documentation Workflows
 
 <details>
 <summary><b>First-Time Setup</b>: - Click to expand</summary>
 
-1. Read [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#quick-start)
-2. Follow [CREDENTIALS_SETUP_GUIDE.md](docs/deployment/CREDENTIALS_SETUP_GUIDE.md)
-3. Review [DEPLOYMENT_SECURITY_SUMMARY.md](docs/deployment/DEPLOYMENT_SECURITY_SUMMARY.md)
-4. Deploy using [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#staging-deployment)
+1. Read [IAM_SETUP_GUIDE.md](docs/deployment/IAM_SETUP_GUIDE.md) - Setup IAM permissions
+2. Attach IAM policy to your user (see IAM_SETUP_GUIDE.md)
+3. Run `./scripts/setup-iam-roles.sh`
+4. Follow [CREDENTIALS_SETUP_GUIDE.md](docs/deployment/CREDENTIALS_SETUP_GUIDE.md)
+5. Review [DEPLOYMENT_SECURITY_SUMMARY.md](docs/deployment/DEPLOYMENT_SECURITY_SUMMARY.md)
+6. Deploy using [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#staging-deployment)
 
 </details>
 
 <details>
 <summary><b>Quick Deployment</b>: - Click to expand</summary>
 
-1. Run `./scripts/deploy-staging.sh`
-2. Validate with [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#validation)
+1. Ensure IAM permissions are configured
+2. Run `./scripts/deploy-staging.sh`
+3. Validate with [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#validation)
 
 </details>
 
 <details>
 <summary><b>Troubleshooting</b>: - Click to expand</summary>
 
-1. Check [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#troubleshooting)
-2. Review [INFRASTRUCTURE_GUIDE.md](docs/infrastructure/INFRASTRUCTURE_GUIDE.md#troubleshooting)
-3. Check [scripts/README.md](scripts/README.md#troubleshooting)
+1. IAM permission issues: [IAM_SETUP_GUIDE.md](docs/deployment/IAM_SETUP_GUIDE.md#troubleshooting)
+2. Deployment issues: [DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md#troubleshooting)
+3. Infrastructure issues: [INFRASTRUCTURE_GUIDE.md](docs/infrastructure/INFRASTRUCTURE_GUIDE.md#troubleshooting)
+4. Script issues: [scripts/README.md](scripts/README.md#troubleshooting)
 
 </details>
 

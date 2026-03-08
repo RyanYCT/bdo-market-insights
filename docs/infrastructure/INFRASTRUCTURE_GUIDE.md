@@ -490,12 +490,8 @@ The API provides interactive documentation through:
 ### Deployment
 
 ```bash
-# Linux/Mac
 chmod +x infrastructure/deploy-api-docs.sh
 ./infrastructure/deploy-api-docs.sh staging us-east-1
-
-# Windows
-infrastructure\deploy-api-docs.bat staging us-east-1
 ```
 
 ### Accessing Documentation
@@ -572,9 +568,6 @@ PostgreSQL (RDS) + S3 Glacier
 # Linux/Mac
 chmod +x infrastructure/deploy-retention-schedule.sh
 ./infrastructure/deploy-retention-schedule.sh staging arn:aws:lambda:us-east-1:123456789012:function:retainData
-
-# Windows
-infrastructure\deploy-retention-schedule.bat staging arn:aws:lambda:us-east-1:123456789012:function:retainData
 ```
 
 ### Configuration

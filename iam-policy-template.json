@@ -1,0 +1,272 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "LambdaManagement",
+            "Effect": "Allow",
+            "Action": [
+                "lambda:CreateFunction",
+                "lambda:DeleteFunction",
+                "lambda:GetFunction",
+                "lambda:GetFunctionConfiguration",
+                "lambda:UpdateFunctionCode",
+                "lambda:UpdateFunctionConfiguration",
+                "lambda:PublishVersion",
+                "lambda:CreateAlias",
+                "lambda:UpdateAlias",
+                "lambda:GetAlias",
+                "lambda:ListVersionsByFunction",
+                "lambda:ListAliases",
+                "lambda:InvokeFunction",
+                "lambda:AddPermission",
+                "lambda:RemovePermission",
+                "lambda:GetPolicy",
+                "lambda:PublishLayerVersion",
+                "lambda:DeleteLayerVersion",
+                "lambda:GetLayerVersion",
+                "lambda:ListLayerVersions"
+            ],
+            "Resource": [
+                "arn:aws:lambda:*:YOUR_ACCOUNT_ID:function:*",
+                "arn:aws:lambda:*:YOUR_ACCOUNT_ID:layer:bdo-market-insights-common:*"
+            ]
+        },
+        {
+            "Sid": "IAMRoleManagement",
+            "Effect": "Allow",
+            "Action": [
+                "iam:GetRole",
+                "iam:GetRolePolicy",
+                "iam:PutRolePolicy",
+                "iam:DeleteRolePolicy",
+                "iam:ListRolePolicies",
+                "iam:ListAttachedRolePolicies",
+                "iam:CreateRole",
+                "iam:DeleteRole",
+                "iam:AttachRolePolicy",
+                "iam:DetachRolePolicy"
+            ],
+            "Resource": [
+                "arn:aws:iam::YOUR_ACCOUNT_ID:role/service-role/*",
+                "arn:aws:iam::YOUR_ACCOUNT_ID:role/bdo-*",
+                "arn:aws:iam::YOUR_ACCOUNT_ID:role/EventBridgeSchedulerRole",
+                "arn:aws:iam::YOUR_ACCOUNT_ID:role/*-role-*"
+            ]
+        },
+        {
+            "Sid": "IAMPassRoleToServices",
+            "Effect": "Allow",
+            "Action": "iam:PassRole",
+            "Resource": [
+                "arn:aws:iam::YOUR_ACCOUNT_ID:role/service-role/*",
+                "arn:aws:iam::YOUR_ACCOUNT_ID:role/bdo-*",
+                "arn:aws:iam::YOUR_ACCOUNT_ID:role/EventBridgeSchedulerRole",
+                "arn:aws:iam::YOUR_ACCOUNT_ID:role/*-role-*"
+            ],
+            "Condition": {
+                "StringEquals": {
+                    "iam:PassedToService": [
+                        "lambda.amazonaws.com",
+                        "states.amazonaws.com",
+                        "scheduler.amazonaws.com",
+                        "apigateway.amazonaws.com",
+                        "cloudformation.amazonaws.com"
+                    ]
+                }
+            }
+        },
+        {
+            "Sid": "DynamoDBAccess",
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:CreateTable",
+                "dynamodb:DeleteTable",
+                "dynamodb:DescribeTable",
+                "dynamodb:UpdateTable",
+                "dynamodb:PutItem",
+                "dynamodb:GetItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:Scan",
+                "dynamodb:Query",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:BatchGetItem",
+                "dynamodb:UpdateItem"
+            ],
+            "Resource": [
+                "arn:aws:dynamodb:*:YOUR_ACCOUNT_ID:table/bdo-*",
+                "arn:aws:dynamodb:*:YOUR_ACCOUNT_ID:table/market-data-*"
+            ]
+        },
+        {
+            "Sid": "StepFunctionsManagement",
+            "Effect": "Allow",
+            "Action": [
+                "states:CreateStateMachine",
+                "states:UpdateStateMachine",
+                "states:DeleteStateMachine",
+                "states:DescribeStateMachine",
+                "states:ListStateMachines",
+                "states:StartExecution",
+                "states:StopExecution",
+                "states:DescribeExecution",
+                "states:ListExecutions",
+                "states:GetExecutionHistory"
+            ],
+            "Resource": [
+                "arn:aws:states:*:YOUR_ACCOUNT_ID:stateMachine:bdo-*",
+                "arn:aws:states:*:YOUR_ACCOUNT_ID:execution:bdo-*:*"
+            ]
+        },
+        {
+            "Sid": "APIGatewayManagement",
+            "Effect": "Allow",
+            "Action": [
+                "apigateway:GET",
+                "apigateway:POST",
+                "apigateway:PUT",
+                "apigateway:DELETE",
+                "apigateway:PATCH"
+            ],
+            "Resource": [
+                "arn:aws:apigateway:*::/restapis",
+                "arn:aws:apigateway:*::/restapis/*"
+            ]
+        },
+        {
+            "Sid": "CloudFormationManagement",
+            "Effect": "Allow",
+            "Action": [
+                "cloudformation:CreateStack",
+                "cloudformation:UpdateStack",
+                "cloudformation:DeleteStack",
+                "cloudformation:DescribeStacks",
+                "cloudformation:DescribeStackEvents",
+                "cloudformation:DescribeStackResources",
+                "cloudformation:GetTemplate",
+                "cloudformation:ValidateTemplate",
+                "cloudformation:ListStacks"
+            ],
+            "Resource": [
+                "arn:aws:cloudformation:*:YOUR_ACCOUNT_ID:stack/bdo-*/*",
+                "arn:aws:cloudformation:*:YOUR_ACCOUNT_ID:stack/BDO-*/*"
+            ]
+        },
+        {
+            "Sid": "CloudWatchManagement",
+            "Effect": "Allow",
+            "Action": [
+                "cloudwatch:PutMetricAlarm",
+                "cloudwatch:DeleteAlarms",
+                "cloudwatch:DescribeAlarms",
+                "cloudwatch:PutMetricData",
+                "cloudwatch:GetMetricStatistics",
+                "cloudwatch:ListMetrics"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "CloudWatchLogsAccess",
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+                "logs:DescribeLogGroups",
+                "logs:DescribeLogStreams",
+                "logs:GetLogEvents",
+                "logs:FilterLogEvents",
+                "logs:DeleteLogGroup",
+                "logs:PutRetentionPolicy"
+            ],
+            "Resource": [
+                "arn:aws:logs:*:YOUR_ACCOUNT_ID:log-group:/aws/lambda/*",
+                "arn:aws:logs:*:YOUR_ACCOUNT_ID:log-group:/aws/apigateway/*",
+                "arn:aws:logs:*:YOUR_ACCOUNT_ID:log-group:/aws/states/*"
+            ]
+        },
+        {
+            "Sid": "EventBridgeSchedulerManagement",
+            "Effect": "Allow",
+            "Action": [
+                "scheduler:CreateSchedule",
+                "scheduler:UpdateSchedule",
+                "scheduler:DeleteSchedule",
+                "scheduler:GetSchedule",
+                "scheduler:ListSchedules"
+            ],
+            "Resource": [
+                "arn:aws:scheduler:*:YOUR_ACCOUNT_ID:schedule/default/bdo-*"
+            ]
+        },
+        {
+            "Sid": "XRayAccess",
+            "Effect": "Allow",
+            "Action": [
+                "xray:PutTraceSegments",
+                "xray:PutTelemetryRecords",
+                "xray:GetSamplingRules",
+                "xray:GetSamplingTargets",
+                "xray:GetSamplingStatisticSummaries"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "S3Access",
+            "Effect": "Allow",
+            "Action": [
+                "s3:CreateBucket",
+                "s3:DeleteBucket",
+                "s3:ListBucket",
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:DeleteObject",
+                "s3:GetBucketLocation",
+                "s3:GetBucketVersioning"
+            ],
+            "Resource": [
+                "arn:aws:s3:::bdo-market-insights-*",
+                "arn:aws:s3:::bdo-market-insights-*/*"
+            ]
+        },
+        {
+            "Sid": "SNSAccess",
+            "Effect": "Allow",
+            "Action": [
+                "sns:CreateTopic",
+                "sns:DeleteTopic",
+                "sns:Subscribe",
+                "sns:Unsubscribe",
+                "sns:Publish",
+                "sns:ListTopics",
+                "sns:GetTopicAttributes",
+                "sns:SetTopicAttributes"
+            ],
+            "Resource": [
+                "arn:aws:sns:*:YOUR_ACCOUNT_ID:bdo-*"
+            ]
+        },
+        {
+            "Sid": "EC2NetworkAccess",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeSecurityGroups",
+                "ec2:DescribeSubnets",
+                "ec2:DescribeVpcs",
+                "ec2:DescribeNetworkInterfaces",
+                "ec2:CreateNetworkInterface",
+                "ec2:DeleteNetworkInterface"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "TaggingAccess",
+            "Effect": "Allow",
+            "Action": [
+                "tag:GetResources",
+                "tag:TagResources",
+                "tag:UntagResources"
+            ],
+            "Resource": "*"
+        }
+    ]
+}

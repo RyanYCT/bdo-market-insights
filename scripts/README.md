@@ -214,16 +214,6 @@ If you encounter "Failed to emit metric" errors:
 ./scripts/setup-iam-roles.sh
 ```
 
-Or use the dedicated fix script:
-
-```bash
-# Windows
-scripts\fix-cloudwatch-permissions.bat
-
-# Unix/Linux/Mac
-./scripts/fix-cloudwatch-permissions.sh
-```
-
 ### Update Single Function
 
 ```bash

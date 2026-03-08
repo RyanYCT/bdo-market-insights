@@ -8,23 +8,25 @@ Visual guide to all documentation in the BDO Market Insights project.
 BDO Market Insights Documentation
 │
 ├── 🚀 Getting Started
-│   ├── QUICK_START.md ⭐ START HERE
-│   ├── CREDENTIALS_SETUP_GUIDE.md
-│   └── DEPLOYMENT_SECURITY_SUMMARY.md
+│   ├── README.md ⭐ START HERE
+│   ├── docs/deployment/IAM_SETUP_GUIDE.md
+│   ├── docs/deployment/DEPLOYMENT_GUIDE.md
+│   └── docs/deployment/CREDENTIALS_SETUP_GUIDE.md
 │
 ├── 🔧 Configuration
 │   ├── config/README.md
 │   ├── .env.example
-│   └── config/deployment-config.example.sh
+│   ├── config/deployment-config.example.sh
+│   └── iam-policy-template.json
 │
 ├── 🚢 Deployment
-│   ├── infrastructure/STAGING_DEPLOYMENT_GUIDE.md
-│   ├── infrastructure/STAGING_DEPLOYMENT_CHECKLIST.md
-│   ├── infrastructure/STAGING_DEPLOYMENT_README.md
-│   ├── STAGING_DEPLOYMENT_SUMMARY.md
-│   └── DEPLOYMENT.md
+│   ├── docs/deployment/DEPLOYMENT_GUIDE.md
+│   ├── docs/deployment/IAM_SETUP_GUIDE.md
+│   ├── docs/deployment/CREDENTIALS_SETUP_GUIDE.md
+│   └── docs/deployment/DEPLOYMENT_SECURITY_SUMMARY.md
 │
 ├── 🏗️ Infrastructure
+│   ├── docs/infrastructure/INFRASTRUCTURE_GUIDE.md
 │   ├── infrastructure/README.md (API Gateway)
 │   ├── infrastructure/STEP_FUNCTIONS_README.md
 │   ├── infrastructure/CLOUDWATCH_ALARMS_README.md
@@ -32,7 +34,8 @@ BDO Market Insights Documentation
 │   └── infrastructure/RETENTION_SCHEDULE_README.md
 │
 ├── 📜 Scripts
-│   └── scripts/README.md
+│   ├── scripts/README.md
+│   └── scripts/setup-iam-roles.sh
 │
 ├── 🎯 Specifications
 │   ├── .kiro/specs/bdo-market-insights-rewrite/requirements.md
@@ -41,9 +44,10 @@ BDO Market Insights Documentation
 │
 └── 📊 Additional
     ├── README.md (Main)
-    ├── CHANGELOG.md
+    ├── docs/CHANGELOG.md
     ├── lambda_layer/README.md
-    └── lambda_layer/XRAY_CONFIGURATION.md
+    ├── lambda_layer/XRAY_CONFIGURATION.md
+    └── src/retrieveIdList/USAGE_EXAMPLES.md
 ```
 
 ## 🎯 Documentation by Purpose
@@ -51,15 +55,19 @@ BDO Market Insights Documentation
 ### I want to deploy to staging
 
 ```
-1. QUICK_START.md
+1. README.md (overview)
    ↓
-2. CREDENTIALS_SETUP_GUIDE.md
+2. docs/deployment/IAM_SETUP_GUIDE.md (setup IAM permissions)
    ↓
-3. Run: ./scripts/setup-deployment-config.sh
+3. docs/deployment/CREDENTIALS_SETUP_GUIDE.md (setup AWS credentials)
    ↓
-4. Run: ./scripts/deploy-staging.sh
+4. Run: ./scripts/setup-deployment-config.sh
    ↓
-5. STAGING_DEPLOYMENT_CHECKLIST.md (validate)
+5. Run: ./scripts/setup-iam-roles.sh
+   ↓
+6. Run: ./scripts/deploy-staging.sh
+   ↓
+7. docs/deployment/DEPLOYMENT_GUIDE.md (validate)
 ```
 
 ### I want to understand the system
@@ -67,17 +75,31 @@ BDO Market Insights Documentation
 ```
 1. README.md (overview)
    ↓
-2. requirements.md (what it should do)
+2. .kiro/specs/bdo-market-insights-rewrite/requirements.md (what it should do)
    ↓
-3. design.md (how it works)
+3. .kiro/specs/bdo-market-insights-rewrite/design.md (how it works)
    ↓
-4. infrastructure/README.md (infrastructure details)
+4. docs/infrastructure/INFRASTRUCTURE_GUIDE.md (infrastructure details)
+```
+
+### I want to configure IAM permissions
+
+```
+1. docs/deployment/IAM_SETUP_GUIDE.md
+   ↓
+2. Prepare: iam-policy-template.json (replace YOUR_ACCOUNT_ID)
+   ↓
+3. Attach policy to your IAM user
+   ↓
+4. Run: ./scripts/setup-iam-roles.sh
+   ↓
+5. Verify: aws iam get-user-policy --user-name YOUR_USERNAME --policy-name BDOMarketInsightsFullAccess
 ```
 
 ### I want to configure AWS credentials
 
 ```
-1. CREDENTIALS_SETUP_GUIDE.md
+1. docs/deployment/CREDENTIALS_SETUP_GUIDE.md
    ↓
 2. config/README.md
    ↓
@@ -89,23 +111,27 @@ BDO Market Insights Documentation
 ### I want to troubleshoot deployment issues
 
 ```
-1. STAGING_DEPLOYMENT_GUIDE.md (Troubleshooting section)
+1. docs/deployment/DEPLOYMENT_GUIDE.md (Troubleshooting section)
    ↓
-2. CREDENTIALS_SETUP_GUIDE.md (if credentials issue)
+2. docs/deployment/IAM_SETUP_GUIDE.md (if IAM/permission issue)
    ↓
-3. infrastructure/README.md (if infrastructure issue)
+3. docs/deployment/CREDENTIALS_SETUP_GUIDE.md (if credentials issue)
    ↓
-4. scripts/README.md (if script issue)
+4. docs/infrastructure/INFRASTRUCTURE_GUIDE.md (if infrastructure issue)
+   ↓
+5. scripts/README.md (if script issue)
 ```
 
 ### I want to understand security
 
 ```
-1. DEPLOYMENT_SECURITY_SUMMARY.md
+1. docs/deployment/DEPLOYMENT_SECURITY_SUMMARY.md
    ↓
-2. CREDENTIALS_SETUP_GUIDE.md (Security Best Practices)
+2. docs/deployment/IAM_SETUP_GUIDE.md (Security Notes)
    ↓
-3. config/README.md (Security section)
+3. docs/deployment/CREDENTIALS_SETUP_GUIDE.md (Security Best Practices)
+   ↓
+4. config/README.md (Security section)
 ```
 
 ### I want to set up monitoring
@@ -115,7 +141,7 @@ BDO Market Insights Documentation
    ↓
 2. lambda_layer/XRAY_CONFIGURATION.md
    ↓
-3. infrastructure/README.md (Monitoring section)
+3. docs/infrastructure/INFRASTRUCTURE_GUIDE.md (Monitoring section)
 ```
 
 ## 📖 Documentation by Role
@@ -124,31 +150,33 @@ BDO Market Insights Documentation
 
 **Essential Reading:**
 1. README.md - Project overview
-2. design.md - System architecture
-3. requirements.md - System requirements
+2. .kiro/specs/bdo-market-insights-rewrite/design.md - System architecture
+3. .kiro/specs/bdo-market-insights-rewrite/requirements.md - System requirements
 4. lambda_layer/README.md - Shared code
 
 **For Development:**
-- tasks.md - Implementation tasks
-- CHANGELOG.md - Version history
+- .kiro/specs/bdo-market-insights-rewrite/tasks.md - Implementation tasks
+- docs/CHANGELOG.md - Version history
+- src/retrieveIdList/USAGE_EXAMPLES.md - Function usage examples
 
-### DevOps Engineer
+### DevOps Engineer / Solo Developer
 
 **Essential Reading:**
-1. QUICK_START.md - Quick deployment
-2. CREDENTIALS_SETUP_GUIDE.md - AWS setup
-3. STAGING_DEPLOYMENT_GUIDE.md - Detailed deployment
-4. DEPLOYMENT.md - Deployment strategies
+1. README.md - Project overview
+2. docs/deployment/IAM_SETUP_GUIDE.md - IAM permissions setup
+3. docs/deployment/CREDENTIALS_SETUP_GUIDE.md - AWS credentials setup
+4. docs/deployment/DEPLOYMENT_GUIDE.md - Complete deployment guide
 
 **For Operations:**
 - infrastructure/CLOUDWATCH_ALARMS_README.md - Monitoring
 - infrastructure/RETENTION_SCHEDULE_README.md - Data retention
 - scripts/README.md - Deployment scripts
+- docs/infrastructure/INFRASTRUCTURE_GUIDE.md - Infrastructure overview
 
 ### System Administrator
 
 **Essential Reading:**
-1. infrastructure/README.md - Infrastructure overview
+1. docs/infrastructure/INFRASTRUCTURE_GUIDE.md - Infrastructure overview
 2. infrastructure/STEP_FUNCTIONS_README.md - Workflow
 3. infrastructure/CLOUDWATCH_ALARMS_README.md - Monitoring
 
@@ -159,13 +187,15 @@ BDO Market Insights Documentation
 ### Security Engineer
 
 **Essential Reading:**
-1. DEPLOYMENT_SECURITY_SUMMARY.md - Security overview
-2. CREDENTIALS_SETUP_GUIDE.md - Credentials management
-3. config/README.md - Configuration security
+1. docs/deployment/DEPLOYMENT_SECURITY_SUMMARY.md - Security overview
+2. docs/deployment/IAM_SETUP_GUIDE.md - IAM permissions and security
+3. docs/deployment/CREDENTIALS_SETUP_GUIDE.md - Credentials management
+4. config/README.md - Configuration security
 
 **For Auditing:**
-- requirements.md - Security requirements
-- design.md - Security design
+- .kiro/specs/bdo-market-insights-rewrite/requirements.md - Security requirements
+- .kiro/specs/bdo-market-insights-rewrite/design.md - Security design
+- iam-policy-template.json - IAM policy template
 
 ## 🔄 Documentation Workflow
 
@@ -173,32 +203,34 @@ BDO Market Insights Documentation
 
 ```mermaid
 graph TD
-    A[Start] --> B[Read QUICK_START.md]
-    B --> C[Read CREDENTIALS_SETUP_GUIDE.md]
-    C --> D[Run setup-deployment-config.sh]
-    D --> E[Verify AWS Access]
-    E --> F{Access OK?}
-    F -->|No| G[Troubleshoot with CREDENTIALS_SETUP_GUIDE.md]
-    G --> E
-    F -->|Yes| H[Read STAGING_DEPLOYMENT_GUIDE.md]
-    H --> I[Run deploy-staging.sh]
-    I --> J[Validate with STAGING_DEPLOYMENT_CHECKLIST.md]
-    J --> K[Complete]
+    A[Start] --> B[Read README.md]
+    B --> C[Read docs/deployment/IAM_SETUP_GUIDE.md]
+    C --> D[Attach IAM Policy]
+    D --> E[Run scripts/setup-iam-roles.sh]
+    E --> F[Read docs/deployment/CREDENTIALS_SETUP_GUIDE.md]
+    F --> G[Run scripts/setup-deployment-config.sh]
+    G --> H[Verify AWS Access]
+    H --> I{Access OK?}
+    I -->|No| J[Troubleshoot with CREDENTIALS_SETUP_GUIDE.md]
+    J --> H
+    I -->|Yes| K[Read docs/deployment/DEPLOYMENT_GUIDE.md]
+    K --> L[Run scripts/deploy-staging.sh]
+    L --> M[Validate Deployment]
+    M --> N[Complete]
 ```
 
 ### Deployment Flow
 
 ```mermaid
 graph TD
-    A[Start] --> B[QUICK_START.md]
-    B --> C[Load config: source config/deployment-config.sh]
-    C --> D[Run: ./scripts/deploy-staging.sh]
-    D --> E{Success?}
-    E -->|No| F[Check STAGING_DEPLOYMENT_GUIDE.md Troubleshooting]
-    F --> D
-    E -->|Yes| G[Validate with STAGING_DEPLOYMENT_CHECKLIST.md]
-    G --> H[Monitor with CLOUDWATCH_ALARMS_README.md]
-    H --> I[Complete]
+    A[Start] --> B[Load config: source config/deployment-config.sh]
+    B --> C[Run: ./scripts/deploy-staging.sh]
+    C --> D{Success?}
+    D -->|No| E[Check docs/deployment/DEPLOYMENT_GUIDE.md Troubleshooting]
+    E --> C
+    D -->|Yes| F[Validate Deployment]
+    F --> G[Monitor with CloudWatch]
+    G --> H[Complete]
 ```
 
 ### Troubleshooting Flow
@@ -206,19 +238,21 @@ graph TD
 ```mermaid
 graph TD
     A[Issue Detected] --> B{Issue Type?}
-    B -->|Credentials| C[CREDENTIALS_SETUP_GUIDE.md]
-    B -->|Deployment| D[STAGING_DEPLOYMENT_GUIDE.md]
-    B -->|Infrastructure| E[infrastructure/README.md]
-    B -->|Scripts| F[scripts/README.md]
-    B -->|Configuration| G[config/README.md]
-    C --> H[Resolve]
-    D --> H
-    E --> H
-    F --> H
-    G --> H
-    H --> I{Resolved?}
-    I -->|No| J[Contact DevOps Team]
-    I -->|Yes| K[Document Solution]
+    B -->|IAM/Permissions| C[docs/deployment/IAM_SETUP_GUIDE.md]
+    B -->|Credentials| D[docs/deployment/CREDENTIALS_SETUP_GUIDE.md]
+    B -->|Deployment| E[docs/deployment/DEPLOYMENT_GUIDE.md]
+    B -->|Infrastructure| F[docs/infrastructure/INFRASTRUCTURE_GUIDE.md]
+    B -->|Scripts| G[scripts/README.md]
+    B -->|Configuration| H[config/README.md]
+    C --> I[Resolve]
+    D --> I
+    E --> I
+    F --> I
+    G --> I
+    H --> I
+    I --> J{Resolved?}
+    J -->|No| K[Check Related Documentation]
+    J -->|Yes| L[Document Solution]
 ```
 
 ## 📝 Documentation Maintenance
@@ -228,9 +262,10 @@ graph TD
 | Trigger | Update These Docs |
 |---------|-------------------|
 | New feature added | requirements.md, design.md, tasks.md, README.md |
-| Deployment process changed | DEPLOYMENT.md, STAGING_DEPLOYMENT_GUIDE.md |
-| Infrastructure changed | infrastructure/README.md, design.md |
-| Security policy changed | DEPLOYMENT_SECURITY_SUMMARY.md, CREDENTIALS_SETUP_GUIDE.md |
+| Deployment process changed | docs/deployment/DEPLOYMENT_GUIDE.md |
+| IAM permissions changed | docs/deployment/IAM_SETUP_GUIDE.md, iam-policy-template.json |
+| Infrastructure changed | docs/infrastructure/INFRASTRUCTURE_GUIDE.md, design.md |
+| Security policy changed | docs/deployment/DEPLOYMENT_SECURITY_SUMMARY.md |
 | Configuration changed | config/README.md, deployment-config.example.sh |
 | Scripts changed | scripts/README.md |
 | API changed | infrastructure/API_DOCUMENTATION_README.md |
@@ -240,12 +275,11 @@ graph TD
 
 - [ ] All links work
 - [ ] Code examples are correct
-- [ ] Screenshots are up-to-date
-- [ ] Version numbers are current
 - [ ] Commands are tested
 - [ ] Troubleshooting steps are accurate
 - [ ] Security information is current
-- [ ] Contact information is correct
+- [ ] No sensitive information (AWS account IDs, credentials)
+- [ ] .gitignore is updated for generated files
 
 ## 🔗 External Resources
 
@@ -256,6 +290,7 @@ graph TD
 - [AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/)
 - [AWS CloudWatch](https://docs.aws.amazon.com/cloudwatch/)
 - [AWS X-Ray](https://docs.aws.amazon.com/xray/)
+- [AWS IAM](https://docs.aws.amazon.com/iam/)
 
 ### Tools Documentation
 - [AWS CLI](https://docs.aws.amazon.com/cli/)
@@ -280,83 +315,103 @@ If you find issues with documentation:
 
 | Issue Type | Resource |
 |------------|----------|
-| Deployment | STAGING_DEPLOYMENT_GUIDE.md → Troubleshooting |
-| Credentials | CREDENTIALS_SETUP_GUIDE.md → Troubleshooting |
+| IAM/Permissions | docs/deployment/IAM_SETUP_GUIDE.md → Troubleshooting |
+| Deployment | docs/deployment/DEPLOYMENT_GUIDE.md → Troubleshooting |
+| Credentials | docs/deployment/CREDENTIALS_SETUP_GUIDE.md → Troubleshooting |
 | Configuration | config/README.md → Troubleshooting |
-| Infrastructure | infrastructure/README.md → Troubleshooting |
+| Infrastructure | docs/infrastructure/INFRASTRUCTURE_GUIDE.md → Troubleshooting |
 | Scripts | scripts/README.md → Troubleshooting |
 | General | README.md → Contact |
 
 ## 🎓 Learning Path
 
-### Beginner Path
+### Beginner Path (Solo Developer)
 
 1. **Week 1: Understanding**
    - Read README.md
-   - Read QUICK_START.md
-   - Read requirements.md
+   - Read .kiro/specs/bdo-market-insights-rewrite/requirements.md
+   - Read .kiro/specs/bdo-market-insights-rewrite/design.md
 
 2. **Week 2: Setup**
-   - Read CREDENTIALS_SETUP_GUIDE.md
+   - Read docs/deployment/IAM_SETUP_GUIDE.md
+   - Setup IAM permissions
+   - Read docs/deployment/CREDENTIALS_SETUP_GUIDE.md
    - Setup AWS credentials
-   - Read config/README.md
 
 3. **Week 3: Deployment**
-   - Read STAGING_DEPLOYMENT_GUIDE.md
+   - Read docs/deployment/DEPLOYMENT_GUIDE.md
    - Deploy to staging
-   - Validate with checklist
+   - Validate deployment
 
 4. **Week 4: Operations**
-   - Read infrastructure docs
+   - Read docs/infrastructure/INFRASTRUCTURE_GUIDE.md
    - Setup monitoring
    - Practice troubleshooting
 
 ### Advanced Path
 
 1. **Architecture Deep Dive**
-   - design.md
+   - .kiro/specs/bdo-market-insights-rewrite/design.md
    - infrastructure/STEP_FUNCTIONS_README.md
    - lambda_layer/README.md
+   - lambda_layer/XRAY_CONFIGURATION.md
 
 2. **Security Mastery**
-   - DEPLOYMENT_SECURITY_SUMMARY.md
-   - CREDENTIALS_SETUP_GUIDE.md
+   - docs/deployment/DEPLOYMENT_SECURITY_SUMMARY.md
+   - docs/deployment/IAM_SETUP_GUIDE.md (Security Notes)
+   - docs/deployment/CREDENTIALS_SETUP_GUIDE.md
    - AWS IAM best practices
 
 3. **Operations Excellence**
    - infrastructure/CLOUDWATCH_ALARMS_README.md
    - infrastructure/RETENTION_SCHEDULE_README.md
-   - DEPLOYMENT.md (Blue-green deployment)
+   - docs/deployment/DEPLOYMENT_GUIDE.md (Production deployment)
 
 4. **Automation**
    - scripts/README.md
-   - .github/workflows/deploy.yml
+   - .github/workflows/ci-cd.yml
    - CI/CD setup
 
 ## 📊 Documentation Statistics
 
 | Category | Count | Status |
 |----------|-------|--------|
-| Getting Started | 3 | ✅ Complete |
-| Configuration | 3 | ✅ Complete |
-| Deployment | 5 | ✅ Complete |
-| Infrastructure | 5 | ✅ Complete |
-| Scripts | 1 | ✅ Complete |
+| Getting Started | 4 | ✅ Complete |
+| Configuration | 4 | ✅ Complete |
+| Deployment | 4 | ✅ Complete |
+| Infrastructure | 6 | ✅ Complete |
+| Scripts | 4 | ✅ Complete |
 | Specifications | 3 | ✅ Complete |
-| Additional | 4 | ✅ Complete |
-| **Total** | **24** | **✅ Complete** |
+| Additional | 5 | ✅ Complete |
+| **Total** | **30** | **✅ Complete** |
 
-## 🔄 Documentation Updates
+## 🔄 Recent Documentation Changes
 
-Last updated: 2024-03-06
+Last updated: 2024-03-08
 
 Recent changes:
-- Added comprehensive deployment documentation
-- Created security and credentials guides
-- Added quick start guide
-- Created documentation map
-- Updated README with documentation index
+- ✅ Consolidated IAM and CloudWatch metrics documentation
+- ✅ Created comprehensive IAM_SETUP_GUIDE.md
+- ✅ Removed 8 redundant documentation files
+- ✅ Updated all documentation links
+- ✅ Added iam-policy-configured.json to .gitignore
+- ✅ Streamlined for solo developer/admin use case
+- ✅ Fixed PassRole permission security issue
+
+### Files Removed (Consolidated)
+- README_IAM_SETUP.md → docs/deployment/IAM_SETUP_GUIDE.md
+- SETUP_SUMMARY.md → Integrated into IAM_SETUP_GUIDE.md
+- SECURITY_IMPROVEMENTS.md → Integrated into IAM_SETUP_GUIDE.md
+- CLOUDWATCH_METRICS_FIX.md → Integrated into IAM_SETUP_GUIDE.md
+- iam-policy-README.md → Integrated into IAM_SETUP_GUIDE.md
+- docs/guides/iam-permissions-required.md → Consolidated
+- docs/guides/add-cloudwatch-permissions-console.md → Consolidated
+- docs/guides/fix-cloudwatch-metrics-permissions.md → Consolidated
+
+### Files Added
+- docs/deployment/IAM_SETUP_GUIDE.md - Comprehensive IAM setup guide
+- DOCUMENTATION_CONSOLIDATION.md - Summary of consolidation work
 
 ---
 
-**Need help navigating the documentation?** Start with [QUICK_START.md](QUICK_START.md) or [README.md](README.md)!
+**Need help navigating the documentation?** Start with [README.md](../../README.md) or [docs/deployment/IAM_SETUP_GUIDE.md](../deployment/IAM_SETUP_GUIDE.md)!

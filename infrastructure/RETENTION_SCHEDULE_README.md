@@ -102,25 +102,6 @@ chmod +x deploy-retention-schedule.sh
 ./deploy-retention-schedule.sh prod arn:aws:lambda:us-east-1:123456789012:function:retainData
 ```
 
-### Deploy using Batch Script (Windows)
-
-```cmd
-REM Deploy to dev environment
-deploy-retention-schedule.bat dev arn:aws:lambda:us-east-1:123456789012:function:retainData
-
-REM Deploy to staging with custom parameters
-deploy-retention-schedule.bat staging ^
-  arn:aws:lambda:us-east-1:123456789012:function:retainData ^
-  retainData ^
-  bdo-market-insights-archive ^
-  "cron(0 3 1 * ? *)" ^
-  90 ^
-  730
-
-REM Deploy to production
-deploy-retention-schedule.bat prod arn:aws:lambda:us-east-1:123456789012:function:retainData
-```
-
 ### Deploy using AWS CLI
 
 ```bash

@@ -209,6 +209,10 @@ config/*.local.sh
 aws-credentials.json
 credentials.json
 
+# IAM Policy Configuration
+#  Generated file with actual AWS account ID
+iam-policy-configured.json
+
 # Deployment Artifacts
 #  Temporary files created during deployment
 lambda_layer/layer-version.txt

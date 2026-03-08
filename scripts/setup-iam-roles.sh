@@ -188,15 +188,17 @@ for FUNCTION_NAME in "${LAMBDA_FUNCTIONS[@]}"; do
     echo "  Role: $ROLE_NAME_LAMBDA"
     
     # Add or update the policy
-    if aws iam put-role-policy \
+    ERROR_OUTPUT=$(aws iam put-role-policy \
         --role-name "$ROLE_NAME_LAMBDA" \
         --policy-name "$METRICS_POLICY_NAME" \
-        --policy-document "$METRICS_POLICY_DOCUMENT" \
-        --region "$REGION" 2>/dev/null; then
+        --policy-document "$METRICS_POLICY_DOCUMENT" 2>&1)
+    
+    if [ $? -eq 0 ]; then
         echo "  ✓ CloudWatch metrics permission added"
         ((SUCCESS_COUNT++))
     else
         echo "  ✗ Failed to add permission"
+        echo "  Error: $ERROR_OUTPUT"
         ((FAILED_COUNT++))
     fi
 done

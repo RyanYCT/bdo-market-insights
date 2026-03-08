@@ -17,7 +17,6 @@ The documentation is hosted on S3 and served through API Gateway endpoints:
 
 - AWS CLI configured with appropriate credentials
 - API Gateway CloudFormation stack deployed (`bdo-api-gateway-{environment}`)
-- Bash shell (Linux/Mac) or PowerShell/CMD (Windows)
 
 ## Deployment
 
@@ -44,8 +43,6 @@ This creates:
 
 ### Deploy Documentation Files
 
-#### Linux/Mac
-
 ```bash
 # Make script executable
 chmod +x infrastructure/deploy-api-docs.sh
@@ -58,19 +55,6 @@ chmod +x infrastructure/deploy-api-docs.sh
 
 # Deploy to production
 ./infrastructure/deploy-api-docs.sh prod us-east-1
-```
-
-#### Windows
-
-```cmd
-REM Deploy to dev environment
-infrastructure\deploy-api-docs.bat dev us-east-1
-
-REM Deploy to staging
-infrastructure\deploy-api-docs.bat staging us-east-1
-
-REM Deploy to production
-infrastructure\deploy-api-docs.bat prod us-east-1
 ```
 
 ### What the Deployment Script Does
