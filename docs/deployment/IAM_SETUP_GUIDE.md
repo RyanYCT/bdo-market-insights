@@ -22,9 +22,11 @@ The BDO Market Insights deployment requires specific IAM permissions to:
 
 ### What You'll Do
 
-1. Attach IAM policy to your deployment user
-2. Run setup script to configure IAM roles
-3. Continue with deployment
+1. Create an IAM group for project access
+2. Attach IAM policy to the group
+3. Add your user to the group
+4. Run setup script to configure IAM roles
+5. Continue with deployment
 
 ---
 
@@ -47,25 +49,27 @@ $ACCOUNT_ID = (aws sts get-caller-identity --query Account --output text)
 (Get-Content iam-policy-template.json) -replace 'YOUR_ACCOUNT_ID', $ACCOUNT_ID | Set-Content iam-policy-configured.json
 ```
 
-### Step 2: Attach Policy to Your IAM User
+### Step 2: Create IAM Group and Attach Policy
 
 ```bash
-# Option A: Attach as inline policy
-aws iam put-user-policy \
-    --user-name YOUR_IAM_USERNAME \
-    --policy-name BDOMarketInsightsFullAccess \
-    --policy-document file://iam-policy-configured.json
+# Create IAM group for BDO Market Insights developers
+aws iam create-group --group-name BDOMarketInsightsDevelopers
 
-# Option B: Create managed policy and attach
+# Create managed policy
 aws iam create-policy \
     --policy-name BDOMarketInsightsFullAccess \
     --policy-document file://iam-policy-configured.json \
     --description "Full access for BDO Market Insights project"
 
-# Get the policy ARN from output, then attach
-aws iam attach-user-policy \
-    --user-name YOUR_IAM_USERNAME \
+# Attach policy to group (replace YOUR_ACCOUNT_ID with your AWS account ID)
+aws iam attach-group-policy \
+    --group-name BDOMarketInsightsDevelopers \
     --policy-arn arn:aws:iam::YOUR_ACCOUNT_ID:policy/BDOMarketInsightsFullAccess
+
+# Add your user to the group
+aws iam add-user-to-group \
+    --group-name BDOMarketInsightsDevelopers \
+    --user-name YOUR_IAM_USERNAME
 ```
 
 ### Step 3: Setup IAM Roles
@@ -104,56 +108,22 @@ The IAM policy grants permissions for:
 
 All permissions are scoped to BDO-specific resources only.
 
-### Policy Attachment Options
+### Policy Attachment Details
 
-#### Option 1: Inline Policy (Simpler)
-
-Attaches directly to your IAM user:
+The setup uses AWS managed policies attached to an IAM group:
 
 ```bash
-aws iam put-user-policy \
-    --user-name YOUR_IAM_USERNAME \
-    --policy-name BDOMarketInsightsFullAccess \
-    --policy-document file://iam-policy-configured.json
-```
-
-**Pros:**
-- Quick and simple
-- No separate policy to manage
-
-**Cons:**
-- Can't be shared with other users
-- Harder to update across multiple users
-
-#### Option 2: Managed Policy (Recommended for Teams)
-
-Creates a reusable policy:
-
-```bash
-# Create the policy
+# Create the managed policy
 aws iam create-policy \
     --policy-name BDOMarketInsightsFullAccess \
     --policy-document file://iam-policy-configured.json \
     --description "Full access for BDO Market Insights project"
 
-# Attach to your user
-aws iam attach-user-policy \
-    --user-name YOUR_IAM_USERNAME \
-    --policy-arn arn:aws:iam::YOUR_ACCOUNT_ID:policy/BDOMarketInsightsFullAccess
-
-# Can attach to other users later
-aws iam attach-user-policy \
-    --user-name ANOTHER_USER \
+# Attach to group
+aws iam attach-group-policy \
+    --group-name BDOMarketInsightsDevelopers \
     --policy-arn arn:aws:iam::YOUR_ACCOUNT_ID:policy/BDOMarketInsightsFullAccess
 ```
-
-**Pros:**
-- Reusable across multiple users
-- Easier to update
-- Better for teams
-
-**Cons:**
-- Slightly more complex setup
 
 ### Setup Script Details
 
@@ -266,13 +236,29 @@ Then run the setup script again:
 
 If you prefer using the AWS Console:
 
+**Step 1: Create Managed Policy**
 1. Go to [AWS IAM Console](https://console.aws.amazon.com/iam/)
-2. Click **Users** → Select your IAM user
-3. Click **Add permissions** → **Create inline policy**
-4. Click **JSON** tab
-5. Paste the contents of `iam-policy-configured.json`
-6. Name: `BDOMarketInsightsFullAccess`
-7. Click **Create policy**
+2. Click **Policies** → **Create policy**
+3. Click **JSON** tab
+4. Paste the contents of `iam-policy-configured.json`
+5. Click **Next: Tags** (optional)
+6. Click **Next: Review**
+7. Policy name: `BDOMarketInsightsFullAccess`
+8. Description: `Full access for BDO Market Insights project`
+9. Click **Create policy**
+
+**Step 2: Create Group and Attach Policy**
+1. Click **User groups** → **Create group**
+2. Group name: `BDOMarketInsightsDevelopers`
+3. In **Attach permissions policies**, search for `BDOMarketInsightsFullAccess`
+4. Check the box next to the policy
+5. Click **Create group**
+
+**Step 3: Add User to Group**
+1. Go to **Users** → Select your IAM user
+2. Click **Groups** tab → **Add user to groups**
+3. Select `BDOMarketInsightsDevelopers`
+4. Click **Add to groups**
 
 ### Manual Fix: CloudWatch Metrics Permission
 
@@ -354,6 +340,7 @@ The policy uses these resource patterns:
 - ✅ **Least Privilege**: Only grants permissions needed for the project
 - ✅ **Resource Scoped**: Limited to BDO-specific resources
 - ✅ **Service Restricted**: PassRole limited to specific AWS services
+- ✅ **Group-Based Access**: Permissions managed through groups, not individual users
 - ✅ **Auditable**: All actions logged in CloudTrail
 - ✅ **No Wildcards**: Avoids overly permissive wildcards where possible
 
@@ -372,29 +359,36 @@ These permissions align with:
 After setup is complete, verify everything works:
 
 ```bash
-# Test 1: Check policy is attached
-aws iam get-user-policy \
-    --user-name YOUR_IAM_USERNAME \
-    --policy-name BDOMarketInsightsFullAccess
+# Test 1: Check managed policy exists
+aws iam get-policy \
+    --policy-arn arn:aws:iam::YOUR_ACCOUNT_ID:policy/BDOMarketInsightsFullAccess
 
-# Or for managed policy
-aws iam list-attached-user-policies \
-    --user-name YOUR_IAM_USERNAME
+# Test 2: Check group exists
+aws iam get-group --group-name BDOMarketInsightsDevelopers
 
-# Test 2: Deploy a Lambda function
+# Test 3: Check policy is attached to group
+aws iam list-attached-group-policies --group-name BDOMarketInsightsDevelopers
+
+# Test 4: Verify your user is in the group
+aws iam get-group --group-name BDOMarketInsightsDevelopers --query 'Users[*].UserName'
+
+# Test 5: Deploy a Lambda function
 ./scripts/deploy-function.sh retrieveIdList
 
-# Test 3: Invoke Lambda function
+# Test 6: Invoke Lambda function
 aws lambda invoke \
     --function-name retrieveIdList \
     --payload '{}' \
     response.json
 
-# Test 4: Check logs (should not see "Failed to emit metric")
+# Test 7: Check logs (should not see "Failed to emit metric")
 aws logs tail /aws/lambda/retrieveIdList --since 5m
 ```
 
 Expected results:
+- ✅ Managed policy exists and is visible in IAM console
+- ✅ Group exists with correct policy attached
+- ✅ Your user is a member of the group
 - ✅ All commands succeed without permission errors
 - ✅ Lambda functions deploy successfully
 - ✅ No "Failed to emit metric" warnings in logs
