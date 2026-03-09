@@ -30,13 +30,22 @@ from pydantic import ValidationError
 
 
 # Configuration from environment variables
-BASE_URL = os.getenv("BASE_URL", "https://api.arsha.io/v2")
-REGION = os.getenv("REGION", "na")
+BASE_URL = os.getenv("BASE_URL")
+REGION = os.getenv("REGION")
+API_ENDPOINT = os.getenv("API_ENDPOINT")
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "50"))
 MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "100"))
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 CIRCUIT_BREAKER_THRESHOLD = int(os.getenv("CIRCUIT_BREAKER_THRESHOLD", "5"))
 CIRCUIT_BREAKER_TIMEOUT = int(os.getenv("CIRCUIT_BREAKER_TIMEOUT", "60"))
+
+# Validate required configuration
+if not BASE_URL:
+    raise ValueError("BASE_URL environment variable is required")
+if not REGION:
+    raise ValueError("REGION environment variable is required")
+if not API_ENDPOINT:
+    raise ValueError("API_ENDPOINT environment variable is required")
 
 # Initialize circuit breaker (shared across invocations in same container)
 circuit_breaker = None
@@ -130,6 +139,7 @@ class ExternalAPIClient:
         self,
         base_url: str,
         region: str,
+        api_endpoint: str,
         rate_limiter: RateLimiter,
         circuit_breaker: CircuitBreaker,
         metrics_client: MetricsClient,
@@ -141,6 +151,7 @@ class ExternalAPIClient:
         Args:
             base_url: Base URL for API
             region: Region code (e.g., 'na', 'eu')
+            api_endpoint: API endpoint path (e.g., 'GetWorldMarketSearchList')
             rate_limiter: RateLimiter instance
             circuit_breaker: CircuitBreaker instance
             metrics_client: MetricsClient instance
@@ -148,6 +159,7 @@ class ExternalAPIClient:
         """
         self.base_url = base_url
         self.region = region
+        self.api_endpoint = api_endpoint
         self.rate_limiter = rate_limiter
         self.circuit_breaker = circuit_breaker
         self.metrics_client = metrics_client
@@ -306,8 +318,9 @@ class ExternalAPIClient:
         self.rate_limiter.wait_if_needed()
         
         # Build URL with item IDs as comma-separated list
+        # Note: API uses 'id' parameter (singular) not 'ids'
         item_ids_str = ",".join(str(id) for id in item_ids)
-        url = f"{self.base_url}/{self.region}/items?ids={item_ids_str}"
+        url = f"{self.base_url}/{self.region}/{self.api_endpoint}?id={item_ids_str}"
         
         self.logger.info(
             "Fetching market data from External API",
@@ -323,7 +336,27 @@ class ExternalAPIClient:
             self.rate_limiter.record_call()
             
             # Extract items from response
-            items = data.get('items', []) if isinstance(data, dict) else []
+            # The API returns a nested array structure: [[item1_data...], [item2_data...]]
+            # Each inner array contains market data for one item ID
+            items = []
+            
+            if isinstance(data, list):
+                # Flatten the nested array structure
+                for item_group in data:
+                    if isinstance(item_group, list):
+                        items.extend(item_group)
+                    else:
+                        # Single item not in array
+                        items.append(item_group)
+            elif isinstance(data, dict):
+                # Try common response keys if wrapped in dict
+                nested_data = data.get('items', data.get('data', data.get('results', [])))
+                if isinstance(nested_data, list):
+                    for item_group in nested_data:
+                        if isinstance(item_group, list):
+                            items.extend(item_group)
+                        else:
+                            items.append(item_group)
             
             self.logger.info(
                 "Successfully fetched market data",
@@ -437,6 +470,7 @@ def handler(event: Dict[str, Any], context: Any, logger: StructuredLogger) -> Di
             api_client = ExternalAPIClient(
                 base_url=BASE_URL,
                 region=REGION,
+                api_endpoint=API_ENDPOINT,
                 rate_limiter=rate_limiter,
                 circuit_breaker=breaker,
                 metrics_client=metrics,
@@ -485,7 +519,7 @@ def handler(event: Dict[str, Any], context: Any, logger: StructuredLogger) -> Di
             
             response = {
                 "raw_data": all_data,
-                "scrape_endpoint": f"{BASE_URL}/{REGION}/items",
+                "scrape_endpoint": f"{BASE_URL}/{REGION}/{API_ENDPOINT}",
                 "scrape_time": scrape_time.isoformat(),
                 "correlation_id": input_data.correlation_id,
                 "metadata": {

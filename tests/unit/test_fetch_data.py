@@ -33,6 +33,7 @@ from fetchData.lambda_function import (
 from common.logging import StructuredLogger
 from common.circuit_breaker import CircuitBreaker
 from common.retry import NetworkError, RateLimitError, TemporaryUnavailableError
+from common.metrics import MetricsClient
 
 
 class TestExternalAPIClient:
@@ -43,6 +44,7 @@ class TestExternalAPIClient:
         mock_logger = Mock(spec=StructuredLogger)
         mock_rate_limiter = Mock(spec=RateLimiter)
         mock_circuit_breaker = Mock(spec=CircuitBreaker)
+        mock_metrics = Mock(spec=MetricsClient)
         
         # Mock successful API response
         mock_response = {
@@ -54,9 +56,11 @@ class TestExternalAPIClient:
         
         client = ExternalAPIClient(
             base_url="https://api.example.com",
-            region="na",
+            region="us-east",
+            api_endpoint="MarketData",
             rate_limiter=mock_rate_limiter,
             circuit_breaker=mock_circuit_breaker,
+            metrics_client=mock_metrics,
             logger=mock_logger
         )
         
@@ -79,12 +83,15 @@ class TestExternalAPIClient:
         mock_logger = Mock(spec=StructuredLogger)
         mock_rate_limiter = Mock(spec=RateLimiter)
         mock_circuit_breaker = Mock(spec=CircuitBreaker)
+        mock_metrics = Mock(spec=MetricsClient)
         
         client = ExternalAPIClient(
             base_url="https://api.example.com",
-            region="na",
+            region="us-east",
+            api_endpoint="MarketData",
             rate_limiter=mock_rate_limiter,
             circuit_breaker=mock_circuit_breaker,
+            metrics_client=mock_metrics,
             logger=mock_logger
         )
         
@@ -101,67 +108,69 @@ class TestExternalAPIClient:
         mock_logger = Mock(spec=StructuredLogger)
         mock_rate_limiter = Mock(spec=RateLimiter)
         mock_circuit_breaker = Mock(spec=CircuitBreaker)
-        mock_cloudwatch = Mock()
+        mock_metrics = Mock(spec=MetricsClient)
         
         client = ExternalAPIClient(
             base_url="https://api.example.com",
-            region="na",
+            region="us-east",
+            api_endpoint="MarketData",
             rate_limiter=mock_rate_limiter,
             circuit_breaker=mock_circuit_breaker,
+            metrics_client=mock_metrics,
             logger=mock_logger
         )
         
         # Mock successful response
         mock_response = {'items': [{'itemId': 1001}]}
         
-        with patch('lambda_function.cloudwatch', mock_cloudwatch):
-            with patch('urllib.request.urlopen') as mock_urlopen:
-                mock_http_response = Mock()
-                mock_http_response.getcode.return_value = 200
-                mock_http_response.read.return_value = json.dumps(mock_response).encode('utf-8')
-                mock_http_response.__enter__ = Mock(return_value=mock_http_response)
-                mock_http_response.__exit__ = Mock(return_value=False)
-                mock_urlopen.return_value = mock_http_response
-                
-                mock_circuit_breaker.call.side_effect = lambda func, *args: func(*args)
-                
-                client.fetch_market_data([1001])
+        with patch('urllib.request.urlopen') as mock_urlopen:
+            mock_http_response = Mock()
+            mock_http_response.getcode.return_value = 200
+            mock_http_response.read.return_value = json.dumps(mock_response).encode('utf-8')
+            mock_http_response.__enter__ = Mock(return_value=mock_http_response)
+            mock_http_response.__exit__ = Mock(return_value=False)
+            mock_urlopen.return_value = mock_http_response
+            
+            mock_circuit_breaker.call.side_effect = lambda func, *args: func(*args)
+            
+            client.fetch_market_data([1001])
         
-        # Verify CloudWatch metrics were emitted
-        assert mock_cloudwatch.put_metric_data.called
+        # Verify metrics were emitted
+        assert mock_metrics.emit_api_call.called
     
     def test_metrics_emission_on_error(self):
         """Test that metrics are emitted on API errors."""
         mock_logger = Mock(spec=StructuredLogger)
         mock_rate_limiter = Mock(spec=RateLimiter)
         mock_circuit_breaker = Mock(spec=CircuitBreaker)
-        mock_cloudwatch = Mock()
+        mock_metrics = Mock(spec=MetricsClient)
         
         client = ExternalAPIClient(
             base_url="https://api.example.com",
-            region="na",
+            region="us-east",
+            api_endpoint="MarketData",
             rate_limiter=mock_rate_limiter,
             circuit_breaker=mock_circuit_breaker,
+            metrics_client=mock_metrics,
             logger=mock_logger
         )
         
         mock_error = urllib.error.HTTPError(
-            url="https://api.example.com/na/items?ids=1001",
+            url="https://api.example.com/na/MarketData?id=1001",
             code=500,
             msg="Internal Server Error",
             hdrs={},
             fp=None
         )
         
-        with patch('lambda_function.cloudwatch', mock_cloudwatch):
-            with patch('urllib.request.urlopen', side_effect=mock_error):
-                mock_circuit_breaker.call.side_effect = lambda func, *args: func(*args)
-                
-                with pytest.raises(NetworkError):
-                    client.fetch_market_data([1001])
+        with patch('urllib.request.urlopen', side_effect=mock_error):
+            mock_circuit_breaker.call.side_effect = lambda func, *args: func(*args)
+            
+            with pytest.raises(NetworkError):
+                client.fetch_market_data([1001])
         
-        # Verify CloudWatch metrics were emitted even on error
-        assert mock_cloudwatch.put_metric_data.called
+        # Verify metrics were emitted even on error
+        assert mock_metrics.emit_api_call.called
 
 
 class TestCircuitBreakerIntegration:
@@ -171,6 +180,7 @@ class TestCircuitBreakerIntegration:
         """Test that circuit breaker opens after threshold failures."""
         mock_logger = Mock(spec=StructuredLogger)
         mock_rate_limiter = Mock(spec=RateLimiter)
+        mock_metrics = Mock(spec=MetricsClient)
         
         # Create real circuit breaker with low threshold
         circuit_breaker = CircuitBreaker(
@@ -181,9 +191,11 @@ class TestCircuitBreakerIntegration:
         
         client = ExternalAPIClient(
             base_url="https://api.example.com",
-            region="na",
+            region="us-east",
+            api_endpoint="MarketData",
             rate_limiter=mock_rate_limiter,
             circuit_breaker=circuit_breaker,
+            metrics_client=mock_metrics,
             logger=mock_logger
         )
         
@@ -204,6 +216,7 @@ class TestCircuitBreakerIntegration:
         """Test that circuit breaker fails fast when open."""
         mock_logger = Mock(spec=StructuredLogger)
         mock_rate_limiter = Mock(spec=RateLimiter)
+        mock_metrics = Mock(spec=MetricsClient)
         
         circuit_breaker = CircuitBreaker(
             failure_threshold=2,
@@ -213,9 +226,11 @@ class TestCircuitBreakerIntegration:
         
         client = ExternalAPIClient(
             base_url="https://api.example.com",
-            region="na",
+            region="us-east",
+            api_endpoint="MarketData",
             rate_limiter=mock_rate_limiter,
             circuit_breaker=circuit_breaker,
+            metrics_client=mock_metrics,
             logger=mock_logger
         )
         
@@ -283,7 +298,7 @@ class TestLambdaHandler:
         context.aws_request_id = 'test-request-id'
         
         # Mock API client
-        with patch('lambda_function.ExternalAPIClient') as MockClient:
+        with patch('fetchData.lambda_function.ExternalAPIClient') as MockClient:
             mock_client = MockClient.return_value
             mock_client.fetch_market_data.return_value = [
                 {'itemId': 1001, 'price': 15000},
@@ -294,6 +309,7 @@ class TestLambdaHandler:
             result = lambda_handler(event, context)
         
         # Verify result structure
+        assert result['statusCode'] == 200
         body = json.loads(result['body'])
         assert 'raw_data' in body
         assert 'correlation_id' in body
@@ -331,7 +347,7 @@ class TestLambdaHandler:
         context.function_name = 'fetchData'
         context.aws_request_id = 'test-request-id'
         
-        with patch('lambda_function.ExternalAPIClient') as MockClient:
+        with patch('fetchData.lambda_function.ExternalAPIClient') as MockClient:
             mock_client = MockClient.return_value
             # Return different data for each batch
             mock_client.fetch_market_data.side_effect = [
@@ -343,6 +359,7 @@ class TestLambdaHandler:
             result = lambda_handler(event, context)
         
         # Verify all batches were processed
+        assert result['statusCode'] == 200
         body = json.loads(result['body'])
         assert body['metadata']['batches_processed'] == 3
         assert len(body['raw_data']) == 150
@@ -361,7 +378,7 @@ class TestLambdaHandler:
         
         from common.circuit_breaker import CircuitBreakerError
         
-        with patch('lambda_function.ExternalAPIClient') as MockClient:
+        with patch('fetchData.lambda_function.ExternalAPIClient') as MockClient:
             mock_client = MockClient.return_value
             # First batch succeeds, second raises CircuitBreakerError
             mock_client.fetch_market_data.side_effect = [
@@ -372,7 +389,9 @@ class TestLambdaHandler:
             result = lambda_handler(event, context)
         
         # Should have processed only 1 batch before circuit opened
+        assert result['statusCode'] == 200
         body = json.loads(result['body'])
         assert body['metadata']['batches_processed'] == 1
         assert body['metadata']['batches_failed'] == 3  # Remaining batches
         assert len(body['raw_data']) == 50  # Only first batch data
+
