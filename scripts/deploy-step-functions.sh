@@ -1,66 +1,108 @@
 #!/bin/bash
 # Deploy Step Functions State Machine
-# This script updates the Step Functions state machine definition
+# This script creates or updates the Step Functions state machine using CloudFormation
 
-set -e
-
+# Configuration
+ENVIRONMENT="${ENVIRONMENT:-staging}"
 REGION="${AWS_REGION:-us-east-1}"
 ACCOUNT_ID="${AWS_ACCOUNT_ID}"
-STATE_MACHINE_NAME="bdo-market-insights-query"
 
 echo "=========================================="
 echo "Deploying Step Functions State Machine"
 echo "=========================================="
+echo "Environment: $ENVIRONMENT"
+echo "Region: $REGION"
+echo ""
 
-# Check if state machine definition exists
-if [ ! -f infrastructure/step-functions-state-machine.json ]; then
-    echo "Error: State machine definition not found"
+# Get Lambda ARNs for queryData and analyzeData
+echo "Retrieving Lambda function ARNs..."
+QUERY_DATA_ARN=$(aws lambda get-function --function-name queryData --region "$REGION" --query 'Configuration.FunctionArn' --output text 2>/dev/null || echo "")
+ANALYZE_DATA_ARN=$(aws lambda get-function --function-name analyzeData --region "$REGION" --query 'Configuration.FunctionArn' --output text 2>/dev/null || echo "")
+
+if [ -z "$QUERY_DATA_ARN" ] || [ -z "$ANALYZE_DATA_ARN" ]; then
+    echo "Error: Could not retrieve Lambda ARNs for queryData or analyzeData"
+    echo "Please ensure these Lambda functions are deployed first."
     exit 1
 fi
 
-# Create temporary file with substitutions
-TEMP_FILE=$(mktemp)
-cp infrastructure/step-functions-state-machine.json "$TEMP_FILE"
+echo "✓ queryData ARN: $QUERY_DATA_ARN"
+echo "✓ analyzeData ARN: $ANALYZE_DATA_ARN"
+echo ""
 
-# Replace placeholders
-echo "Replacing placeholders..."
-sed -i "s/REGION/$REGION/g" "$TEMP_FILE"
-sed -i "s/ACCOUNT/$ACCOUNT_ID/g" "$TEMP_FILE"
-
-# Validate JSON
-echo "Validating state machine definition..."
-if ! python3 -m json.tool "$TEMP_FILE" > /dev/null 2>&1; then
-    echo "Error: Invalid JSON in state machine definition"
-    rm "$TEMP_FILE"
+# Check if CloudFormation template exists
+if [ ! -f "infrastructure/step-functions-template.yaml" ]; then
+    echo "Error: CloudFormation template not found: infrastructure/step-functions-template.yaml"
     exit 1
 fi
 
-# Get state machine ARN
-STATE_MACHINE_ARN="arn:aws:states:$REGION:$ACCOUNT_ID:stateMachine:$STATE_MACHINE_NAME"
+# Check if stack exists and is in ROLLBACK_COMPLETE state
+STACK_NAME="bdo-step-functions-${ENVIRONMENT}"
+echo "Checking stack status..."
+STACK_STATUS=$(aws cloudformation describe-stacks \
+    --stack-name "$STACK_NAME" \
+    --region "$REGION" \
+    --query 'Stacks[0].StackStatus' \
+    --output text 2>/dev/null || echo "DOES_NOT_EXIST")
 
-# Check if state machine exists
-if aws stepfunctions describe-state-machine \
-    --state-machine-arn "$STATE_MACHINE_ARN" \
-    --region "$REGION" > /dev/null 2>&1; then
-    
-    echo "Updating existing state machine..."
-    aws stepfunctions update-state-machine \
-        --state-machine-arn "$STATE_MACHINE_ARN" \
-        --definition file://"$TEMP_FILE" \
+if [ "$STACK_STATUS" == "ROLLBACK_COMPLETE" ]; then
+    echo "⚠ Stack is in ROLLBACK_COMPLETE state. Deleting stack..."
+    aws cloudformation delete-stack \
+        --stack-name "$STACK_NAME" \
         --region "$REGION"
+    
+    echo "Waiting for stack deletion to complete..."
+    aws cloudformation wait stack-delete-complete \
+        --stack-name "$STACK_NAME" \
+        --region "$REGION"
+    
+    echo "✓ Stack deleted successfully"
+    echo ""
+fi
+
+# Deploy Step Functions using CloudFormation
+echo "Deploying Step Functions state machine via CloudFormation..."
+echo ""
+
+# Capture the output and exit code
+DEPLOY_OUTPUT=$(aws cloudformation deploy \
+    --template-file infrastructure/step-functions-template.yaml \
+    --stack-name "$STACK_NAME" \
+    --parameter-overrides \
+        Environment="$ENVIRONMENT" \
+        QueryDataLambdaArn="$QUERY_DATA_ARN" \
+        AnalyzeDataLambdaArn="$ANALYZE_DATA_ARN" \
+    --capabilities CAPABILITY_NAMED_IAM \
+    --region "$REGION" 2>&1)
+DEPLOY_EXIT_CODE=$?
+
+# Check if deployment succeeded or if no changes were needed
+if [ $DEPLOY_EXIT_CODE -eq 0 ]; then
+    echo "✓ CloudFormation deployment completed successfully"
+elif echo "$DEPLOY_OUTPUT" | grep -q "No changes to deploy"; then
+    echo "✓ No changes to deploy - stack is up to date"
 else
-    echo "Error: State machine does not exist. Please create it first using CloudFormation."
-    rm "$TEMP_FILE"
+    echo "✗ CloudFormation deployment failed:"
+    echo "$DEPLOY_OUTPUT"
     exit 1
 fi
 
-# Cleanup
-rm "$TEMP_FILE"
+echo ""
 
+# Get the deployed state machine ARN
+STATE_MACHINE_ARN=$(aws cloudformation describe-stacks \
+    --stack-name "$STACK_NAME" \
+    --region "$REGION" \
+    --query 'Stacks[0].Outputs[?OutputKey==`StateMachineArn`].OutputValue' \
+    --output text)
+
+echo ""
 echo "=========================================="
-echo "State Machine updated successfully!"
-echo "Name: $STATE_MACHINE_NAME"
-echo "ARN: $STATE_MACHINE_ARN"
+echo "Step Functions Deployed Successfully!"
+echo "=========================================="
+echo "Stack Name: $STACK_NAME"
+echo "State Machine ARN: $STATE_MACHINE_ARN"
+echo "Environment: $ENVIRONMENT"
+echo "Region: $REGION"
 echo "=========================================="
 
 exit 0

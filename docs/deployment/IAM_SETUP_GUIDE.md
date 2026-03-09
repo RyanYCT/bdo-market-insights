@@ -186,6 +186,36 @@ Lambda CloudWatch Metrics Permissions:
 
 ## Troubleshooting
 
+### Issue: CloudFormation Deploy Fails with "Waiting for changeset"
+
+**Symptom:**
+```
+✗ CloudFormation deployment failed:
+Waiting for changeset to be created..'Status'
+```
+
+**Cause:**
+Missing CloudFormation changeset permissions. The `aws cloudformation deploy` command uses changesets internally.
+
+**Solution:**
+Update your IAM policy to include changeset permissions. Create a new policy version:
+
+```bash
+# Create new version with updated permissions
+aws iam create-policy-version \
+    --policy-arn arn:aws:iam::YOUR_ACCOUNT_ID:policy/BDOMarketInsightsFullAccess \
+    --policy-document file://iam-policy-configured.json \
+    --set-as-default
+```
+
+The updated policy includes:
+- `cloudformation:DescribeChangeSet`
+- `cloudformation:ExecuteChangeSet`
+- `cloudformation:DeleteChangeSet`
+- `cloudformation:ListChangeSets`
+
+Wait 10-15 seconds for IAM to propagate, then retry the deployment.
+
 ### Issue: AccessDenied When Attaching Policy
 
 **Symptom:**

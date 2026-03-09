@@ -226,49 +226,13 @@ unset SKIP_SMOKE_TEST
 # Step 5: Update Step Functions State Machine
 print_section "Step 5/9: Deploying Step Functions State Machine"
 
-# Get Lambda ARNs for queryData and analyzeData
-QUERY_DATA_ARN=$(aws lambda get-function --function-name queryData --region "$REGION" --query 'Configuration.FunctionArn' --output text)
-ANALYZE_DATA_ARN=$(aws lambda get-function --function-name analyzeData --region "$REGION" --query 'Configuration.FunctionArn' --output text)
-
-if [ -z "$QUERY_DATA_ARN" ] || [ -z "$ANALYZE_DATA_ARN" ]; then
-    print_error "Could not retrieve Lambda ARNs for queryData or analyzeData"
+if [ -f "./scripts/deploy-step-functions.sh" ]; then
+    ./scripts/deploy-step-functions.sh
+    print_success "Step Functions state machine deployed"
+else
+    print_error "deploy-step-functions.sh not found"
     exit 1
 fi
-
-# Check if stack exists and is in ROLLBACK_COMPLETE state
-STACK_NAME="bdo-step-functions-${ENVIRONMENT}"
-STACK_STATUS=$(aws cloudformation describe-stacks \
-    --stack-name "$STACK_NAME" \
-    --region "$REGION" \
-    --query 'Stacks[0].StackStatus' \
-    --output text 2>/dev/null || echo "DOES_NOT_EXIST")
-
-if [ "$STACK_STATUS" == "ROLLBACK_COMPLETE" ]; then
-    print_warning "Stack is in ROLLBACK_COMPLETE state. Deleting stack..."
-    aws cloudformation delete-stack \
-        --stack-name "$STACK_NAME" \
-        --region "$REGION"
-    
-    echo "Waiting for stack deletion to complete..."
-    aws cloudformation wait stack-delete-complete \
-        --stack-name "$STACK_NAME" \
-        --region "$REGION"
-    
-    print_success "Stack deleted successfully"
-fi
-
-# Deploy Step Functions using CloudFormation
-aws cloudformation deploy \
-    --template-file infrastructure/step-functions-template.yaml \
-    --stack-name "$STACK_NAME" \
-    --parameter-overrides \
-        Environment="$ENVIRONMENT" \
-        QueryDataLambdaArn="$QUERY_DATA_ARN" \
-        AnalyzeDataLambdaArn="$ANALYZE_DATA_ARN" \
-    --capabilities CAPABILITY_NAMED_IAM \
-    --region "$REGION"
-
-print_success "Step Functions state machine deployed"
 
 # Step 6: Configure API Gateway
 print_section "Step 6/9: Deploying API Gateway"

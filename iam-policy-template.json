@@ -28,6 +28,7 @@
             ],
             "Resource": [
                 "arn:aws:lambda:*:YOUR_ACCOUNT_ID:function:*",
+                "arn:aws:lambda:*:YOUR_ACCOUNT_ID:layer:bdo-market-insights-common",
                 "arn:aws:lambda:*:YOUR_ACCOUNT_ID:layer:bdo-market-insights-common:*"
             ]
         },
@@ -129,7 +130,11 @@
             ],
             "Resource": [
                 "arn:aws:apigateway:*::/restapis",
-                "arn:aws:apigateway:*::/restapis/*"
+                "arn:aws:apigateway:*::/restapis/*",
+                "arn:aws:apigateway:*::/apikeys",
+                "arn:aws:apigateway:*::/apikeys/*",
+                "arn:aws:apigateway:*::/usageplans",
+                "arn:aws:apigateway:*::/usageplans/*"
             ]
         },
         {
@@ -143,13 +148,31 @@
                 "cloudformation:DescribeStackEvents",
                 "cloudformation:DescribeStackResources",
                 "cloudformation:GetTemplate",
-                "cloudformation:ValidateTemplate",
-                "cloudformation:ListStacks"
+                "cloudformation:GetTemplateSummary",
+                "cloudformation:CreateChangeSet",
+                "cloudformation:DescribeChangeSet",
+                "cloudformation:ExecuteChangeSet",
+                "cloudformation:DeleteChangeSet",
+                "cloudformation:ListChangeSets"
             ],
             "Resource": [
                 "arn:aws:cloudformation:*:YOUR_ACCOUNT_ID:stack/bdo-*/*",
-                "arn:aws:cloudformation:*:YOUR_ACCOUNT_ID:stack/BDO-*/*"
+                "arn:aws:cloudformation:*:YOUR_ACCOUNT_ID:stack/BDO-*/*",
+                "arn:aws:cloudformation:*:YOUR_ACCOUNT_ID:changeSet/bdo-*/*",
+                "arn:aws:cloudformation:*:YOUR_ACCOUNT_ID:changeSet/BDO-*/*",
+                "arn:aws:cloudformation:*:YOUR_ACCOUNT_ID:stackset/bdo-*:*",
+                "arn:aws:cloudformation:*:YOUR_ACCOUNT_ID:stackset/BDO-*:*",
+                "arn:aws:cloudformation:*:aws:transform/Serverless-2016-10-31"
             ]
+        },
+        {
+            "Sid": "CloudFormationGlobalActions",
+            "Effect": "Allow",
+            "Action": [
+                "cloudformation:ValidateTemplate",
+                "cloudformation:ListStacks"
+            ],
+            "Resource": "*"
         },
         {
             "Sid": "CloudWatchManagement",

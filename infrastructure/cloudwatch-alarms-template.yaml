@@ -56,12 +56,11 @@ Resources:
     Properties:
       TopicName: !Sub 'bdo-alarm-notifications-${Environment}'
       DisplayName: BDO Market Insights Alarm Notifications
-      Subscription:
-        - !If
-          - HasAlarmEmail
-          - Endpoint: !Ref AlarmEmailAddress
+      Subscription: !If
+        - HasAlarmEmail
+        - - Endpoint: !Ref AlarmEmailAddress
             Protocol: email
-          - !Ref AWS::NoValue
+        - !Ref AWS::NoValue
 
   # SNS Topic Policy
   AlarmNotificationTopicPolicy:

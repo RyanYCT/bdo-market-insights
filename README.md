@@ -36,9 +36,9 @@ This project includes comprehensive documentation organized by purpose and workf
 
 ### 🚀 Quick Start
 
+3. **[CREDENTIALS_SETUP_GUIDE.md](docs/deployment/CREDENTIALS_SETUP_GUIDE.md)** - Setup AWS credentials
 1. **[IAM_SETUP_GUIDE.md](docs/deployment/IAM_SETUP_GUIDE.md)** - IAM permissions setup
 2. **[DEPLOYMENT_GUIDE.md](docs/deployment/DEPLOYMENT_GUIDE.md)** - Complete deployment guide (staging & production)
-3. **[CREDENTIALS_SETUP_GUIDE.md](docs/deployment/CREDENTIALS_SETUP_GUIDE.md)** - Setup AWS credentials
 4. **[INFRASTRUCTURE_GUIDE.md](docs/infrastructure/INFRASTRUCTURE_GUIDE.md)** - Infrastructure components guide
 
 ### 📚 Core Documentation
