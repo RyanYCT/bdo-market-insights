@@ -119,6 +119,7 @@ def handler(event: Dict[str, Any], context: Any, logger) -> Dict[str, Any]:
     Lambda handler for retrieveIdList.
     
     Retrieves item IDs from DynamoDB and returns them in a validated format.
+    Supports multiple table names separated by commas.
     
     Args:
         event: Lambda event (can be from Step Functions or direct invocation)
@@ -140,26 +141,67 @@ def handler(event: Dict[str, Any], context: Any, logger) -> Dict[str, Any]:
     add_annotation('correlation_id', logger.correlation_id)
     
     try:
-        # Get table name from event or environment variable
-        table_name = event.get("table_name") or os.getenv("DYNAMODB_TABLE_NAME")
+        # Get table name(s) from event or environment variable
+        table_name_input = event.get("table_name") or os.getenv("DYNAMODB_TABLE_NAME")
         
-        if not table_name:
+        if not table_name_input:
             raise ValueError("table_name must be provided in event or DYNAMODB_TABLE_NAME environment variable")
         
-        logger.info("Starting retrieveIdList execution", table_name=table_name)
+        # Parse table names (support comma-separated list)
+        table_names = [name.strip() for name in table_name_input.split(",") if name.strip()]
+        
+        if not table_names:
+            raise ValueError("No valid table names provided")
+        
+        logger.info("Starting retrieveIdList execution", 
+                   table_names=table_names,
+                   table_count=len(table_names))
+        
+        # Add X-Ray annotation for table count
+        add_annotation('table_count', len(table_names))
         
         # Track execution latency
         with metrics.track_latency("retrieveIdList"):
             # Initialize DynamoDB service
             dynamodb_service = DynamoDBService(logger)
             
-            # Retrieve item IDs from DynamoDB
-            item_ids = dynamodb_service.get_item_ids(table_name)
+            # Retrieve item IDs from all tables
+            all_item_ids = []
+            table_stats = {}
+            
+            for table_name in table_names:
+                logger.info(f"Processing table", table_name=table_name)
+                
+                try:
+                    # Retrieve item IDs from current table
+                    item_ids = dynamodb_service.get_item_ids(table_name)
+                    all_item_ids.extend(item_ids)
+                    table_stats[table_name] = len(item_ids)
+                    
+                    logger.info(f"Retrieved IDs from table", 
+                               table_name=table_name,
+                               item_count=len(item_ids))
+                    
+                except Exception as e:
+                    logger.error(f"Failed to retrieve IDs from table",
+                               table_name=table_name,
+                               error=e)
+                    # Re-raise to fail the entire operation
+                    raise
+            
+            # Remove duplicates while preserving order
+            unique_item_ids = list(dict.fromkeys(all_item_ids))
+            
+            logger.info("Combined item IDs from all tables",
+                       total_items=len(all_item_ids),
+                       unique_items=len(unique_item_ids),
+                       duplicates_removed=len(all_item_ids) - len(unique_item_ids),
+                       table_stats=table_stats)
             
             # Validate output using Pydantic schema
             try:
                 output = ItemIdList(
-                    item_ids=item_ids,
+                    item_ids=unique_item_ids,
                     correlation_id=logger.correlation_id
                 )
                 
@@ -169,7 +211,9 @@ def handler(event: Dict[str, Any], context: Any, logger) -> Dict[str, Any]:
                 # Add X-Ray metadata
                 add_metadata('output', {
                     'item_count': len(output.item_ids),
-                    'table_name': table_name
+                    'table_names': table_names,
+                    'table_stats': table_stats,
+                    'duplicates_removed': len(all_item_ids) - len(unique_item_ids)
                 }, 'retrieveIdList')
                 
                 # Emit success metric

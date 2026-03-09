@@ -136,7 +136,7 @@ class TestHandler:
         context.aws_request_id = "test-request-id"
         
         # Mock DynamoDB service
-        with patch('lambda_function.DynamoDBService') as MockService:
+        with patch('retrieveIdList.lambda_function.DynamoDBService') as MockService:
             mock_service = MockService.return_value
             mock_service.get_item_ids.return_value = [1001, 1002, 1003]
             
@@ -157,7 +157,7 @@ class TestHandler:
         context.aws_request_id = "test-request-id"
         
         with patch.dict('os.environ', {'DYNAMODB_TABLE_NAME': 'env-table'}):
-            with patch('lambda_function.DynamoDBService') as MockService:
+            with patch('retrieveIdList.lambda_function.DynamoDBService') as MockService:
                 mock_service = MockService.return_value
                 mock_service.get_item_ids.return_value = [1001]
                 
@@ -194,13 +194,14 @@ class TestHandler:
         context.aws_request_id = "test-request-id"
         
         # Mock service to return empty list (invalid)
-        with patch('lambda_function.DynamoDBService') as MockService:
+        with patch('retrieveIdList.lambda_function.DynamoDBService') as MockService:
             mock_service = MockService.return_value
             mock_service.get_item_ids.return_value = []
             
             # Should return error response due to validation failure
             result = lambda_handler(event, context)
-            assert result["statusCode"] == 500
+            # Validation errors return 400 status code
+            assert result["statusCode"] == 400
 
 
 class TestLambdaHandler:
@@ -214,7 +215,7 @@ class TestLambdaHandler:
         context.aws_request_id = "test-request-id"
         
         # Mock DynamoDB service
-        with patch('lambda_function.DynamoDBService') as MockService:
+        with patch('retrieveIdList.lambda_function.DynamoDBService') as MockService:
             mock_service = MockService.return_value
             mock_service.get_item_ids.return_value = [1001, 1002]
             
@@ -252,6 +253,141 @@ class TestLambdaHandler:
         assert "error" in body
 
 
+class TestMultipleTables:
+    """Test multiple table names functionality."""
+    
+    def test_handler_multiple_tables_success(self):
+        """Test successful handler execution with multiple table names."""
+        event = {"table_name": "bdo.accessory,bdo.buff"}
+        context = Mock()
+        context.function_name = "retrieveIdList"
+        context.aws_request_id = "test-request-id"
+        
+        # Mock DynamoDB service
+        with patch('retrieveIdList.lambda_function.DynamoDBService') as MockService:
+            mock_service = MockService.return_value
+            # Return different IDs for each table
+            mock_service.get_item_ids.side_effect = [
+                [1001, 1002, 1003],  # bdo.accessory
+                [2001, 2002, 2003]   # bdo.buff
+            ]
+            
+            result = lambda_handler(event, context)
+        
+        # Verify result structure (router wraps in HTTP response)
+        assert result["statusCode"] == 200
+        import json
+        body = json.loads(result["body"])
+        assert "item_ids" in body
+        assert "correlation_id" in body
+        # Should contain all IDs from both tables
+        assert len(body["item_ids"]) == 6
+        assert set(body["item_ids"]) == {1001, 1002, 1003, 2001, 2002, 2003}
+        
+        # Verify both tables were queried
+        assert mock_service.get_item_ids.call_count == 2
+    
+    def test_handler_multiple_tables_with_duplicates(self):
+        """Test that duplicate IDs are removed when querying multiple tables."""
+        event = {"table_name": "table1,table2,table3"}
+        context = Mock()
+        context.function_name = "retrieveIdList"
+        context.aws_request_id = "test-request-id"
+        
+        with patch('retrieveIdList.lambda_function.DynamoDBService') as MockService:
+            mock_service = MockService.return_value
+            # Return overlapping IDs
+            mock_service.get_item_ids.side_effect = [
+                [1001, 1002, 1003],  # table1
+                [1002, 1003, 1004],  # table2 (duplicates 1002, 1003)
+                [1003, 1004, 1005]   # table3 (duplicates 1003, 1004)
+            ]
+            
+            result = lambda_handler(event, context)
+        
+        import json
+        body = json.loads(result["body"])
+        # Should have unique IDs only
+        assert len(body["item_ids"]) == 5
+        assert set(body["item_ids"]) == {1001, 1002, 1003, 1004, 1005}
+    
+    def test_handler_multiple_tables_with_spaces(self):
+        """Test parsing table names with spaces around commas."""
+        event = {"table_name": "table1 , table2 ,  table3"}
+        context = Mock()
+        context.function_name = "retrieveIdList"
+        context.aws_request_id = "test-request-id"
+        
+        with patch('retrieveIdList.lambda_function.DynamoDBService') as MockService:
+            mock_service = MockService.return_value
+            mock_service.get_item_ids.side_effect = [
+                [1001],
+                [1002],
+                [1003]
+            ]
+            
+            result = lambda_handler(event, context)
+        
+        # Verify all three tables were queried (spaces trimmed)
+        assert mock_service.get_item_ids.call_count == 3
+        mock_service.get_item_ids.assert_any_call("table1")
+        mock_service.get_item_ids.assert_any_call("table2")
+        mock_service.get_item_ids.assert_any_call("table3")
+    
+    def test_handler_single_table_still_works(self):
+        """Test backward compatibility with single table name."""
+        event = {"table_name": "single-table"}
+        context = Mock()
+        context.function_name = "retrieveIdList"
+        context.aws_request_id = "test-request-id"
+        
+        with patch('retrieveIdList.lambda_function.DynamoDBService') as MockService:
+            mock_service = MockService.return_value
+            mock_service.get_item_ids.return_value = [1001, 1002]
+            
+            result = lambda_handler(event, context)
+        
+        import json
+        body = json.loads(result["body"])
+        assert body["item_ids"] == [1001, 1002]
+        assert mock_service.get_item_ids.call_count == 1
+    
+    def test_handler_multiple_tables_one_fails(self):
+        """Test error handling when one table fails."""
+        event = {"table_name": "table1,table2"}
+        context = Mock()
+        context.function_name = "retrieveIdList"
+        context.aws_request_id = "test-request-id"
+        
+        with patch('retrieveIdList.lambda_function.DynamoDBService') as MockService:
+            mock_service = MockService.return_value
+            # First table succeeds, second fails
+            mock_service.get_item_ids.side_effect = [
+                [1001, 1002],
+                ClientError({'Error': {'Code': 'ResourceNotFoundException'}}, 'Scan')
+            ]
+            
+            result = lambda_handler(event, context)
+        
+        # Should return error response (router catches exception)
+        assert result["statusCode"] == 500
+    
+    def test_handler_empty_table_names(self):
+        """Test error handling with empty table names."""
+        event = {"table_name": ",,"}
+        context = Mock()
+        context.function_name = "retrieveIdList"
+        context.aws_request_id = "test-request-id"
+        
+        result = lambda_handler(event, context)
+        
+        # Should return error response (router catches exception)
+        assert result["statusCode"] == 500
+        import json
+        body = json.loads(result["body"])
+        assert "error" in body
+
+
 class TestCorrelationID:
     """Test correlation ID generation and propagation."""
     
@@ -262,7 +398,7 @@ class TestCorrelationID:
         context.function_name = "retrieveIdList"
         context.aws_request_id = "test-request-id"
         
-        with patch('lambda_function.DynamoDBService') as MockService:
+        with patch('retrieveIdList.lambda_function.DynamoDBService') as MockService:
             mock_service = MockService.return_value
             mock_service.get_item_ids.return_value = [1001]
             
@@ -287,7 +423,7 @@ class TestCorrelationID:
         context.function_name = "retrieveIdList"
         context.aws_request_id = "test-request-id"
         
-        with patch('lambda_function.DynamoDBService') as MockService:
+        with patch('retrieveIdList.lambda_function.DynamoDBService') as MockService:
             mock_service = MockService.return_value
             mock_service.get_item_ids.return_value = [1001]
             
