@@ -125,25 +125,16 @@ aws iam put-role-policy \
 
 echo "EventBridge Scheduler role configured successfully"
 
-# Add CloudWatch Metrics permissions to Lambda execution roles
+# Create managed CloudWatch Metrics policy
 echo ""
 echo "=========================================="
-echo "Configuring CloudWatch Metrics Permissions"
+echo "Creating Managed CloudWatch Metrics Policy"
 echo "=========================================="
 
-# List of Lambda functions that need CloudWatch metrics permissions
-LAMBDA_FUNCTIONS=(
-    "retrieveIdList"
-    "fetchData"
-    "cleanData"
-    "storeData"
-    "queryData"
-    "analyzeData"
-    "retainData"
-)
+MANAGED_POLICY_NAME="BDOMarketInsights-CloudWatchMetrics"
+MANAGED_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${MANAGED_POLICY_NAME}"
 
-# CloudWatch metrics policy
-METRICS_POLICY_NAME="CloudWatchMetricsPolicy"
+# CloudWatch metrics policy document
 METRICS_POLICY_DOCUMENT='{
     "Version": "2012-10-17",
     "Statement": [{
@@ -158,8 +149,52 @@ METRICS_POLICY_DOCUMENT='{
     }]
 }'
 
+# Check if managed policy already exists
+if aws iam get-policy --policy-arn "$MANAGED_POLICY_ARN" > /dev/null 2>&1; then
+    echo "Managed policy already exists: $MANAGED_POLICY_NAME"
+    echo "Policy ARN: $MANAGED_POLICY_ARN"
+else
+    echo "Creating managed policy: $MANAGED_POLICY_NAME"
+    
+    # Create temporary policy file
+    TEMP_POLICY_FILE=".temp-cloudwatch-policy-$$.json"
+    echo "$METRICS_POLICY_DOCUMENT" > "$TEMP_POLICY_FILE"
+    
+    # Create the managed policy
+    aws iam create-policy \
+        --policy-name "$MANAGED_POLICY_NAME" \
+        --policy-document "file://$TEMP_POLICY_FILE" \
+        --description "CloudWatch metrics permissions for BDO Market Insights ETL pipeline"
+    
+    rm -f "$TEMP_POLICY_FILE"
+    
+    if [ $? -eq 0 ]; then
+        echo "✓ Managed policy created successfully"
+    else
+        echo "✗ Failed to create managed policy"
+        exit 1
+    fi
+fi
+
+# Attach managed policy to Lambda execution roles
 echo ""
-echo "Adding CloudWatch metrics permissions to Lambda functions..."
+echo "=========================================="
+echo "Attaching Policy to Lambda Execution Roles"
+echo "=========================================="
+
+# List of Lambda functions that need CloudWatch metrics permissions
+LAMBDA_FUNCTIONS=(
+    "retrieveIdList"
+    "fetchData"
+    "cleanData"
+    "storeData"
+    "queryData"
+    "analyzeData"
+    "retainData"
+)
+
+echo ""
+echo "Attaching managed policy to Lambda function roles..."
 
 SUCCESS_COUNT=0
 FAILED_COUNT=0
@@ -177,7 +212,7 @@ for FUNCTION_NAME in "${LAMBDA_FUNCTIONS[@]}"; do
         --output text 2>/dev/null || echo "")
     
     if [ -z "$ROLE_ARN" ] || [ "$ROLE_ARN" == "None" ]; then
-        echo "  ⚠ Function not found or has no role. Skipping."
+        echo "  Function not found or has no role. Skipping."
         echo "  (This is normal if the function hasn't been deployed yet)"
         ((SKIPPED_COUNT++))
         continue
@@ -187,19 +222,30 @@ for FUNCTION_NAME in "${LAMBDA_FUNCTIONS[@]}"; do
     ROLE_NAME_LAMBDA=$(echo "$ROLE_ARN" | awk -F'/' '{print $NF}')
     echo "  Role: $ROLE_NAME_LAMBDA"
     
-    # Add or update the policy
-    ERROR_OUTPUT=$(aws iam put-role-policy \
+    # Remove inline policy if it exists (migration from inline to managed)
+    if aws iam get-role-policy --role-name "$ROLE_NAME_LAMBDA" --policy-name "CloudWatchMetricsPolicy" > /dev/null 2>&1; then
+        echo "  Removing old inline policy..."
+        aws iam delete-role-policy --role-name "$ROLE_NAME_LAMBDA" --policy-name "CloudWatchMetricsPolicy"
+    fi
+    
+    # Attach managed policy
+    ERROR_OUTPUT=$(aws iam attach-role-policy \
         --role-name "$ROLE_NAME_LAMBDA" \
-        --policy-name "$METRICS_POLICY_NAME" \
-        --policy-document "$METRICS_POLICY_DOCUMENT" 2>&1)
+        --policy-arn "$MANAGED_POLICY_ARN" 2>&1)
     
     if [ $? -eq 0 ]; then
-        echo "  ✓ CloudWatch metrics permission added"
+        echo "  ✓ Managed policy attached"
         ((SUCCESS_COUNT++))
     else
-        echo "  ✗ Failed to add permission"
-        echo "  Error: $ERROR_OUTPUT"
-        ((FAILED_COUNT++))
+        # Check if already attached
+        if echo "$ERROR_OUTPUT" | grep -q "already attached"; then
+            echo "  ✓ Managed policy already attached"
+            ((SUCCESS_COUNT++))
+        else
+            echo "  ✗ Failed to attach policy"
+            echo "  Error: $ERROR_OUTPUT"
+            ((FAILED_COUNT++))
+        fi
     fi
 done
 
@@ -212,20 +258,24 @@ echo "Created/Updated roles:"
 echo "  - $ROLE_NAME (Step Functions)"
 echo "  - $SCHEDULER_ROLE_NAME (EventBridge Scheduler)"
 echo ""
-echo "Lambda CloudWatch Metrics Permissions:"
-echo "  - Successfully updated: $SUCCESS_COUNT"
+echo "Created/Updated managed policy:"
+echo "  - $MANAGED_POLICY_NAME"
+echo "  - ARN: $MANAGED_POLICY_ARN"
+echo ""
+echo "Lambda CloudWatch Metrics Policy Attachments:"
+echo "  - Successfully attached: $SUCCESS_COUNT"
 echo "  - Failed: $FAILED_COUNT"
 echo "  - Skipped (not deployed): $SKIPPED_COUNT"
 echo ""
 
 if [ $SKIPPED_COUNT -gt 0 ]; then
-    echo "Note: Some Lambda functions were skipped because they haven't been deployed yet."
-    echo "Run this script again after deploying Lambda functions to add their permissions."
+    echo "Note: Some Lambda functions were skipped because they have not been deployed yet."
+    echo "Run this script again after deploying Lambda functions to attach the policy."
     echo ""
 fi
 
 if [ $FAILED_COUNT -gt 0 ]; then
-    echo "⚠ Warning: Some Lambda functions failed to update."
+    echo "Warning: Some Lambda functions failed to update."
     echo "You may need to run this script with appropriate IAM permissions."
     echo ""
 fi

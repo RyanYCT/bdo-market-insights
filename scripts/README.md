@@ -15,8 +15,8 @@ Sets up IAM roles and permissions required for the BDO Market Insights applicati
 **What it does:**
 - Creates Step Functions execution role
 - Creates EventBridge Scheduler role
-- Adds CloudWatch metrics permissions to all Lambda functions
-- Configures necessary IAM policies
+- Creates managed CloudWatch metrics policy (`BDOMarketInsights-CloudWatchMetrics`)
+- Attaches the managed policy to all Lambda function execution roles
 
 **When to run:**
 - Before initial deployment
@@ -30,7 +30,13 @@ export AWS_ACCOUNT_ID=123456789012
 export ENVIRONMENT=staging  # or production
 ```
 
-**Note:** This script requires IAM admin permissions to create and modify roles.
+**Managed Policy Created:**
+- **Name:** `BDOMarketInsights-CloudWatchMetrics`
+- **ARN:** `arn:aws:iam::{ACCOUNT_ID}:policy/BDOMarketInsights-CloudWatchMetrics`
+- **Purpose:** Allows Lambda functions to emit CloudWatch metrics to the `BDOMarketInsights/ETL` namespace
+- **Benefit:** Centralized policy management - update once, applies to all Lambda functions
+
+**Note:** This script requires IAM admin permissions to create and modify roles and policies.
 
 ### deploy-all.sh
 Orchestrates the complete deployment process:
@@ -203,15 +209,6 @@ done
 ./scripts/deploy-step-functions.sh
 ./scripts/deploy-api-gateway.sh
 cd infrastructure && ./deploy-alarms.sh && cd ..
-```
-
-### Add CloudWatch Metrics Permissions
-
-If you encounter "Failed to emit metric" errors:
-
-```bash
-# Run the setup script to add permissions to all Lambda functions
-./scripts/setup-iam-roles.sh
 ```
 
 ### Update Single Function
