@@ -11,12 +11,8 @@ This Lambda function:
 Requirements: 2.2, 2.3
 """
 
-import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List
-
-# Add lambda layer to path
-sys.path.insert(0, '/opt/python')
 
 from common.router import LambdaRouter, ValidationError as RouterValidationError
 from common.schemas import CleanDataInput, MarketDataRecord
@@ -32,8 +28,8 @@ def transform_raw_record(raw_record: dict) -> dict:
     """
     Transform raw API record to MarketDataRecord format.
     
-    Converts field names from API format (camelCase) to schema format (snake_case).
-    Handles datetime parsing for last_sold_time.
+    Converts field names from API format to schema format (snake_case).
+    Handles datetime parsing for last_sold_time (Unix timestamp).
     
     Args:
         raw_record: Raw record from External API
@@ -42,8 +38,9 @@ def transform_raw_record(raw_record: dict) -> dict:
         dict: Transformed record ready for validation
     """
     # Map API fields to schema fields
+    # API uses snake_case: id, sid, currentStock, totalTrades, lastSoldPrice, lastSoldTime
     transformed = {
-        'item_id': raw_record.get('itemId'),
+        'item_id': raw_record.get('id'),  # API uses 'id' not 'itemId'
         'sid': raw_record.get('sid', 0),
         'current_stock': raw_record.get('currentStock'),
         'total_trades': raw_record.get('totalTrades'),
@@ -51,10 +48,19 @@ def transform_raw_record(raw_record: dict) -> dict:
         'last_sold_time': raw_record.get('lastSoldTime')
     }
     
-    # Parse datetime if it's a string
-    if isinstance(transformed['last_sold_time'], str):
+    # Convert Unix timestamp to datetime if it's an integer
+    if isinstance(transformed['last_sold_time'], (int, float)):
         try:
-            # Try ISO format first
+            transformed['last_sold_time'] = datetime.fromtimestamp(
+                transformed['last_sold_time'], 
+                tz=timezone.utc
+            )
+        except (ValueError, OSError):
+            # If conversion fails, set to None (will be caught by validation)
+            transformed['last_sold_time'] = None
+    elif isinstance(transformed['last_sold_time'], str):
+        try:
+            # Try ISO format if it's a string
             transformed['last_sold_time'] = datetime.fromisoformat(
                 transformed['last_sold_time'].replace('Z', '+00:00')
             )
@@ -122,12 +128,12 @@ def handler(event: Dict[str, Any], context: Any, logger) -> Dict[str, Any]:
                     logger.warning(
                         "Record validation failed, filtering out",
                         record_index=idx,
-                        item_id=raw_record.get('itemId'),
+                        item_id=raw_record.get('id'),  # API uses 'id' not 'itemId'
                         validation_errors=e.errors()
                     )
                     invalid_records.append({
                         'index': idx,
-                        'item_id': raw_record.get('itemId'),
+                        'item_id': raw_record.get('id'),  # API uses 'id' not 'itemId'
                         'errors': e.errors()
                     })
                 except Exception as e:
@@ -135,13 +141,13 @@ def handler(event: Dict[str, Any], context: Any, logger) -> Dict[str, Any]:
                     logger.warning(
                         "Record transformation failed, filtering out",
                         record_index=idx,
-                        item_id=raw_record.get('itemId'),
+                        item_id=raw_record.get('id'),  # API uses 'id' not 'itemId'
                         error_type=type(e).__name__,
                         error_message=str(e)
                     )
                     invalid_records.append({
                         'index': idx,
-                        'item_id': raw_record.get('itemId'),
+                        'item_id': raw_record.get('id'),  # API uses 'id' not 'itemId'
                         'error': str(e)
                     })
             
