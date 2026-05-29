@@ -21,7 +21,7 @@ deferred to Phase 7 — cutover — and are listed there.
       aws-lambda-powertools, pydantic v2, psycopg[binary], boto3)
 - [x] `Makefile` (build / test / lint / deploy / db-tunnel-up /
       db-tunnel-down)
-- [ ] `.github/workflows/ci.yml` — single workflow:
+- [x] `.github/workflows/ci.yml` — single workflow:
       ruff → mypy → pytest → sam validate; deploy on tag
 - [ ] `template.yaml` skeleton with parameters
       `Stage`, `BdoRegion`, `UseRdsProxy`, `EnableBastion`
