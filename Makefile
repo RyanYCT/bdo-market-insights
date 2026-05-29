@@ -16,7 +16,7 @@ build:
 	sam build
 
 deploy:
-	sam deploy
+	sam deploy --config-env dev
 
 deploy-dev:
 	sam deploy --config-env dev

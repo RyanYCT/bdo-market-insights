@@ -92,6 +92,7 @@ Resources:
 
   ObservabilityStack:
     Type: AWS::CloudFormation::Stack
+    DependsOn: [EtlStack, ApiStack]
     Properties:
       TemplateURL: infra/observability.yaml
       Parameters:

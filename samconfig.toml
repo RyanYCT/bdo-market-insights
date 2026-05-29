@@ -1,14 +1,5 @@
 version = 0.1
 
-[default.deploy.parameters]
-stack_name = "bdo-market-dev"
-resolve_s3 = true
-s3_prefix = "bdo-market-insights"
-region = "ap-northeast-1"
-confirm_changeset = true
-capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
-parameter_overrides = "Stage=dev BdoRegion=tw UseRdsProxy=false EnableBastion=false"
-
 [default.build.parameters]
 cached = true
 parallel = true
