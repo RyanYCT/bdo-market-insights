@@ -135,6 +135,15 @@ them.
 4. If a non-obvious decision was made, an ADR exists.
 5. The change is small enough that a human can review in one sitting.
 
+## Phase completion check
+
+When closing out a phase (all `tasks.md` checkboxes in the phase
+ticked), ask whether any procedure recurred enough across the phase
+tasks to be worth a workspace-level skill in `.kiro/skills/<name>/`.
+If yes, write the skill before starting the next phase. The intent
+is to prevent premature skill files while making sure earned ones
+get captured.
+
 ## Tools available in this sandbox
 
 | Need | Tool |
