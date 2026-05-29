@@ -37,7 +37,7 @@ deferred to Phase 7 — cutover — and are listed there.
 
 - [x] `infra/network.yaml` — VPC, 2 private subnets, DynamoDB gateway
       endpoint, security groups (Lambda SG, RDS SG, bastion SG)
-- [ ] `infra/data.yaml` — RDS Postgres (db `bdo`), DynamoDB
+- [x] `infra/data.yaml` — RDS Postgres (db `bdo`), DynamoDB
       `bdo-v3-items`, IAM auth role, Secrets Manager entry for `dba`
       role
 - [ ] `infra/bastion.yaml` — gated by `EnableBastion`; t4g.nano in

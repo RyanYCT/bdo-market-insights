@@ -1,0 +1,179 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Data layer for bdo-market-insights: RDS Postgres with IAM auth,
+  DynamoDB items table with GSI, dba Secrets Manager secret,
+  and Lambda RDS IAM authentication role.
+
+Parameters:
+  Stage:
+    Type: String
+    AllowedValues:
+      - dev
+      - prod
+  UseRdsProxy:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnetAAZ:
+    Type: AWS::EC2::AvailabilityZone::Name
+  RdsSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  LambdaSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+
+Conditions:
+  IsProd: !Equals [!Ref Stage, 'prod']
+
+Resources:
+  # ──────────────────────────────────────────────
+  # DB Subnet Group
+  # ──────────────────────────────────────────────
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub 'bdo-${Stage} private subnets for RDS'
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      Tags:
+        - Key: Name
+          Value: !Sub 'bdo-${Stage}-db-subnet-group'
+
+  # ──────────────────────────────────────────────
+  # RDS Postgres Instance
+  # ──────────────────────────────────────────────
+  Database:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: postgres
+      EngineVersion: '16'
+      DBInstanceClass: db.t4g.micro
+      DBName: bdo
+      AllocatedStorage: 20
+      StorageType: gp3
+      MultiAZ: false
+      AvailabilityZone: !Ref PrivateSubnetAAZ
+      EnableIAMDatabaseAuthentication: true
+      ManageMasterUserPassword: true
+      MasterUsername: postgres
+      BackupRetentionPeriod: 7
+      DeletionProtection: !If [IsProd, true, false]
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RdsSecurityGroupId
+      Tags:
+        - Key: Name
+          Value: !Sub 'bdo-${Stage}-postgres'
+
+  # ──────────────────────────────────────────────
+  # DynamoDB Table — bdo-v3-items
+  # ──────────────────────────────────────────────
+  ItemsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: bdo-v3-items
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: N
+        - AttributeName: category
+          AttributeType: S
+        - AttributeName: tracked
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: category-tracked-index
+          KeySchema:
+            - AttributeName: category
+              KeyType: HASH
+            - AttributeName: tracked
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  # ──────────────────────────────────────────────
+  # Secrets Manager — dba credentials
+  # ──────────────────────────────────────────────
+  DbaSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub 'bdo-${Stage}-dba-credentials'
+      Description: Credentials for the dba Postgres role
+      GenerateSecretString:
+        SecretStringTemplate: '{"username":"dba"}'
+        GenerateStringKey: password
+        ExcludeCharacters: '"@/\\'
+
+  # ──────────────────────────────────────────────
+  # IAM Role — Lambda RDS IAM Authentication
+  # ──────────────────────────────────────────────
+  LambdaRdsAuthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'bdo-${Stage}-lambda-rds-auth'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RdsIamConnect
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: rds-db:connect
+                Resource: !Sub 'arn:aws:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${Database.DbiResourceId}/lambda_rds_user'
+
+Outputs:
+  RdsEndpoint:
+    Value: !GetAtt Database.Endpoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-RdsEndpoint'
+
+  RdsPort:
+    Value: !GetAtt Database.Endpoint.Port
+    Export:
+      Name: !Sub '${AWS::StackName}-RdsPort'
+
+  RdsInstanceArn:
+    Value: !Sub 'arn:aws:rds:${AWS::Region}:${AWS::AccountId}:db:${Database}'
+    Export:
+      Name: !Sub '${AWS::StackName}-RdsInstanceArn'
+
+  DynamoDbTableName:
+    Value: !Ref ItemsTable
+    Export:
+      Name: !Sub '${AWS::StackName}-DynamoDbTableName'
+
+  DynamoDbTableArn:
+    Value: !GetAtt ItemsTable.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-DynamoDbTableArn'
+
+  DbaSecretArn:
+    Value: !Ref DbaSecret
+    Export:
+      Name: !Sub '${AWS::StackName}-DbaSecretArn'
+
+  LambdaRdsAuthRoleArn:
+    Value: !GetAtt LambdaRdsAuthRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaRdsAuthRoleArn'
+
+  MasterSecretArn:
+    Value: !GetAtt Database.MasterUserSecret.SecretArn
+    Export:
+      Name: !Sub '${AWS::StackName}-MasterSecretArn'
