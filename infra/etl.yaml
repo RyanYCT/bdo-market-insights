@@ -1,0 +1,17 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ETL pipeline placeholder (Step Functions + EventBridge).
+  Implemented in Phase 4.
+
+Parameters:
+  Stage:
+    Type: String
+    AllowedValues:
+      - dev
+      - prod
+  BdoRegion:
+    Type: String
+
+Resources:
+  Placeholder:
+    Type: AWS::CloudFormation::WaitConditionHandle

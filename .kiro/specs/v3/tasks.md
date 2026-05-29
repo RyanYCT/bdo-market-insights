@@ -47,7 +47,7 @@ deferred to Phase 7 — cutover — and are listed there.
 - [x] CI step runs `alembic upgrade head` on deploy
 - [x] `scripts/seed_items.py` — one-time copy of 23 items from
       `bdo.accessory` → `bdo-v3-items` (Postgres seeds itself via ETL)
-- [ ] Restore `sam validate` step in `.github/workflows/ci.yml` now
+- [x] Restore `sam validate` step in `.github/workflows/ci.yml` now
       that nested infra templates exist
 
 ## Phase 3 — Shared layer (`bdo-common`)

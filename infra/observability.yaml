@@ -1,0 +1,15 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Observability placeholder (CloudWatch dashboard + alarms).
+  Implemented in Phase 6.
+
+Parameters:
+  Stage:
+    Type: String
+    AllowedValues:
+      - dev
+      - prod
+
+Resources:
+  Placeholder:
+    Type: AWS::CloudFormation::WaitConditionHandle

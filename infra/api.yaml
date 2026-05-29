@@ -1,0 +1,15 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  API Gateway placeholder (REST API + usage plan).
+  Implemented in Phase 5.
+
+Parameters:
+  Stage:
+    Type: String
+    AllowedValues:
+      - dev
+      - prod
+
+Resources:
+  Placeholder:
+    Type: AWS::CloudFormation::WaitConditionHandle

@@ -68,13 +68,22 @@ jobs:
       - run: uv sync
       - run: uv run bandit -r src/ -c pyproject.toml
 
-  # NOTE: `sam validate` is deliberately omitted from CI until Phase 2
-  # adds the nested infra/*.yaml templates that template.yaml references.
-  # Re-introduce as its own job once those exist.
+  validate:
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v4
+      - uses: aws-actions/setup-sam@v2
+      - run: uv sync
+      - run: sam validate --lint
 
   deploy:
     runs-on: ubuntu-latest
-    needs: [test, audit, scan]
+    needs: [test, audit, scan, validate]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       id-token: write
