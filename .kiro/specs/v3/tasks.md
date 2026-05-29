@@ -44,7 +44,7 @@ deferred to Phase 7 — cutover — and are listed there.
       private subnet; EC2 Instance Connect Endpoint
 - [x] `migrations/` — Alembic init + `0001_initial.py`
       (`item`, `item_sid`, `market_snapshot`, `market_daily`)
-- [ ] CI step runs `alembic upgrade head` on deploy
+- [x] CI step runs `alembic upgrade head` on deploy
 - [x] `scripts/seed_items.py` — one-time copy of 23 items from
       `bdo.accessory` → `bdo-v3-items` (Postgres seeds itself via ETL)
 - [ ] Restore `sam validate` step in `.github/workflows/ci.yml` now

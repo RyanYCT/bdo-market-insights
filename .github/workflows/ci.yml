@@ -93,3 +93,6 @@ jobs:
       - run: uv sync
       - run: sam build
       - run: sam deploy --config-env prod --no-confirm-changeset
+      - run: uv run alembic -c migrations/alembic.ini upgrade head
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
