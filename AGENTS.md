@@ -15,6 +15,23 @@ archived) that was over-engineered, broke the core BDO domain logic,
 and was shelved. v3's guiding principle is **"boring + correct"** —
 learn from those failures (see "Anti-patterns" below).
 
+## Where to look first
+
+| File | Purpose |
+|---|---|
+| `.kiro/steering/product.md` | What this project is; BDO domain primer |
+| `.kiro/steering/tech.md` | Locked tech stack; forbidden patterns |
+| `.kiro/steering/structure.md` | Repository layout |
+| `.kiro/specs/v3/requirements.md` | Active functional + non-functional reqs |
+| `.kiro/specs/v3/design.md` | Architecture, schema, ADR pointers |
+| `.kiro/specs/v3/tasks.md` | Phased task list with checkboxes |
+| `docs/adr/` | One markdown per architectural decision |
+| `log.md` | Append-only session log |
+
+Steering files use `inclusion: always` so Kiro auto-loads them every
+session. Other agents (Claude, Cursor, …) read this file plus the
+steering files manually.
+
 ## Workflow rules
 
 - Work on `redesign-v3` (or feature branches off it). Never push to
@@ -24,9 +41,6 @@ learn from those failures (see "Anti-patterns" below).
 - Conventional Commits: `<type>(<scope>): <imperative subject>`. Body
   explains *why*, not *what*.
 - Push via `github_push_to_remote`, never raw `git push`.
-- Destructive operations (force push, branch rename, force-replacing
-  `main`, deleting AWS resources) require **explicit approval each
-  time**, even if previously discussed.
 - At session end, append an entry to `log.md` per its template if the
   session was non-trivial.
 
@@ -72,14 +86,29 @@ learn from those failures (see "Anti-patterns" below).
 
 ## Working with the human
 
-- Owner uses **Vibe** mode for design, **Autonomous** mode for
-  execution.
-- In design discussion, surface trade-offs explicitly with options
+Kiro offers three working modes the owner uses deliberately:
+
+- **Spec** mode — structured iteration on
+  `.kiro/specs/<feature>/{requirements,design,tasks}.md`. Used for
+  new features and re-architectures. Specs come *before* code; do
+  not introduce design decisions only in code.
+- **Vibe** mode — collaborative chat for design discussion or
+  targeted edits.
+- **Autonomous** mode — Kiro executes a well-defined task with
+  minimal interruption.
+
+Behavioral rules across modes:
+
+- In **Spec** and **Vibe**, surface trade-offs explicitly with options
   (A/B/C) and a recommendation. Do not pretend certainty.
-- In execution, prefer "boring + correct". Flag scope creep
+- In **Autonomous**, prefer "boring + correct". Flag scope creep
   proactively; do not silently expand a task.
-- When inheriting from a previous session, read the latest entries in
-  `log.md` and the current `tasks.md` checkbox state before acting.
+- Destructive operations (force push, branch rename, force-replacing
+  `main`, deleting AWS resources) require **explicit approval each
+  time**, in any mode.
+- When inheriting from a previous session, read `.kiro/steering/`,
+  the active spec at `.kiro/specs/v3/`, the latest entries in
+  `log.md`, and the current `tasks.md` checkbox state before acting.
 
 ## Anti-patterns we have already paid for
 
