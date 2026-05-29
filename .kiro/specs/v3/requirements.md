@@ -21,8 +21,10 @@ EventBridge rule, with no code or schema change.
   DynamoDB, propagating the full metadata (id, name, category, …)
   through the Step Functions execution input.
 - **FR-3** ETL fetches market data from
-  `https://api.arsha.io/v2/{region}/GetWorldMarketSubList?id=<csv>` in
-  batches of ≤ 50 IDs, parallelism ≤ 5, ≤ 1 RPS per worker.
+  `https://api.arsha.io/v2/{region}/GetWorldMarketSubList?id=<csv>`.
+  Items are dispatched in groups of ≤ 50 IDs (~350-char URL); the
+  `arsha_client` defensively caps URL length at 1900 chars and splits
+  oversized batches automatically. Parallelism ≤ 5, ≤ 1 RPS per worker.
 - **FR-4** A response normalizer flattens the 5 polymorphic shapes
   (single/multi × enhanceable/non-enhanceable, plus mixed) into
   `list[Record]`.
@@ -98,7 +100,8 @@ EventBridge rule, with no code or schema change.
 
 ### Cost
 - **NFR-13** Target ≤ US$15/month incremental over the existing RDS
-  baseline.
+  baseline. Single-AZ workload (ADR-0011); RDS Proxy opt-in (NFR-14);
+  no NAT Gateway (ADR-0006).
 - **NFR-14** RDS Proxy is opt-in via SAM parameter `UseRdsProxy`
   (default `false`).
 
@@ -129,3 +132,5 @@ EventBridge rule, with no code or schema change.
 - Failstack-aware enhancement modelling (base-rate only in v1)
 - DynamoDB Streams sync of `item` rows (lazy ETL-driven population in
   v1; ADR-0010 documents the upgrade path)
+- Multi-AZ deployment (Single-AZ in v1; ADR-0011 documents the upgrade
+  path)

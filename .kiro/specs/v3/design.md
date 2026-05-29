@@ -144,20 +144,24 @@ All price columns are `BIGINT` (BDO prices reach 3 × 10¹¹).
 
 ## Networking
 
-- One VPC, 2 AZs, 2 private subnets.
-- RDS Postgres in private subnets; SG allows 5432 from the Lambda SG
-  and from the bastion SG only.
+- **Single-AZ workload** (ADR-0011). One VPC; two private subnets
+  spanning two AZs **only because AWS requires the DB Subnet Group to
+  span ≥ 2 AZs**; the actual workload (RDS instance, in-VPC Lambdas,
+  bastion) runs in the primary AZ only. No cross-AZ data-transfer
+  charges; no Multi-AZ RDS premium.
+- RDS Postgres in the primary private subnet (Single-AZ deployment);
+  SG allows 5432 from the Lambda SG and the bastion SG only.
 - **Lambdas attach to the VPC only when they need RDS** (storeData,
-  rollupDaily, purgeOldSnapshots, marketQuery). The other four
-  (retrieveItems, fetchData, cleanData, itemRegistry) run outside the
-  VPC with default Lambda egress.
+  rollupDaily, purgeOldSnapshots, marketQuery), and only to the
+  primary subnet. The other four (retrieveItems, fetchData, cleanData,
+  itemRegistry) run outside the VPC with default Lambda egress.
 - DynamoDB access from in-VPC Lambdas via Gateway Endpoint (free).
 - DB credentials: Lambdas use IAM database auth; bastion-mediated human
   access uses a separate `dba` role with password in Secrets Manager.
-- **Bastion**: `t4g.nano`, no public IP, in a private subnet, gated by
-  SAM parameter `EnableBastion`. Reachable via EC2 Instance Connect
-  Endpoint (free) for IAM-auth SSH tunnel. Stop/start on demand via
-  `make db-tunnel-{up,down}`.
+- **Bastion**: `t4g.nano`, no public IP, in the primary private subnet,
+  gated by SAM parameter `EnableBastion`. Reachable via EC2 Instance
+  Connect Endpoint (free) for IAM-auth SSH tunnel. Stop/start on
+  demand via `make db-tunnel-{up,down}`.
 - **No NAT Gateway, no NAT Instance.** Saves ~$32/month.
 
 ## Observability
@@ -190,5 +194,6 @@ API Gateway REST API with usage plan + API key. Per-key throttle
 | 0008 | IAM database authentication for Lambdas                        |
 | 0009 | EICE bastion for human DBA access (vs publicly-accessible RDS) |
 | 0010 | Postgres `item` populated lazily by ETL; Streams sync deferred |
+| 0011 | Single-AZ workload; DB Subnet Group spans 2 AZs only because AWS requires it |
 
 ADRs live in `docs/adr/`, one Markdown file each, Michael Nygard format.
