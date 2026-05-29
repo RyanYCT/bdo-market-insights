@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test build deploy deploy-dev deploy-prod db-tunnel-up db-tunnel-down clean
+.PHONY: lint format typecheck test build deploy deploy-dev deploy-prod db-tunnel-up db-tunnel-down migrate seed clean
 
 lint:
 	uv run ruff check . && uv run ruff format --check .
@@ -29,6 +29,12 @@ db-tunnel-up:
 
 db-tunnel-down:
 	@echo "TODO: Stop IAM-authenticated SSH tunnel via EC2 Instance Connect Endpoint to RDS:5432"
+
+migrate:
+	uv run alembic -c migrations/alembic.ini upgrade head
+
+seed:
+	uv run python scripts/seed_items.py
 
 clean:
 	rm -rf .aws-sam/ build/ dist/ *.egg-info

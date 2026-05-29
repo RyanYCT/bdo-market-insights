@@ -42,7 +42,7 @@ deferred to Phase 7 — cutover — and are listed there.
       role
 - [x] `infra/bastion.yaml` — gated by `EnableBastion`; t4g.nano in
       private subnet; EC2 Instance Connect Endpoint
-- [ ] `migrations/` — Alembic init + `0001_initial.py`
+- [x] `migrations/` — Alembic init + `0001_initial.py`
       (`item`, `item_sid`, `market_snapshot`, `market_daily`)
 - [ ] CI step runs `alembic upgrade head` on deploy
 - [ ] `scripts/seed_items.py` — one-time copy of 23 items from

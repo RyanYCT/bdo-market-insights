@@ -23,6 +23,8 @@ dev = [
     "boto3-stubs",
     "pip-audit",
     "bandit",
+    "alembic",
+    "sqlalchemy",
 ]
 
 [tool.hatch.build.targets.wheel]
