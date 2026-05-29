@@ -15,17 +15,19 @@ Parameters:
     Type: String
     Default: tw
     AllowedValues:
-      - tw
-      - kr
       - na
       - eu
-      - sa
-      - jp
+      - sea
       - mena
+      - kr
+      - ru
+      - jp
+      - th
+      - tw
+      - sa
       - console_eu
       - console_na
       - console_asia
-      - console_sa
     Description: BDO server region passed through to ETL state machine input
   UseRdsProxy:
     Type: String
