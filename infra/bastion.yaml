@@ -1,0 +1,81 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Bastion host (t4g.nano) with EC2 Instance Connect Endpoint
+  for IAM-authenticated SSH tunneling to RDS.
+
+Parameters:
+  Stage:
+    Type: String
+    AllowedValues:
+      - dev
+      - prod
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet::Id
+  BastionSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+
+Resources:
+  # ──────────────────────────────────────────────
+  # IAM Role & Instance Profile
+  # ──────────────────────────────────────────────
+  BastionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Name
+          Value: !Sub 'bdo-${Stage}-bastion-role'
+
+  BastionInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BastionRole
+
+  # ──────────────────────────────────────────────
+  # EC2 Instance
+  # ──────────────────────────────────────────────
+  BastionInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t4g.nano
+      ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64}}'
+      SubnetId: !Ref PrivateSubnetA
+      SecurityGroupIds:
+        - !Ref BastionSecurityGroupId
+      IamInstanceProfile: !Ref BastionInstanceProfile
+      Tags:
+        - Key: Name
+          Value: !Sub 'bdo-${Stage}-bastion'
+
+  # ──────────────────────────────────────────────
+  # EC2 Instance Connect Endpoint
+  # ──────────────────────────────────────────────
+  InstanceConnectEndpoint:
+    Type: AWS::EC2::InstanceConnectEndpoint
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      SecurityGroupIds:
+        - !Ref BastionSecurityGroupId
+      PreserveClientIp: false
+
+Outputs:
+  BastionInstanceId:
+    Value: !Ref BastionInstance
+    Export:
+      Name: !Sub '${AWS::StackName}-BastionInstanceId'
+
+  InstanceConnectEndpointId:
+    Value: !Ref InstanceConnectEndpoint
+    Export:
+      Name: !Sub '${AWS::StackName}-InstanceConnectEndpointId'

@@ -40,7 +40,7 @@ deferred to Phase 7 — cutover — and are listed there.
 - [x] `infra/data.yaml` — RDS Postgres (db `bdo`), DynamoDB
       `bdo-v3-items`, IAM auth role, Secrets Manager entry for `dba`
       role
-- [ ] `infra/bastion.yaml` — gated by `EnableBastion`; t4g.nano in
+- [x] `infra/bastion.yaml` — gated by `EnableBastion`; t4g.nano in
       private subnet; EC2 Instance Connect Endpoint
 - [ ] `migrations/` — Alembic init + `0001_initial.py`
       (`item`, `item_sid`, `market_snapshot`, `market_daily`)
