@@ -23,9 +23,9 @@ deferred to Phase 7 — cutover — and are listed there.
       db-tunnel-down)
 - [x] `.github/workflows/ci.yml` — single workflow:
       ruff → mypy → pytest → sam validate; deploy on tag
-- [ ] `template.yaml` skeleton with parameters
+- [x] `template.yaml` skeleton with parameters
       `Stage`, `BdoRegion`, `UseRdsProxy`, `EnableBastion`
-- [ ] `samconfig.toml` for `dev` and `prod`
+- [x] `samconfig.toml` for `dev` and `prod`
 - [ ] `docs/adr/0001..0010-*.md` — Michael Nygard format, 1 page each
 - [ ] `docs/runbook.md` (incl. db-tunnel runbook), `docs/slo.md`,
       `docs/architecture.md`

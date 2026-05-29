@@ -1,0 +1,98 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  bdo-market-insights - Serverless market-data platform for Black Desert Online.
+  Hourly ETL from arsha.io into RDS Postgres with analytics API.
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+  BdoRegion:
+    Type: String
+    Default: tw
+    Description: BDO server region (tw, kr, na, eu, etc.)
+  UseRdsProxy:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Enable RDS Proxy for Lambda connection pooling (adds ~$15/month)
+  EnableBastion:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Deploy t4g.nano bastion for DBA access via EICE SSH tunnel
+
+Conditions:
+  IsProd: !Equals [!Ref Stage, prod]
+  UseProxy: !Equals [!Ref UseRdsProxy, 'true']
+  DeployBastion: !Equals [!Ref EnableBastion, 'true']
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 256
+    Tracing: Active
+    Environment:
+      Variables:
+        STAGE: !Ref Stage
+        BDO_REGION: !Ref BdoRegion
+        POWERTOOLS_SERVICE_NAME: bdo-market-insights
+
+Resources:
+  NetworkStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: infra/network.yaml
+      Parameters:
+        Stage: !Ref Stage
+
+  DataStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: infra/data.yaml
+      Parameters:
+        Stage: !Ref Stage
+        UseRdsProxy: !Ref UseRdsProxy
+    DependsOn: NetworkStack
+
+  BastionStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: DeployBastion
+    Properties:
+      TemplateURL: infra/bastion.yaml
+      Parameters:
+        Stage: !Ref Stage
+    DependsOn: NetworkStack
+
+  EtlStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: infra/etl.yaml
+      Parameters:
+        Stage: !Ref Stage
+        BdoRegion: !Ref BdoRegion
+    DependsOn: DataStack
+
+  ApiStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: infra/api.yaml
+      Parameters:
+        Stage: !Ref Stage
+    DependsOn: DataStack
+
+  ObservabilityStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: infra/observability.yaml
+      Parameters:
+        Stage: !Ref Stage
