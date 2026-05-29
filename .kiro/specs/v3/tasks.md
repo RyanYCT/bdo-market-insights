@@ -17,7 +17,7 @@ deferred to Phase 7 — cutover — and are listed there.
 
 ## Phase 1 — Project scaffolding
 
-- [ ] `pyproject.toml` (Python 3.12; uv; ruff, mypy, pytest,
+- [x] `pyproject.toml` (Python 3.12; uv; ruff, mypy, pytest,
       aws-lambda-powertools, pydantic v2, psycopg[binary], boto3)
 - [ ] `Makefile` (build / test / lint / deploy / db-tunnel-up /
       db-tunnel-down)

@@ -1,0 +1,44 @@
+[project]
+name = "bdo-market-insights"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "aws-lambda-powertools[all]",
+    "pydantic>=2.0",
+    "psycopg[binary]>=3.0",
+    "boto3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+    "pytest-mock",
+    "moto[all]",
+    "boto3-stubs",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/layer/python/bdo_common"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 99
+src = ["src/layer/python"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src/layer/python"]
