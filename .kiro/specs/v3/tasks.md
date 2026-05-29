@@ -6,9 +6,14 @@ Each box is one PR. Phases are checkpoints; no phase ships half-built.
 
 - [x] Specs at `.kiro/specs/v3/{requirements,design,tasks}.md`
 - [x] First commit on `redesign-v3` (orphan branch)
-- [ ] Tag `archive/main-v1` at `origin/main` (deferred to cutover)
-- [ ] Rename remote `rewrite-project` → `archive/rewrite-project`
-  (deferred to cutover)
+- [x] `AGENTS.md` operating manual for AI coding agents
+- [x] `.kiro/steering/{product,tech,structure}.md` auto-loaded
+      context files
+- [x] `log.md` append-only session journal with Phase 0 entry
+
+Branch-archive operations (`tag archive/main-v1`, rename
+`rewrite-project` → `archive/rewrite-project`) are deliberately
+deferred to Phase 7 — cutover — and are listed there.
 
 ## Phase 1 — Project scaffolding
 
@@ -89,7 +94,8 @@ Each box is one PR. Phases are checkpoints; no phase ships half-built.
 
 - [ ] Deploy `dev` stack; soak for 24 h
 - [ ] Deploy `prod` stack
-- [ ] Tag `archive/main-v1`; rename `rewrite-project` →
+- [ ] Tag `archive/main-v1` at `origin/main`
+- [ ] Rename remote branch `rewrite-project` →
       `archive/rewrite-project`
 - [ ] Force-update `main` to `redesign-v3`
 - [ ] `docs/cleanup-tasks.md` — list of legacy AWS resources to delete
