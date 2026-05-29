@@ -14,7 +14,19 @@ Parameters:
   BdoRegion:
     Type: String
     Default: tw
-    Description: BDO server region (tw, kr, na, eu, etc.)
+    AllowedValues:
+      - tw
+      - kr
+      - na
+      - eu
+      - sa
+      - jp
+      - mena
+      - console_eu
+      - console_na
+      - console_asia
+      - console_sa
+    Description: BDO server region passed through to ETL state machine input
   UseRdsProxy:
     Type: String
     Default: 'false'
@@ -31,8 +43,6 @@ Parameters:
     Description: Deploy t4g.nano bastion for DBA access via EICE SSH tunnel
 
 Conditions:
-  IsProd: !Equals [!Ref Stage, prod]
-  UseProxy: !Equals [!Ref UseRdsProxy, 'true']
   DeployBastion: !Equals [!Ref EnableBastion, 'true']
 
 Globals:

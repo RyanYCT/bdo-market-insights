@@ -30,16 +30,11 @@ Shared Layer (bdo-common)
 
 ## Key Design Decisions
 
-Full rationale lives in `docs/adr/`. Summary:
-
-| ADR | Decision |
-|-----|----------|
-| 0001 | SAM for IaC |
-| 0006 | No NAT - mixed VPC placement |
-| 0007 | Powertools for observability |
-| 0008 | IAM database authentication |
-| 0010 | Lazy item population via registry |
-| 0011 | Single-AZ workload |
+Architectural decisions live in `docs/adr/` (one ADR per file, Michael
+Nygard format). The canonical decision table — kept in lock-step with
+the architecture — is in
+[`.kiro/specs/v3/design.md`](../.kiro/specs/v3/design.md). This file
+intentionally does not duplicate it.
 
 ## Data Flow
 

@@ -42,6 +42,6 @@ input/output, and retry behaviour.
 
 | Environment | Method |
 |-------------|--------|
-| Dev | `make deploy-dev` or push to `redesign-v3` branch |
+| Dev | `make deploy-dev` (manual; CI deploy is tag-only) |
 | Prod | Push a `v*` tag to trigger CI deploy |
 | Rollback | Deploy the previous tag |

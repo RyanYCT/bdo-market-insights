@@ -30,3 +30,6 @@ htmlcov/
 # Build
 build/
 *.zip
+
+# Agent artifacts (Autonomous-mode planner outputs)
+.agents/

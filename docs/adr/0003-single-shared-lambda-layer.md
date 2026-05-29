@@ -22,7 +22,8 @@ dependency in `template.yaml`.
 - (+) One deployment artifact for shared code; consistent versions across all
   functions.
 - (+) Clear dependency boundary between shared library and function handlers.
-- (+) Simpler dependency management with a single `requirements.txt` in the
-  layer.
+- (+) Simpler dependency management with a single dependency manifest
+  (`pyproject.toml`); the layer build exports it to a `requirements.txt`
+  consumed by `sam build`.
 - (-) Any layer change triggers redeployment of all 8 functions.
 - (-) Layer size limit of 250 MB unzipped must be respected.

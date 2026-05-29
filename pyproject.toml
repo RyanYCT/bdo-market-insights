@@ -3,10 +3,9 @@ name = "bdo-market-insights"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "aws-lambda-powertools[all]",
-    "pydantic>=2.0",
-    "psycopg[binary]>=3.0",
-    "boto3",
+    "aws-lambda-powertools>=3,<4",
+    "pydantic>=2,<3",
+    "psycopg[binary]>=3,<4",
 ]
 
 [build-system]
@@ -20,7 +19,10 @@ dev = [
     "pytest",
     "pytest-mock",
     "moto[all]",
+    "boto3",
     "boto3-stubs",
+    "pip-audit",
+    "bandit",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -42,3 +44,8 @@ plugins = ["pydantic.mypy"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src/layer/python"]
+
+[tool.bandit]
+# bandit looks for security issues; exclude tests/ since fixtures
+# and assertions tend to false-positive on hardcoded data.
+exclude_dirs = ["tests", ".venv", ".aws-sam"]

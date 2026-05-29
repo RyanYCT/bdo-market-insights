@@ -22,11 +22,13 @@ deferred to Phase 7 — cutover — and are listed there.
 - [x] `Makefile` (build / test / lint / deploy / db-tunnel-up /
       db-tunnel-down)
 - [x] `.github/workflows/ci.yml` — single workflow:
-      ruff → mypy → pytest → sam validate; deploy on tag
+      ruff → mypy → pytest, plus pip-audit and bandit (NFR-12);
+      deploy on tag with OIDC. (`sam validate` deferred to Phase 2
+      once nested infra/*.yaml templates exist.)
 - [x] `template.yaml` skeleton with parameters
       `Stage`, `BdoRegion`, `UseRdsProxy`, `EnableBastion`
 - [x] `samconfig.toml` for `dev` and `prod`
-- [x] `docs/adr/0001..0010-*.md` — Michael Nygard format, 1 page each
+- [x] `docs/adr/0001..0011-*.md` — Michael Nygard format, 1 page each
 - [x] `docs/runbook.md` (incl. db-tunnel runbook), `docs/slo.md`,
       `docs/architecture.md`
 - [x] `.gitignore`, `LICENSE`, `README.md` outline
@@ -45,6 +47,8 @@ deferred to Phase 7 — cutover — and are listed there.
 - [ ] CI step runs `alembic upgrade head` on deploy
 - [ ] `scripts/seed_items.py` — one-time copy of 23 items from
       `bdo.accessory` → `bdo-v3-items` (Postgres seeds itself via ETL)
+- [ ] Restore `sam validate` step in `.github/workflows/ci.yml` now
+      that nested infra templates exist
 
 ## Phase 3 — Shared layer (`bdo-common`)
 
