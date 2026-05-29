@@ -29,7 +29,7 @@ deferred to Phase 7 — cutover — and are listed there.
 - [x] `docs/adr/0001..0010-*.md` — Michael Nygard format, 1 page each
 - [x] `docs/runbook.md` (incl. db-tunnel runbook), `docs/slo.md`,
       `docs/architecture.md`
-- [ ] `.gitignore`, `LICENSE`, `README.md` outline
+- [x] `.gitignore`, `LICENSE`, `README.md` outline
 
 ## Phase 2 — Network, data, and bastion infrastructure
 
