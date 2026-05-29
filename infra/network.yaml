@@ -1,0 +1,204 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  VPC, private subnets, route table, DynamoDB Gateway Endpoint,
+  and security groups for bdo-market-insights.
+
+Parameters:
+  Stage:
+    Type: String
+    AllowedValues:
+      - dev
+      - prod
+
+Resources:
+  # ──────────────────────────────────────────────
+  # VPC
+  # ──────────────────────────────────────────────
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/24
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub 'bdo-${Stage}-vpc'
+
+  # ──────────────────────────────────────────────
+  # Private Subnets
+  # ──────────────────────────────────────────────
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.0.0/25
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub 'bdo-${Stage}-private-a'
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.0.128/25
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub 'bdo-${Stage}-private-b'
+
+  # ──────────────────────────────────────────────
+  # Route Table (private — no internet routes)
+  # ──────────────────────────────────────────────
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub 'bdo-${Stage}-private-rt'
+
+  SubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  SubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  # ──────────────────────────────────────────────
+  # DynamoDB Gateway VPC Endpoint
+  # ──────────────────────────────────────────────
+  DynamoDbEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.dynamodb'
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+
+  # ──────────────────────────────────────────────
+  # Security Groups
+  # ──────────────────────────────────────────────
+  LambdaSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Lambda functions
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub 'bdo-${Stage}-lambda-sg'
+
+  RdsSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS Postgres
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub 'bdo-${Stage}-rds-sg'
+
+  BastionSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for bastion host (EICE connectivity)
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub 'bdo-${Stage}-bastion-sg'
+
+  # ── Lambda SG Egress ──
+  LambdaToRdsEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref LambdaSG
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      DestinationSecurityGroupId: !Ref RdsSG
+      Description: Allow Lambda to connect to RDS Postgres
+
+  LambdaHttpsEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref LambdaSG
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: 0.0.0.0/0
+      Description: Allow HTTPS outbound for DynamoDB Gateway Endpoint
+
+  # ── RDS SG Ingress ──
+  RdsFromLambdaIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RdsSG
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref LambdaSG
+      Description: Allow inbound Postgres from Lambda
+
+  RdsFromBastionIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RdsSG
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref BastionSG
+      Description: Allow inbound Postgres from Bastion
+
+  # ── Bastion SG Egress ──
+  BastionToRdsEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref BastionSG
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      DestinationSecurityGroupId: !Ref RdsSG
+      Description: Allow Bastion to connect to RDS Postgres
+
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+    Export:
+      Name: !Sub '${AWS::StackName}-VpcId'
+
+  PrivateSubnetA:
+    Value: !Ref PrivateSubnetA
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnetA'
+
+  PrivateSubnetB:
+    Value: !Ref PrivateSubnetB
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnetB'
+
+  PrivateSubnetAAZ:
+    Value: !GetAtt PrivateSubnetA.AvailabilityZone
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnetAAZ'
+
+  LambdaSecurityGroupId:
+    Value: !Ref LambdaSG
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaSecurityGroupId'
+
+  RdsSecurityGroupId:
+    Value: !Ref RdsSG
+    Export:
+      Name: !Sub '${AWS::StackName}-RdsSecurityGroupId'
+
+  BastionSecurityGroupId:
+    Value: !Ref BastionSG
+    Export:
+      Name: !Sub '${AWS::StackName}-BastionSecurityGroupId'

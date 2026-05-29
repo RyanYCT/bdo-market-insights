@@ -35,7 +35,7 @@ deferred to Phase 7 — cutover — and are listed there.
 
 ## Phase 2 — Network, data, and bastion infrastructure
 
-- [ ] `infra/network.yaml` — VPC, 2 private subnets, DynamoDB gateway
+- [x] `infra/network.yaml` — VPC, 2 private subnets, DynamoDB gateway
       endpoint, security groups (Lambda SG, RDS SG, bastion SG)
 - [ ] `infra/data.yaml` — RDS Postgres (db `bdo`), DynamoDB
       `bdo-v3-items`, IAM auth role, Secrets Manager entry for `dba`

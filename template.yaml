@@ -74,6 +74,12 @@ Resources:
       Parameters:
         Stage: !Ref Stage
         UseRdsProxy: !Ref UseRdsProxy
+        VpcId: !GetAtt NetworkStack.Outputs.VpcId
+        PrivateSubnetA: !GetAtt NetworkStack.Outputs.PrivateSubnetA
+        PrivateSubnetB: !GetAtt NetworkStack.Outputs.PrivateSubnetB
+        PrivateSubnetAAZ: !GetAtt NetworkStack.Outputs.PrivateSubnetAAZ
+        RdsSecurityGroupId: !GetAtt NetworkStack.Outputs.RdsSecurityGroupId
+        LambdaSecurityGroupId: !GetAtt NetworkStack.Outputs.LambdaSecurityGroupId
     DependsOn: NetworkStack
 
   BastionStack:
@@ -83,6 +89,9 @@ Resources:
       TemplateURL: infra/bastion.yaml
       Parameters:
         Stage: !Ref Stage
+        VpcId: !GetAtt NetworkStack.Outputs.VpcId
+        PrivateSubnetA: !GetAtt NetworkStack.Outputs.PrivateSubnetA
+        BastionSecurityGroupId: !GetAtt NetworkStack.Outputs.BastionSecurityGroupId
     DependsOn: NetworkStack
 
   EtlStack:
