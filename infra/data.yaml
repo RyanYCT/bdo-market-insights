@@ -4,6 +4,16 @@ Description: >
   DynamoDB items table with GSI, dba Secrets Manager secret,
   and Lambda RDS IAM authentication role.
 
+# UseRdsProxy is received but intentionally unwired: NFR-14 mandates the
+# toggle as a public parameter, while ADR-0002 defers the RDS Proxy
+# resource itself. Suppress the "unused parameter" warning until the
+# Proxy is implemented.
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - W2001
+
 Parameters:
   Stage:
     Type: String
@@ -16,8 +26,9 @@ Parameters:
     AllowedValues:
       - 'true'
       - 'false'
-  VpcId:
-    Type: AWS::EC2::VPC::Id
+    # Reserved for the deferred RDS Proxy resource (ADR-0002). Wired
+    # through from the root template so the toggle exists; no Proxy
+    # resource is created until traffic justifies the ~$15/month cost.
   PrivateSubnetA:
     Type: AWS::EC2::Subnet::Id
   PrivateSubnetB:
@@ -25,8 +36,6 @@ Parameters:
   PrivateSubnetAAZ:
     Type: AWS::EC2::AvailabilityZone::Name
   RdsSecurityGroupId:
-    Type: AWS::EC2::SecurityGroup::Id
-  LambdaSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
 
 Conditions:
@@ -54,7 +63,7 @@ Resources:
     Type: AWS::RDS::DBInstance
     Properties:
       Engine: postgres
-      EngineVersion: '16'
+      EngineVersion: '16.8'
       DBInstanceClass: db.t4g.micro
       DBName: bdo
       AllocatedStorage: 20

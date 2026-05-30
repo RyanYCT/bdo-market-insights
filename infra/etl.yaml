@@ -3,6 +3,14 @@ Description: >
   ETL pipeline placeholder (Step Functions + EventBridge).
   Implemented in Phase 4.
 
+# Placeholder stack: declares the Stage/BdoRegion interface it will use
+# in Phase 4 so the root template's parameter flow is stable now.
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - W2001
+
 Parameters:
   Stage:
     Type: String

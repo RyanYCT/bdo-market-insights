@@ -9,8 +9,6 @@ Parameters:
     AllowedValues:
       - dev
       - prod
-  VpcId:
-    Type: AWS::EC2::VPC::Id
   PrivateSubnetA:
     Type: AWS::EC2::Subnet::Id
   BastionSecurityGroupId:

@@ -3,6 +3,14 @@ Description: >
   Observability placeholder (CloudWatch dashboard + alarms).
   Implemented in Phase 6.
 
+# Placeholder stack: declares the Stage interface it will use in Phase 6
+# so the root template's parameter flow is stable now.
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - W2001
+
 Parameters:
   Stage:
     Type: String

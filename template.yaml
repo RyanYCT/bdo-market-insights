@@ -67,6 +67,9 @@ Resources:
       Parameters:
         Stage: !Ref Stage
 
+  # Ordering after NetworkStack is enforced implicitly by the
+  # !GetAtt NetworkStack.Outputs.* references below; an explicit
+  # DependsOn would be redundant (cfn-lint W3005).
   DataStack:
     Type: AWS::CloudFormation::Stack
     Properties:
@@ -74,13 +77,10 @@ Resources:
       Parameters:
         Stage: !Ref Stage
         UseRdsProxy: !Ref UseRdsProxy
-        VpcId: !GetAtt NetworkStack.Outputs.VpcId
         PrivateSubnetA: !GetAtt NetworkStack.Outputs.PrivateSubnetA
         PrivateSubnetB: !GetAtt NetworkStack.Outputs.PrivateSubnetB
         PrivateSubnetAAZ: !GetAtt NetworkStack.Outputs.PrivateSubnetAAZ
         RdsSecurityGroupId: !GetAtt NetworkStack.Outputs.RdsSecurityGroupId
-        LambdaSecurityGroupId: !GetAtt NetworkStack.Outputs.LambdaSecurityGroupId
-    DependsOn: NetworkStack
 
   BastionStack:
     Type: AWS::CloudFormation::Stack
@@ -89,10 +89,8 @@ Resources:
       TemplateURL: infra/bastion.yaml
       Parameters:
         Stage: !Ref Stage
-        VpcId: !GetAtt NetworkStack.Outputs.VpcId
         PrivateSubnetA: !GetAtt NetworkStack.Outputs.PrivateSubnetA
         BastionSecurityGroupId: !GetAtt NetworkStack.Outputs.BastionSecurityGroupId
-    DependsOn: NetworkStack
 
   EtlStack:
     Type: AWS::CloudFormation::Stack
