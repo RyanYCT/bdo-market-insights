@@ -29,16 +29,24 @@ def seed_target_table(items: list[dict], target_table_name: str, *, dry_run: boo
     now = datetime.now(UTC).isoformat()
 
     for item in items:
-        record = {
+        # The legacy bdo.accessory table stores metadata under camelCase
+        # keys (mainCategory, subCategory); map them to the new snake_case
+        # schema. Omit empty values so we never write an empty string into
+        # the `category` GSI partition key (DynamoDB rejects that).
+        record: dict[str, object] = {
             "id": int(item["id"]),
             "name": item.get("name", ""),
-            "category": item.get("category", ""),
-            "main_category": item.get("main_category", ""),
-            "sub_category": item.get("sub_category", ""),
             "tracked": "true",
             "created_at": now,
             "updated_at": now,
         }
+        if item.get("category"):
+            record["category"] = item["category"]
+        if item.get("mainCategory"):
+            record["main_category"] = item["mainCategory"]
+        if item.get("subCategory"):
+            record["sub_category"] = item["subCategory"]
+
         if dry_run:
             print(f"[DRY RUN] Would write: {record}")
         else:
