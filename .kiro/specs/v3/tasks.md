@@ -1,6 +1,8 @@
 # v3 — Implementation Tasks
 
-Each box is one PR. Phases are checkpoints; no phase ships half-built.
+Each box is one commit on `redesign-v3` (tick its checkbox in the same
+commit). Phases are checkpoints; no phase ships half-built. `main` is
+force-replaced from `redesign-v3` at Phase 7 cutover (no per-phase PRs).
 
 ## Phase 0 — Branch & specs
 
@@ -69,7 +71,7 @@ Domain math is specified normatively in `.kiro/specs/v3/domain-model.md`.
       with `success_probability`, `expected_enhance_cost`, `net_rate`
       (tax), and `enhancement_analysis` (per-tier output + verdict)
 - [ ] `analytics.py` — volatility (σ, CV), liquidity, z-score anomaly
-- [ ] `rates.json` — accessory_v1 curves + cron tables + tax constants
+- [x] `rates.json` — accessory_v1 curves + cron tables + tax constants
 - [ ] `config.py` — env reader (Powertools `parameters` cache)
 - [ ] Unit tests for normalizer, pricing (assert domain-model.md worked
       numbers), analytics, repositories
