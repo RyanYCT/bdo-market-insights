@@ -67,7 +67,7 @@ Domain math is specified normatively in `.kiro/specs/v3/domain-model.md`.
 - [ ] `dynamo.py` — typed wrappers for `bdo-v3-items`
 - [ ] `repositories.py` — `ItemRepo`, `ItemSidRepo`, `SnapshotRepo`,
       `DailyRepo` (parameterized SQL, no ORM)
-- [ ] `pricing.py` — model registry (ADR-0012); `accessory_v1` (A1)
+- [x] `pricing.py` — model registry (ADR-0012); `accessory_v1` (A1)
       with `success_probability`, `expected_enhance_cost`, `net_rate`
       (tax), and `enhancement_analysis` (per-tier output + verdict)
 - [ ] `analytics.py` — volatility (σ, CV), liquidity, z-score anomaly
