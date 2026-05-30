@@ -114,7 +114,13 @@ Resources:
         - Key: Name
           Value: !Sub 'bdo-${Stage}-bastion-sg'
 
-  # ── Lambda SG Egress ──
+  # NOTE: These SGs intentionally omit inline egress, so AWS applies the
+  # default allow-all-egress rule. In a no-NAT VPC (ADR-0006) egress is
+  # already constrained by routing: the only reachable destinations are
+  # in-VPC (RDS) and the DynamoDB gateway endpoint (via its prefix list).
+  # The explicit 5432 egress rules below document the RDS dependency.
+
+  # -- Lambda SG Egress --
   LambdaToRdsEgress:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
@@ -124,16 +130,6 @@ Resources:
       ToPort: 5432
       DestinationSecurityGroupId: !Ref RdsSG
       Description: Allow Lambda to connect to RDS Postgres
-
-  LambdaHttpsEgress:
-    Type: AWS::EC2::SecurityGroupEgress
-    Properties:
-      GroupId: !Ref LambdaSG
-      IpProtocol: tcp
-      FromPort: 443
-      ToPort: 443
-      CidrIp: 0.0.0.0/0
-      Description: Allow HTTPS outbound for DynamoDB Gateway Endpoint
 
   # ── RDS SG Ingress ──
   RdsFromLambdaIngress:
@@ -156,7 +152,22 @@ Resources:
       SourceSecurityGroupId: !Ref BastionSG
       Description: Allow inbound Postgres from Bastion
 
-  # ── Bastion SG Egress ──
+  # -- Bastion SG Ingress --
+  # The EC2 Instance Connect Endpoint shares this SG, so the bastion
+  # instance must allow SSH from the same SG for the operator tunnel
+  # (operator -> EICE -> bastion :22 -> RDS :5432) to form. Without this
+  # rule the bastion is unreachable (NFR-19).
+  BastionSshIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref BastionSG
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref BastionSG
+      Description: Allow SSH from the EC2 Instance Connect Endpoint
+
+  # -- Bastion SG Egress --
   BastionToRdsEgress:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
@@ -166,16 +177,6 @@ Resources:
       ToPort: 5432
       DestinationSecurityGroupId: !Ref RdsSG
       Description: Allow Bastion to connect to RDS Postgres
-
-  BastionHttpsEgress:
-    Type: AWS::EC2::SecurityGroupEgress
-    Properties:
-      GroupId: !Ref BastionSG
-      IpProtocol: tcp
-      FromPort: 443
-      ToPort: 443
-      CidrIp: 0.0.0.0/0
-      Description: Allow HTTPS outbound for SSM Agent connectivity
 
 Outputs:
   VpcId:
