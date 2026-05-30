@@ -102,6 +102,7 @@ jobs:
       - run: uv sync
       - run: sam build
       - run: sam deploy --config-env prod --no-confirm-changeset
-      - run: uv run alembic -c migrations/alembic.ini upgrade head
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # NOTE: migrations are NOT run here. RDS is in a private subnet
+      # with no public access, so a GitHub runner cannot reach it. Run
+      # `make migrate` through the bastion tunnel instead (docs/runbook.md).
+      # An in-VPC migrator Lambda is planned for Phase 4.
