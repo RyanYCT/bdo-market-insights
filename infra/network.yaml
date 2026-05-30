@@ -167,6 +167,16 @@ Resources:
       DestinationSecurityGroupId: !Ref RdsSG
       Description: Allow Bastion to connect to RDS Postgres
 
+  BastionHttpsEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref BastionSG
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: 0.0.0.0/0
+      Description: Allow HTTPS outbound for SSM Agent connectivity
+
 Outputs:
   VpcId:
     Value: !Ref Vpc
