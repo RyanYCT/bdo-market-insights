@@ -70,7 +70,7 @@ Domain math is specified normatively in `.kiro/specs/v3/domain-model.md`.
 - [x] `pricing.py` — model registry (ADR-0012); `accessory_v1` (A1)
       with `success_probability`, `expected_enhance_cost`, `net_rate`
       (tax), and `enhancement_analysis` (per-tier output + verdict)
-- [ ] `analytics.py` — volatility (σ, CV), liquidity, z-score anomaly
+- [x] `analytics.py` — volatility (σ, CV), liquidity, z-score anomaly
 - [x] `rates.json` — accessory_v1 curves + cron tables + tax constants
 - [ ] `config.py` — env reader (Powertools `parameters` cache)
 - [ ] Unit tests for normalizer, pricing (assert domain-model.md worked
