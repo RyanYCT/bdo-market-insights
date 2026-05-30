@@ -145,7 +145,17 @@ All price columns are `BIGINT` (BDO prices reach 3 × 10¹¹).
   projection ALL) backs `GET /v1/items?category=&tracked=` (FR-8) and
   the ETL's "active items" scan (FR-2). `category` is therefore a
   required attribute; the seed script omits items that lack it rather
-  than write an empty GSI key.
+  than write an empty GSI key. Items also carry `model_id` (pricing
+  model, default `accessory_v1`) and `cron_table` ("a"|"b") for the
+  domain math (see `domain-model.md`, ADR-0012).
+
+### Domain model
+
+BDO enhancement economics (probability curves, A1 cost model, tax,
+cron tables, analytics definitions) are specified in
+[`domain-model.md`](domain-model.md) — the normative source for
+`bdo_common.pricing` and `bdo_common.analytics`. The pricing-model
+registry is ADR-0012.
 
 ## Networking
 
@@ -200,5 +210,6 @@ API Gateway REST API with usage plan + API key. Per-key throttle
 | 0009 | EICE bastion for human DBA access (vs publicly-accessible RDS) |
 | 0010 | Postgres `item` populated lazily by ETL; Streams sync deferred |
 | 0011 | Single-AZ workload; DB Subnet Group spans 2 AZs only because AWS requires it |
+| 0012 | Pricing-model registry; `accessory_v1` (A1) shipped, others pluggable |
 
 ADRs live in `docs/adr/`, one Markdown file each, Michael Nygard format.

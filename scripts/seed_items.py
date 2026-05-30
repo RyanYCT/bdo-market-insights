@@ -22,6 +22,12 @@ def scan_source_table(table_name: str) -> list[dict]:
     return items
 
 
+# Deboreka-series accessories use cron table B; all other accessories
+# use table A (domain-model.md). Stored per-item so the future
+# accessory_cron_v1 model can select the right cron counts.
+DEBOREKA_IDS = {12094, 12276, 11653, 11882}
+
+
 def seed_target_table(items: list[dict], target_table_name: str, *, dry_run: bool) -> None:
     """Write items to the target DynamoDB table."""
     dynamodb = boto3.resource("dynamodb")
@@ -37,6 +43,7 @@ def seed_target_table(items: list[dict], target_table_name: str, *, dry_run: boo
             "id": int(item["id"]),
             "name": item.get("name", ""),
             "tracked": "true",
+            "cron_table": "b" if int(item["id"]) in DEBOREKA_IDS else "a",
             "created_at": now,
             "updated_at": now,
         }

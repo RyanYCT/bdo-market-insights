@@ -55,18 +55,24 @@ deferred to Phase 7 — cutover — and are listed there.
 
 ## Phase 3 — Shared layer (`bdo-common`)
 
+Domain math is specified normatively in `.kiro/specs/v3/domain-model.md`.
+
 - [ ] `arsha_client.py` + normalizer — handles all 5 response shapes
 - [ ] `models.py` — Pydantic v2 schemas
-      (`Record`, `Item`, `ItemSid`, `SnapshotRow`, `DailyRow`)
+      (`Record`, `Item` incl. `model_id`/`cron_table`, `ItemSid`,
+      `SnapshotRow`, `DailyRow`)
 - [ ] `db.py` — psycopg3 module-global connection helper, IAM-auth aware
 - [ ] `dynamo.py` — typed wrappers for `bdo-v3-items`
 - [ ] `repositories.py` — `ItemRepo`, `ItemSidRepo`, `SnapshotRepo`,
       `DailyRepo` (parameterized SQL, no ORM)
-- [ ] `pricing.py` — `expected_enhance_cost(records, rates)`
+- [ ] `pricing.py` — model registry (ADR-0012); `accessory_v1` (A1)
+      with `success_probability`, `expected_enhance_cost`, `net_rate`
+      (tax), and `enhancement_analysis` (per-tier output + verdict)
 - [ ] `analytics.py` — volatility (σ, CV), liquidity, z-score anomaly
-- [ ] `rates.json` — placeholder enhancement probabilities, TODO-marked
+- [ ] `rates.json` — accessory_v1 curves + cron tables + tax constants
 - [ ] `config.py` — env reader (Powertools `parameters` cache)
-- [ ] Unit tests for normalizer, pricing, analytics, repositories
+- [ ] Unit tests for normalizer, pricing (assert domain-model.md worked
+      numbers), analytics, repositories
 
 ## Phase 4 — ETL pipeline
 
@@ -83,6 +89,9 @@ deferred to Phase 7 — cutover — and are listed there.
 - [ ] In-VPC migrator Lambda — runs `alembic upgrade head` from inside
       the VPC on deploy (replaces the manual bastion-tunnel migration
       for routine schema changes; see Phase 2 notes)
+- [ ] `accessory_cron_v1` pricing model — Markov chain (60% retain /
+      40% drop-one on cron failure), cron counts from `rates.json`
+      tables a/b; registered alongside `accessory_v1` (ADR-0012)
 
 ## Phase 5 — APIs
 
