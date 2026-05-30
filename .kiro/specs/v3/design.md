@@ -141,6 +141,11 @@ All price columns are `BIGINT` (BDO prices reach 3 × 10¹¹).
   authoritative source for item registry. Postgres `item` is its
   read-side projection, populated lazily by `storeData` on first
   observation (ADR-0010). Seeded once from `bdo.accessory`.
+  GSI **`category-tracked-index`** (PK `category`, SK `tracked`,
+  projection ALL) backs `GET /v1/items?category=&tracked=` (FR-8) and
+  the ETL's "active items" scan (FR-2). `category` is therefore a
+  required attribute; the seed script omits items that lack it rather
+  than write an empty GSI key.
 
 ## Networking
 

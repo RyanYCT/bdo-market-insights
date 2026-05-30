@@ -23,10 +23,41 @@ input/output, and retry behaviour.
 
 1. Ensure the bastion is deployed (`EnableBastion=true` in samconfig)
    and the EC2 instance is running.
-2. `make db-tunnel-up` - opens an SSH tunnel via EICE through the
-   bastion host to RDS on port 5432.
+2. `make db-tunnel-up STAGE=<dev|prod>` - opens an SSH tunnel via EICE
+   through the bastion host to RDS on `localhost:5432`. Leave it
+   running; open a second terminal for the next steps. Press Ctrl-C
+   (or `make db-tunnel-down`) to close it.
 3. Connect pgAdmin (or psql) to `localhost:5432` using the `dba` role.
-   Credentials are stored in Secrets Manager.
+   Credentials are in the `bdo-<stage>-dba-credentials` Secrets Manager
+   secret.
+
+### Running migrations
+
+Migrations are **not** run by CI: RDS has no public access, so a
+GitHub runner cannot reach it. Run them through the tunnel instead:
+
+```sh
+make db-tunnel-up STAGE=dev          # terminal 1 (keep open)
+
+# terminal 2 -- master creds from the RDS-managed master secret:
+export DATABASE_URL="postgresql://postgres:<master-pw>@localhost:5432/bdo"
+make migrate
+```
+
+### First-time role bootstrap
+
+Migration `0002_bootstrap_roles` creates the `lambda_rds_user`
+(IAM auth) and `dba` (login) Postgres roles. The `dba` role is only
+created when `DBA_PASSWORD` is set; source it from the dba secret
+before the first migrate:
+
+```sh
+export DBA_PASSWORD="$(aws secretsmanager get-secret-value \
+  --secret-id bdo-dev-dba-credentials \
+  --query SecretString --output text | python -c 'import json,sys; print(json.load(sys.stdin)["password"])')"
+make migrate
+```
+
 4. `make db-tunnel-down` - tears down the tunnel.
 
 ## Common Failure Scenarios

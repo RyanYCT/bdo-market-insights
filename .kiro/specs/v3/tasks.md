@@ -43,8 +43,11 @@ deferred to Phase 7 — cutover — and are listed there.
 - [x] `infra/bastion.yaml` — gated by `EnableBastion`; t4g.nano in
       private subnet; EC2 Instance Connect Endpoint
 - [x] `migrations/` — Alembic init + `0001_initial.py`
-      (`item`, `item_sid`, `market_snapshot`, `market_daily`)
-- [x] CI step runs `alembic upgrade head` on deploy
+      (`item`, `item_sid`, `market_snapshot`, `market_daily`) +
+      `0002_bootstrap_roles.py` (`lambda_rds_user` IAM, `dba` login)
+- [x] Migrations run via bastion tunnel (`make migrate`); the CI
+      deploy job does not run them (private RDS is unreachable from a
+      GitHub runner). In-VPC migrator Lambda deferred to Phase 4.
 - [x] `scripts/seed_items.py` — one-time copy of 23 items from
       `bdo.accessory` → `bdo-v3-items` (Postgres seeds itself via ETL)
 - [x] Restore `sam validate` step in `.github/workflows/ci.yml` now
@@ -77,6 +80,9 @@ deferred to Phase 7 — cutover — and are listed there.
       EventBridge crons (ETL hourly with `region` input;
       retention daily 00:30 UTC)
 - [ ] Integration test: full ETL run with moto + dockerised Postgres
+- [ ] In-VPC migrator Lambda — runs `alembic upgrade head` from inside
+      the VPC on deploy (replaces the manual bastion-tunnel migration
+      for routine schema changes; see Phase 2 notes)
 
 ## Phase 5 — APIs
 
