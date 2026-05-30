@@ -77,3 +77,46 @@ Each entry uses the template below; aim for ≤ 200 words.
   force-replace `main` — explicit approval required at that point.
 - Phase 2: DynamoDB Streams-driven item sync remains deferred per
   ADR-0010.
+
+---
+
+## 2026-05-30 — Phase 1 scaffolding + Phase 2 infrastructure
+
+**Agent:** Kiro
+**Mode:** Autonomous (with Vibe acceptance reviews between phases)
+**Branch:** `redesign-v3`
+**Phase:** 1 — Project scaffolding; 2 — Network, data, bastion infrastructure
+**Commits:** `2add18e`..`59663fb` (Phase 1 + cleanup), `a920446`..`84a2477` (Phase 2 + cleanup)
+
+### Done
+- Phase 1: `pyproject.toml` (uv), `Makefile`, single CI workflow,
+  SAM `template.yaml` skeleton (4 params), `samconfig.toml`, 11 ADRs,
+  runbook/SLO/architecture docs, license/gitignore/README.
+- Phase 1 acceptance review → fixed: OIDC `id-token` perm, pip-audit +
+  bandit jobs, dropped premature `sam validate`, dead Conditions,
+  boto3→dev-deps, `BdoRegion` AllowedValues (corrected to the 13
+  arsha.io regions).
+- Phase 2: `infra/{network,data,bastion}.yaml`, 3 stub stacks, Alembic
+  + `0001_initial` (4 tables) + `0002_bootstrap_roles`,
+  `scripts/seed_items.py`, restored `sam validate`.
+- Phase 2 acceptance review → fixed 4 blockers + majors: W3005/W3691
+  (sam validate green), bastion port-22 ingress, removed unreachable
+  CI migration step (bastion-tunnel flow instead), created the
+  `lambda_rds_user`/`dba` roles, seed camelCase + sparse-GSI fixes.
+
+### Decisions
+- Migrations run via the bastion tunnel (`make migrate`), not CI —
+  private RDS is unreachable from a GitHub runner. In-VPC migrator
+  Lambda deferred to Phase 4. (no ADR — local choice, documented in
+  runbook + tasks.md)
+- RDS engine pinned to Postgres `16.8` (bare major `16` is deprecated).
+- Forward-declared params (`UseRdsProxy`, stub-stack interfaces) kept
+  with scoped cfn-lint suppressions rather than removed.
+
+### Deferred / open questions
+- `db-tunnel-up` resolves the RDS endpoint from a nested-stack output;
+  if fragile in practice, promote `RdsEndpoint` to a root-stack output.
+- Real BDO enhancement probabilities still needed for `rates.json`
+  (Phase 3).
+- Phase 3 `pricing.py`/`analytics.py` domain math to be designed before
+  coding.
