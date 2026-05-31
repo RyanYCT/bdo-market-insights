@@ -156,3 +156,36 @@ Each entry uses the template below; aim for ≤ 200 words.
 - Confirm the two interpretation calls above (breakpoint; cumulative).
 - `rates.json` curves/cron counts still placeholders pending live-TW
   verification.
+
+---
+
+## 2025-07-14 -- Phase 3 shared layer: remaining modules
+
+**Agent:** Kiro
+**Mode:** Autonomous
+**Branch:** `redesign-v3`
+**Phase:** 3 -- Shared layer (`bdo-common`)
+**Commits:** `a916a62`..`15d3835`
+
+### Done
+- Implemented all remaining Phase 3 modules: `models.py` (Pydantic v2
+  schemas), `config.py` (env reader + Powertools parameters cache),
+  `arsha_client.py` (HTTP client + normalizer for 5 arsha.io response
+  shapes), `db.py` (psycopg3 module-global connection, IAM-auth aware),
+  `dynamo.py` (typed DynamoDB wrappers), `repositories.py` (parameterized
+  SQL repos for item/item_sid/snapshot/daily).
+- Added unit tests for normalizer, models, config, dynamo, and
+  repositories. All tests passing with ruff + mypy strict.
+
+### Decisions
+- Used stdlib `urllib.request` for arsha_client HTTP (no new dependency
+  needed) -- no ADR (local choice).
+- Repository methods accept `psycopg.Connection` as parameter for
+  testability (dependency injection) -- no ADR (standard pattern).
+- DynamoDB `tracked` stored as string "true"/"false" matching seed
+  script convention -- no ADR (inherited from Phase 2).
+
+### Deferred / open questions
+- Property-based tests for normalizer deferred (hypothesis not in deps).
+- Integration tests with real Postgres deferred to Phase 4 (CI
+  ephemeral Postgres).
