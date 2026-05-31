@@ -59,7 +59,7 @@ deferred to Phase 7 — cutover — and are listed there.
 
 Domain math is specified normatively in `.kiro/specs/v3/domain-model.md`.
 
-- [ ] `arsha_client.py` + normalizer — handles all 5 response shapes
+- [x] `arsha_client.py` + normalizer — handles all 5 response shapes
 - [x] `models.py` — Pydantic v2 schemas
       (`Record`, `Item` incl. `model_id`/`cron_table`, `ItemSid`,
       `SnapshotRow`, `DailyRow`)
