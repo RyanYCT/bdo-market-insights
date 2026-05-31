@@ -72,7 +72,7 @@ Domain math is specified normatively in `.kiro/specs/v3/domain-model.md`.
       (tax), and `enhancement_analysis` (per-tier output + verdict)
 - [x] `analytics.py` — volatility (σ, CV), liquidity, z-score anomaly
 - [x] `rates.json` — accessory_v1 curves + cron tables + tax constants
-- [ ] `config.py` — env reader (Powertools `parameters` cache)
+- [x] `config.py` — env reader (Powertools `parameters` cache)
 - [ ] Unit tests for normalizer, pricing (assert domain-model.md worked
       numbers), analytics, repositories
 
