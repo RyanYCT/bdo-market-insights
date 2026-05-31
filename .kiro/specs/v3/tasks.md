@@ -64,7 +64,7 @@ Domain math is specified normatively in `.kiro/specs/v3/domain-model.md`.
       (`Record`, `Item` incl. `model_id`/`cron_table`, `ItemSid`,
       `SnapshotRow`, `DailyRow`)
 - [x] `db.py` — psycopg3 module-global connection helper, IAM-auth aware
-- [ ] `dynamo.py` — typed wrappers for `bdo-v3-items`
+- [x] `dynamo.py` — typed wrappers for `bdo-v3-items`
 - [ ] `repositories.py` — `ItemRepo`, `ItemSidRepo`, `SnapshotRepo`,
       `DailyRepo` (parameterized SQL, no ORM)
 - [x] `pricing.py` — model registry (ADR-0012); `accessory_v1` (A1)
