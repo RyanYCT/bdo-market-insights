@@ -120,3 +120,39 @@ Each entry uses the template below; aim for ≤ 200 words.
   (Phase 3).
 - Phase 3 `pricing.py`/`analytics.py` domain math to be designed before
   coding.
+
+
+---
+
+## 2026-05-31 — Phase 3 domain math: pricing + analytics
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `redesign-v3`
+**Phase:** 3 — Shared layer (`bdo-common`)
+**Commits:** `d1fe1b0`, `e6cb9da`, `a02ed86`, `1de2cec`
+
+### Done
+- Recovered the v3 domain-model lock parked by a prior bash-outage
+  session: re-applied and committed the six files (`domain-model.md`,
+  `rates.json`, ADR-0012, `seed_items.py`, `design.md`, `tasks.md`).
+- Built the pure domain math: `pricing.py` (`accessory_v1` model +
+  `model_id`->factory registry, ADR-0012) and `analytics.py`
+  (volatility/CV, liquidity, z-score anomaly). Unit tests assert the
+  `domain-model.md` worked numbers. ruff + mypy(strict) + 32 pytest green.
+
+### Decisions
+- Kept direct-commit-to-`redesign-v3` flow (Option A); reworded
+  `tasks.md` "each box is one PR" to match — no ADR (local choice;
+  aligns with AGENTS.md).
+- Probability at/above the soft-cap breakpoint uses `soft_cap_rate`
+  (`2->3@44` = 0.40, not 0.405) per domain-model prose — no ADR.
+- Cumulative `clean -> sid:N` cost uses a self-build recursion (no
+  verified spec number) — no ADR; flagged for confirmation.
+
+### Deferred / open questions
+- Phase 3 remaining: `arsha_client` + normalizer, `models.py`, `db.py`,
+  `dynamo.py`, `repositories.py`, `config.py`, normalizer/repo tests.
+- Confirm the two interpretation calls above (breakpoint; cumulative).
+- `rates.json` curves/cron counts still placeholders pending live-TW
+  verification.
