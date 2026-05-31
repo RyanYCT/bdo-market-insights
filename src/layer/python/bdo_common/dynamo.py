@@ -55,19 +55,29 @@ def list_items(*, category: str | None = None, tracked: bool | None = None) -> l
 
     if category is not None and tracked is not None:
         # Use the GSI
-        response: dict[str, Any] = table.query(
-            IndexName=_GSI_NAME,
-            KeyConditionExpression=Key("category").eq(category)
+        query_kwargs: dict[str, Any] = {
+            "IndexName": _GSI_NAME,
+            "KeyConditionExpression": Key("category").eq(category)
             & Key("tracked").eq(str(tracked).lower()),
-        )
+        }
+        response: dict[str, Any] = table.query(**query_kwargs)
         items_raw: list[dict[str, Any]] = response.get("Items", [])
+        while "LastEvaluatedKey" in response:
+            query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+            response = table.query(**query_kwargs)
+            items_raw.extend(response.get("Items", []))
     elif category is not None:
         # Query GSI with just partition key
-        response = table.query(
-            IndexName=_GSI_NAME,
-            KeyConditionExpression=Key("category").eq(category),
-        )
+        query_kwargs = {
+            "IndexName": _GSI_NAME,
+            "KeyConditionExpression": Key("category").eq(category),
+        }
+        response = table.query(**query_kwargs)
         items_raw = response.get("Items", [])
+        while "LastEvaluatedKey" in response:
+            query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+            response = table.query(**query_kwargs)
+            items_raw.extend(response.get("Items", []))
     else:
         # Scan (with optional filter)
         scan_kwargs: dict[str, Any] = {}

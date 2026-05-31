@@ -77,10 +77,12 @@ class SnapshotRepo:
         conn: psycopg.Connection[tuple[Any, ...]],
         rows: list[SnapshotRow],
     ) -> int:
-        """Bulk INSERT snapshots. Returns count of rows inserted.
+        """Bulk INSERT snapshots. Returns count of rows attempted.
 
         Uses ON CONFLICT DO NOTHING for idempotency on
-        (region, item_id, sid, snapshot_at).
+        (region, item_id, sid, snapshot_at). Duplicate rows are silently
+        skipped, so the actual number of rows inserted may be lower than
+        the returned count.
         """
         if not rows:
             return 0
