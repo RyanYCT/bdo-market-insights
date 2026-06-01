@@ -33,32 +33,47 @@ input/output, and retry behaviour.
 
 ### Running migrations
 
-Migrations are **not** run by CI: RDS has no public access, so a
-GitHub runner cannot reach it. Run them through the tunnel instead:
+Routine schema migrations run **from inside the VPC**. The CI deploy job
+invokes the migrator Lambda (`bdo-<stage>-migrator`) after `sam deploy`;
+the function connects to RDS as `lambda_migrator` via IAM auth and runs
+`alembic upgrade head`. A GitHub runner cannot reach the private RDS
+directly, so it drives the migration through this Lambda (control-plane
+invoke). Trigger it by hand for dev:
+
+```sh
+make migrate-lambda STAGE=dev
+```
+
+### First-time role bootstrap (via bastion)
+
+The Postgres roles themselves are cluster-level objects created by
+migrations `0002`/`0003` and need privileges the `lambda_migrator` role
+does not hold:
+
+- `0002_bootstrap_roles` — `lambda_rds_user` (runtime, IAM auth) and
+  `dba` (human login; created only when `DBA_PASSWORD` is set).
+- `0003_migrator_role` — `lambda_migrator` (IAM auth) used by the
+  migrator Lambda above.
+
+Apply the full chain (`0001`–`0003`) **once** as the RDS master user
+through the bastion tunnel. Use the `+psycopg` driver — this project
+ships psycopg v3 only, so a plain `postgresql://` URL fails:
 
 ```sh
 make db-tunnel-up STAGE=dev          # terminal 1 (keep open)
 
-# terminal 2 -- master creds from the RDS-managed master secret:
-export DATABASE_URL="postgresql://postgres:<master-pw>@localhost:5432/bdo"
-make migrate
-```
-
-### First-time role bootstrap
-
-Migration `0002_bootstrap_roles` creates the `lambda_rds_user`
-(IAM auth) and `dba` (login) Postgres roles. The `dba` role is only
-created when `DBA_PASSWORD` is set; source it from the dba secret
-before the first migrate:
-
-```sh
+# terminal 2 -- master creds from the RDS-managed master secret.
+# Source the dba password so 0002 creates the dba login role:
 export DBA_PASSWORD="$(aws secretsmanager get-secret-value \
   --secret-id bdo-dev-dba-credentials \
   --query SecretString --output text | python -c 'import json,sys; print(json.load(sys.stdin)["password"])')"
+export DATABASE_URL="postgresql+psycopg://postgres:<master-pw>@localhost:5432/bdo"
 make migrate
+make db-tunnel-down
 ```
 
-4. `make db-tunnel-down` - tears down the tunnel.
+After this one-time bootstrap, all later schema changes go through
+`make migrate-lambda` (or the CI deploy step) — no tunnel required.
 
 ## Common Failure Scenarios
 

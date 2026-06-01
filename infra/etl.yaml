@@ -30,6 +30,9 @@ Parameters:
   LambdaRdsAuthRoleArn:
     Type: String
     Description: Execution role for in-VPC Lambdas (VPC + X-Ray + rds-db:connect)
+  LambdaMigratorRoleArn:
+    Type: String
+    Description: Execution role for the in-VPC migrator Lambda (rds-db:connect as lambda_migrator)
 
 Globals:
   Function:
@@ -161,6 +164,37 @@ Resources:
           Properties:
             Schedule: cron(30 0 * * ? *)
             Description: Delete market_snapshot rows older than 90 days (FR-7)
+
+  # ──────────────────────────────────────────────
+  # Migrator — in VPC; runs `alembic upgrade head` on deploy (no schedule)
+  # ──────────────────────────────────────────────
+  # Invoked by the CI deploy job (and `make migrate-lambda` for dev), not on a
+  # timer. Connects as the privileged `lambda_migrator` role via IAM auth. The
+  # makefile build bundles the repo-root migrations/ tree into the package; the
+  # alembic/SQLAlchemy engine ships in the package, psycopg in the shared layer.
+  MigratorFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-migrator'
+      CodeUri: ../src/functions/migrator
+      Handler: app.handler
+      Timeout: 120
+      MemorySize: 512
+      Role: !Ref LambdaMigratorRoleArn
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroupId
+        SubnetIds:
+          - !Ref PrivateSubnetA
+      Environment:
+        Variables:
+          DB_HOST: !Ref RdsEndpoint
+          DB_PORT: !Ref RdsPort
+          DB_NAME: bdo
+          DB_USER: lambda_migrator
+          USE_IAM_AUTH: 'true'
 
   # ──────────────────────────────────────────────
   # Step Functions state machine (hourly ETL, FR-1)

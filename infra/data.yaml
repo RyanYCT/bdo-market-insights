@@ -154,6 +154,37 @@ Resources:
                 Action: rds-db:connect
                 Resource: !Sub 'arn:aws:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${Database.DbiResourceId}/lambda_rds_user'
 
+  # ──────────────────────────────────────────────
+  # IAM Role — in-VPC migrator Lambda
+  # ──────────────────────────────────────────────
+  # Dedicated execution role for the migrator Lambda. Identical VPC + X-Ray
+  # baseline as LambdaRdsAuthRole, but its single data-plane grant targets the
+  # privileged `lambda_migrator` dbuser (migration 0003) instead of the runtime
+  # `lambda_rds_user`. Kept separate so the DDL-capable connect right is never
+  # held by the runtime ETL/query Lambdas (least privilege, NFR-10).
+  LambdaMigratorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'bdo-${Stage}-lambda-migrator'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Policies:
+        - PolicyName: RdsIamConnectMigrator
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: rds-db:connect
+                Resource: !Sub 'arn:aws:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${Database.DbiResourceId}/lambda_migrator'
+
 Outputs:
   RdsEndpoint:
     Value: !GetAtt Database.Endpoint.Address
@@ -189,6 +220,11 @@ Outputs:
     Value: !GetAtt LambdaRdsAuthRole.Arn
     Export:
       Name: !Sub '${AWS::StackName}-LambdaRdsAuthRoleArn'
+
+  LambdaMigratorRoleArn:
+    Value: !GetAtt LambdaMigratorRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaMigratorRoleArn'
 
   MasterSecretArn:
     Value: !GetAtt Database.MasterUserSecret.SecretArn

@@ -1,0 +1,5 @@
+# Extra runtime deps for the migrator Lambda (the Alembic migration engine).
+# psycopg v3 is provided by the shared bdo-common layer (ADR-0003); keep these
+# pinned to the dev versions in pyproject.toml to avoid build/runtime drift.
+alembic>=1.13,<2
+SQLAlchemy>=2,<3

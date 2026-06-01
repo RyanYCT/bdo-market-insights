@@ -51,6 +51,9 @@ mypy_path = ["src/layer/python", "src/functions"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src/layer/python"]
+markers = [
+    "integration: end-to-end tests that require a real Postgres (set TEST_DATABASE_URL; skipped otherwise)",
+]
 
 [tool.bandit]
 # bandit looks for security issues; exclude tests/ since fixtures

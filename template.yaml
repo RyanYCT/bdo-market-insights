@@ -105,6 +105,7 @@ Resources:
         RdsEndpoint: !GetAtt DataStack.Outputs.RdsEndpoint
         RdsPort: !GetAtt DataStack.Outputs.RdsPort
         LambdaRdsAuthRoleArn: !GetAtt DataStack.Outputs.LambdaRdsAuthRoleArn
+        LambdaMigratorRoleArn: !GetAtt DataStack.Outputs.LambdaMigratorRoleArn
     # Ordering after Network/Data is enforced by the !GetAtt *.Outputs
     # references above; an explicit DependsOn would be redundant (W3005).
 

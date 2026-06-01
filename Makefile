@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test build deploy deploy-dev deploy-prod db-tunnel-up db-tunnel-down migrate seed clean
+.PHONY: lint format typecheck test test-integration build deploy deploy-dev deploy-prod db-tunnel-up db-tunnel-down migrate migrate-lambda seed clean
 
 STAGE ?= dev
 AWS_REGION ?= ap-northeast-1
@@ -15,6 +15,11 @@ typecheck:
 
 test:
 	uv run pytest
+
+# Requires a reachable Postgres; set TEST_DATABASE_URL (CI uses a service
+# container). Skips automatically when TEST_DATABASE_URL is unset.
+test-integration:
+	uv run pytest -m integration
 
 build:
 	sam build
@@ -49,6 +54,17 @@ db-tunnel-down:
 # localhost:$(LOCAL_DB_PORT). See docs/runbook.md for the full flow.
 migrate:
 	uv run alembic -c migrations/alembic.ini upgrade head
+
+# Routine schema changes: invoke the in-VPC migrator Lambda (runs
+# `alembic upgrade head` from inside the VPC via IAM auth). No tunnel needed.
+# The one-time role bootstrap (0001-0003) still uses `make migrate` via the
+# bastion as the master user -- see docs/runbook.md.
+migrate-lambda:
+	@aws lambda invoke --region $(AWS_REGION) \
+		--function-name bdo-$(STAGE)-migrator \
+		--cli-binary-format raw-in-base64-out --payload '{}' \
+		/tmp/bdo-$(STAGE)-migrate.json >/dev/null && \
+		cat /tmp/bdo-$(STAGE)-migrate.json && echo
 
 seed:
 	uv run python scripts/seed_items.py
