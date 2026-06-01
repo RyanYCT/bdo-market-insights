@@ -79,13 +79,18 @@ class TaxConfig:
 
 @dataclass(frozen=True)
 class AttemptCost:
-    """Per-transition cost breakdown produced by a model."""
+    """Per-transition cost breakdown produced by a model.
+
+    ``cron_stone_price`` is the per-attempt cron cost (0 for models without
+    cron, e.g. accessory_v1).
+    """
 
     p: float
     expected_attempts: float
     input_item_price: float
     clean_stone_price: float
     expected_cost: float
+    cron_stone_price: float = 0.0
 
 
 def load_rates(path: Path = _RATES_PATH) -> dict[str, Any]:
@@ -174,6 +179,20 @@ class EnhancementModel(Protocol):
         self, transition: str, prices: Mapping[int, float], stack: int
     ) -> AttemptCost: ...
 
+    def cumulative_step(
+        self,
+        prev_cumulative: float | None,
+        cost: AttemptCost,
+        prices: Mapping[int, float],
+    ) -> float:
+        """Fold one transition into the running ``clean -> sid:N`` cost.
+
+        ``prev_cumulative`` is the cost to build the input item (``None`` for
+        the first tier). Models differ: accessory_v1 rebuilds the at-risk input
+        recursively, accessory_cron_v1 adds costs (the item is cron-protected).
+        """
+        ...
+
 
 ModelFactory = Callable[[Mapping[str, Any]], EnhancementModel]
 
@@ -240,6 +259,19 @@ class AccessoryV1:
             expected_cost=cost,
         )
 
+    def cumulative_step(
+        self,
+        prev_cumulative: float | None,
+        cost: AttemptCost,
+        prices: Mapping[int, float],
+    ) -> float:
+        # First tier: buying clean + enhancing is already in expected_cost.
+        # Higher tiers: build the input yourself, so the in-progress item is
+        # worth the prior cumulative; failure destroys it -> divide by p.
+        if prev_cumulative is None:
+            return cost.expected_cost
+        return (prev_cumulative + float(prices[0])) / cost.p
+
 
 def build_accessory_v1(rates: Mapping[str, Any]) -> AccessoryV1:
     """Factory: build the accessory_v1 model from a ``rates`` mapping."""
@@ -249,6 +281,112 @@ def build_accessory_v1(rates: Mapping[str, Any]) -> AccessoryV1:
 
 
 register_model("accessory_v1", build_accessory_v1)
+
+
+# --------------------------------------------------------------------------- #
+# accessory_cron_v1 (cron-protected, Markov chain — domain-model.md)
+# --------------------------------------------------------------------------- #
+class AccessoryCronV1:
+    """Cron-protected accessory model (Option B).
+
+    Reuses the accessory_v1 probability curve. On a failed attempt the
+    in-progress item is not destroyed: with probability ``retain`` it keeps its
+    level, with ``drop`` it falls exactly one tier (a Markov chain). The
+    expected attempts to advance one tier is the chain's first-passage time:
+
+        F_k = (1 + drop * (1 - p_k) * F_{k-1}) / p_k ,   F_0 = 1 / p_0
+
+    Failstack does not build, so each tier is evaluated at its ``default_stack``
+    (an explicit ``stack`` override changes only the reported ``p``, not the
+    attempt counts). Each attempt consumes one clean (``sid:0``) fuel copy and
+    one cron stone; the upgraded item is bought once and carried up, so
+    cumulative cost is additive.
+    """
+
+    model_id = "accessory_cron_v1"
+
+    def __init__(
+        self,
+        curves: Mapping[str, TransitionCurve],
+        *,
+        retain: float,
+        drop: float,
+        cron_stone_price: float,
+    ) -> None:
+        self._curves = dict(curves)
+        self._retain = retain
+        self._drop = drop
+        self._cron_stone_price = cron_stone_price
+        self._attempts = self._expected_attempts()
+
+    def transitions(self) -> list[str]:
+        return list(self._curves)
+
+    def default_stack(self, transition: str) -> int:
+        return self._curves[transition].default_stack
+
+    def success_probability(self, transition: str, stack: int) -> float:
+        return success_probability(self._curves[transition], stack)
+
+    def _expected_attempts(self) -> dict[str, float]:
+        """First-passage attempts per tier, at each tier's default stack."""
+        attempts: dict[str, float] = {}
+        prev = 0.0
+        for transition in self._curves:
+            p = self.success_probability(transition, self.default_stack(transition))
+            if p <= 0:
+                raise ValueError(
+                    f"success probability must be > 0 for {transition!r} to compute cron attempts"
+                )
+            f = (1.0 + self._drop * (1.0 - p) * prev) / p
+            attempts[transition] = f
+            prev = f
+        return attempts
+
+    def attempt_cost(
+        self, transition: str, prices: Mapping[int, float], stack: int
+    ) -> AttemptCost:
+        sid_from, _ = _parse_transition(transition)
+        input_item_price = float(prices[sid_from])
+        clean_price = float(prices[0])
+        p = self.success_probability(transition, stack)
+        attempts = self._attempts[transition]
+        expected_cost = attempts * (clean_price + self._cron_stone_price)
+        return AttemptCost(
+            p=p,
+            expected_attempts=attempts,
+            input_item_price=input_item_price,
+            clean_stone_price=clean_price,
+            expected_cost=expected_cost,
+            cron_stone_price=self._cron_stone_price,
+        )
+
+    def cumulative_step(
+        self,
+        prev_cumulative: float | None,
+        cost: AttemptCost,
+        prices: Mapping[int, float],
+    ) -> float:
+        # Item is cron-protected: buy the clean base once, then add tier costs.
+        if prev_cumulative is None:
+            return float(prices[0]) + cost.expected_cost
+        return prev_cumulative + cost.expected_cost
+
+
+def build_accessory_cron_v1(rates: Mapping[str, Any]) -> AccessoryCronV1:
+    """Factory: build accessory_cron_v1, reusing the accessory_v1 curve."""
+    section = rates["models"]["accessory_v1"]["transitions"]
+    curves = {name: TransitionCurve.from_dict(params) for name, params in section.items()}
+    cron = rates["models"]["accessory_cron_v1"]["cron"]
+    return AccessoryCronV1(
+        curves,
+        retain=float(cron["retain"]),
+        drop=float(cron["drop"]),
+        cron_stone_price=float(rates["constants"]["cron_stone_price"]),
+    )
+
+
+register_model("accessory_cron_v1", build_accessory_cron_v1)
 
 
 # --------------------------------------------------------------------------- #
@@ -316,12 +454,7 @@ def enhancement_analysis(
             verdict = "profit" if expected_profit > 0 else "loss"
 
         if chain_intact:
-            if cumulative_cost is None:
-                cumulative_cost = cost.expected_cost
-            else:
-                # Build the input item yourself instead of buying it: the
-                # in-progress item is now worth the prior cumulative cost.
-                cumulative_cost = (cumulative_cost + float(prices[0])) / cost.p
+            cumulative_cost = model.cumulative_step(cumulative_cost, cost, prices)
 
         transitions_out.append(
             {
@@ -331,6 +464,7 @@ def enhancement_analysis(
                 "p": cost.p,
                 "expected_attempts": cost.expected_attempts,
                 "clean_stone_price": cost.clean_stone_price,
+                "cron_stone_price": cost.cron_stone_price,
                 "input_item_price": cost.input_item_price,
                 "expected_cost": cost.expected_cost,
                 "target_market_price": target,

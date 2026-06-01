@@ -166,3 +166,79 @@ def test_accessory_v1_is_registered() -> None:
 def test_get_model_unknown_raises(rates: dict[str, Any]) -> None:
     with pytest.raises(KeyError, match="unknown enhancement model"):
         pricing.get_model("does_not_exist", rates)
+
+
+# --------------------------------------------------------------------------- #
+# accessory_cron_v1 — Markov chain (Option B), worked numbers from domain-model
+# --------------------------------------------------------------------------- #
+# Real Deboreka Ring market snapshot (sid 0..5); cron stone flat 3,000,000.
+DEBO: dict[int, float] = {
+    0: 453_000_000,
+    1: 1_170_000_000,
+    2: 3_540_000_000,
+    3: 9_450_000_000,
+    4: 28_700_000_000,
+    5: 186_000_000_000,
+}
+
+
+@pytest.fixture
+def cron_model(rates: dict[str, Any]) -> pricing.AccessoryCronV1:
+    return pricing.build_accessory_cron_v1(rates)
+
+
+def test_accessory_cron_v1_is_registered() -> None:
+    assert "accessory_cron_v1" in pricing.available_models()
+
+
+@pytest.mark.parametrize(
+    ("transition", "expected_attempts"),
+    [
+        ("0->1", 1.428571),  # 1 / 0.70
+        ("1->2", 2.571429),
+        ("2->3", 4.042857),
+        ("3->4", 7.106667),
+        ("4->5", 765.690667),  # PROVISIONAL: rides on p(4->5)=0.005
+    ],
+)
+def test_cron_first_passage_attempts(
+    cron_model: pricing.AccessoryCronV1, transition: str, expected_attempts: float
+) -> None:
+    # F_k = (1 + drop*(1-p_k)*F_{k-1}) / p_k, evaluated at each default stack.
+    stack = cron_model.default_stack(transition)
+    cost = cron_model.attempt_cost(transition, DEBO, stack)
+    assert cost.expected_attempts == pytest.approx(expected_attempts, rel=1e-5)
+
+
+def test_cron_attempt_cost_is_fuel_plus_cron(cron_model: pricing.AccessoryCronV1) -> None:
+    # cost(0->1) = F_0 * (base_price[0] + cron_stone_price) = 1.428571 * 456M.
+    cost = cron_model.attempt_cost("0->1", DEBO, cron_model.default_stack("0->1"))
+    assert cost.cron_stone_price == pytest.approx(3_000_000)
+    assert cost.expected_cost == pytest.approx(651_428_571.43)
+
+
+def test_cron_cumulative_is_additive() -> None:
+    # cumulative(->2) = base[0] + cost(0->1) + cost(1->2)
+    #                 = 453M + 651,428,571.43 + 1,172,571,428.57 = 2,277,000,000.
+    result = pricing.enhancement_analysis(DEBO, model_id="accessory_cron_v1")
+    tiers = result["transitions"]
+    assert len(tiers) == 5
+    assert tiers[1]["cumulative_cost"] == pytest.approx(2_277_000_000)
+
+
+def test_cron_verdicts_enhance_low_buy_pen() -> None:
+    result = pricing.enhancement_analysis(DEBO, model_id="accessory_cron_v1", intent="personal")
+    by_tier = {(t["sid_from"], t["sid_to"]): t for t in result["transitions"]}
+    # Low tiers are cheaper to build than to buy.
+    assert by_tier[(0, 1)]["verdict"] == "enhance"
+    assert by_tier[(3, 4)]["verdict"] == "enhance"
+    # PEN: ~349B expected cost > 186B market -> buy.
+    pen = by_tier[(4, 5)]
+    assert pen["expected_cost"] > DEBO[5]
+    assert pen["verdict"] == "buy"
+
+
+def test_accessory_v1_reports_zero_cron_cost() -> None:
+    # Regression: the no-cron model leaves cron_stone_price at 0.
+    result = pricing.enhancement_analysis({0: CLEAN, 1: PRI}, stack=18)
+    assert result["transitions"][0]["cron_stone_price"] == pytest.approx(0.0)
