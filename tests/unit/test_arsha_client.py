@@ -1,4 +1,9 @@
-"""Tests for bdo_common.arsha_client: normalize_response and ArshaClient."""
+"""Tests for bdo_common.arsha_client: normalize_response and ArshaClient.
+
+The normalizer is exercised against arsha.io v2's real JSON response shapes
+(a bare object, a list of objects, and a list of lists of objects) rather than
+the legacy pipe-delimited ``resultMsg`` format.
+"""
 
 from __future__ import annotations
 
@@ -9,27 +14,65 @@ from unittest.mock import MagicMock, patch
 
 from bdo_common.arsha_client import ArshaClient, normalize_response
 
-# ---------------------------------------------------------------------------
-# normalize_response - 5 response shapes
-# ---------------------------------------------------------------------------
-
 TIMESTAMP = 1717027200  # 2024-05-30T08:00:00 UTC
 
 
+def _item(
+    item_id: int,
+    sid: int = 0,
+    *,
+    name: str = "Test Item",
+    base_price: int = 100,
+    current_stock: int = 10,
+    total_trades: int = 100,
+    last_sold_price: int = 95,
+    last_sold_time: int = TIMESTAMP,
+    max_enhance: int = 0,
+    price_min: int = 1,
+    price_max: int = 1_000_000,
+) -> dict[str, Any]:
+    """Build an arsha.io v2 GetWorldMarketSubList item object (camelCase keys)."""
+    return {
+        "id": item_id,
+        "sid": sid,
+        "name": name,
+        "minEnhance": 0,
+        "maxEnhance": max_enhance,
+        "basePrice": base_price,
+        "currentStock": current_stock,
+        "totalTrades": total_trades,
+        "priceMin": price_min,
+        "priceMax": price_max,
+        "lastSoldPrice": last_sold_price,
+        "lastSoldTime": last_sold_time,
+    }
+
+
+# ---------------------------------------------------------------------------
+# normalize_response - polymorphic JSON shapes
+# ---------------------------------------------------------------------------
+
+
 class TestNormalizeResponseShapes:
-    """Cover all 5 arsha.io polymorphic response shapes."""
+    """Cover arsha.io's polymorphic JSON response shapes."""
 
     def test_shape1_single_item_non_enhanceable(self) -> None:
-        """Single item, sid=0 only."""
-        raw: dict[str, Any] = {
-            "resultCode": 0,
-            "resultMsg": f"11608-0-448000000-1234-5000-448000000-445000000-{TIMESTAMP}",
-        }
+        """A single non-enhanceable item is returned as a bare object."""
+        raw = _item(
+            11608,
+            0,
+            name="Deboreka Necklace",
+            base_price=448_000_000,
+            current_stock=1234,
+            total_trades=5000,
+            last_sold_price=445_000_000,
+        )
         records = normalize_response(raw)
         assert len(records) == 1
         r = records[0]
         assert r.item_id == 11608
         assert r.sid == 0
+        assert r.name == "Deboreka Necklace"
         assert r.base_price == 448_000_000
         assert r.current_stock == 1234
         assert r.total_trades == 5000
@@ -37,63 +80,54 @@ class TestNormalizeResponseShapes:
         assert r.last_sold_at == datetime.fromtimestamp(TIMESTAMP, tz=UTC)
 
     def test_shape2_single_item_enhanceable(self) -> None:
-        """Single item with multiple enhancement levels (rows separated by |)."""
-        rows = [
-            f"11608-0-448000000-100-1000-448000000-445000000-{TIMESTAMP}",
-            f"11608-1-1020000000-50-800-1020000000-1000000000-{TIMESTAMP}",
-            f"11608-2-3600000000-20-300-3600000000-3500000000-{TIMESTAMP}",
+        """A single enhanceable item is a list of objects, one per sid."""
+        raw = [
+            _item(11608, 0, base_price=448_000_000, max_enhance=5),
+            _item(11608, 1, base_price=1_020_000_000, max_enhance=5),
+            _item(11608, 2, base_price=3_600_000_000, max_enhance=5),
         ]
-        raw: dict[str, Any] = {"resultCode": 0, "resultMsg": "|".join(rows)}
         records = normalize_response(raw)
         assert len(records) == 3
-        assert records[0].sid == 0
-        assert records[1].sid == 1
-        assert records[2].sid == 2
+        assert [r.sid for r in records] == [0, 1, 2]
         assert all(r.item_id == 11608 for r in records)
+        assert all(r.max_enhance == 5 for r in records)
 
     def test_shape3_multiple_items_non_enhanceable(self) -> None:
-        """Multiple different items, each with sid=0."""
-        rows = [
-            f"11608-0-448000000-100-1000-448000000-445000000-{TIMESTAMP}",
-            f"11629-0-250000000-200-2000-250000000-248000000-{TIMESTAMP}",
-        ]
-        raw: dict[str, Any] = {"resultCode": 0, "resultMsg": "|".join(rows)}
+        """Multiple non-enhanceable items: a flat list of objects."""
+        raw = [_item(11608, 0), _item(11629, 0)]
         records = normalize_response(raw)
-        assert len(records) == 2
-        assert records[0].item_id == 11608
-        assert records[1].item_id == 11629
+        assert {r.item_id for r in records} == {11608, 11629}
 
     def test_shape4_multiple_items_enhanceable(self) -> None:
-        """Multiple items, each with multiple sids."""
-        rows = [
-            f"11608-0-448000000-100-1000-448000000-445000000-{TIMESTAMP}",
-            f"11608-1-1020000000-50-800-1020000000-1000000000-{TIMESTAMP}",
-            f"11629-0-250000000-200-2000-250000000-248000000-{TIMESTAMP}",
-            f"11629-1-600000000-80-500-600000000-590000000-{TIMESTAMP}",
+        """Multiple enhanceable items: a list of lists of objects."""
+        raw = [
+            [_item(11608, 0), _item(11608, 1)],
+            [_item(11629, 0), _item(11629, 1)],
         ]
-        raw: dict[str, Any] = {"resultCode": 0, "resultMsg": "|".join(rows)}
         records = normalize_response(raw)
         assert len(records) == 4
-        # Verify item grouping
-        item_11608 = [r for r in records if r.item_id == 11608]
-        item_11629 = [r for r in records if r.item_id == 11629]
-        assert len(item_11608) == 2
-        assert len(item_11629) == 2
+        assert len([r for r in records if r.item_id == 11608]) == 2
+        assert len([r for r in records if r.item_id == 11629]) == 2
 
     def test_shape5_mixed(self) -> None:
-        """Mix of enhanceable and non-enhanceable items."""
-        rows = [
-            f"11608-0-448000000-100-1000-448000000-445000000-{TIMESTAMP}",
-            f"11608-1-1020000000-50-800-1020000000-1000000000-{TIMESTAMP}",
-            f"99999-0-10000-500-10000-10000-9900-{TIMESTAMP}",
+        """Mixed: a list holding both nested lists and a bare object."""
+        raw = [
+            [_item(11608, 0), _item(11608, 1)],  # enhanceable -> nested list
+            _item(99999, 0),  # non-enhanceable -> bare object
         ]
-        raw: dict[str, Any] = {"resultCode": 0, "resultMsg": "|".join(rows)}
         records = normalize_response(raw)
         assert len(records) == 3
-        # Non-enhanceable item
         plain = [r for r in records if r.item_id == 99999]
         assert len(plain) == 1
         assert plain[0].sid == 0
+
+    def test_item_sid_fields_captured(self) -> None:
+        """price_min/price_max/max_enhance feed item_sid and must round-trip."""
+        raw = _item(11608, 2, max_enhance=5, price_min=100_000_000, price_max=5_000_000_000)
+        (r,) = normalize_response(raw)
+        assert r.max_enhance == 5
+        assert r.price_min == 100_000_000
+        assert r.price_max == 5_000_000_000
 
 
 # ---------------------------------------------------------------------------
@@ -102,55 +136,42 @@ class TestNormalizeResponseShapes:
 
 
 class TestNormalizeResponseEdgeCases:
-    """Edge cases that must not crash."""
+    """Edge cases that must not crash and must skip non-item data."""
 
-    def test_result_code_non_zero_returns_empty(self) -> None:
-        raw: dict[str, Any] = {"resultCode": 1, "resultMsg": "some-data"}
-        assert normalize_response(raw) == []
+    def test_empty_list_returns_empty(self) -> None:
+        assert normalize_response([]) == []
 
-    def test_empty_result_msg_returns_empty(self) -> None:
-        raw: dict[str, Any] = {"resultCode": 0, "resultMsg": ""}
-        assert normalize_response(raw) == []
+    def test_empty_dict_returns_empty(self) -> None:
+        assert normalize_response({}) == []
 
-    def test_missing_result_msg_returns_empty(self) -> None:
-        raw: dict[str, Any] = {"resultCode": 0}
-        assert normalize_response(raw) == []
+    def test_nested_empty_lists_return_empty(self) -> None:
+        assert normalize_response([[], []]) == []
 
-    def test_null_result_msg_returns_empty(self) -> None:
-        raw: dict[str, Any] = {"resultCode": 0, "resultMsg": None}
-        assert normalize_response(raw) == []
+    def test_error_envelope_returns_empty(self) -> None:
+        """An error payload (no id/sid) is not an item row."""
+        assert normalize_response({"error": "not found", "statusCode": 404}) == []
 
-    def test_malformed_row_skipped(self) -> None:
-        """A row with non-numeric data is skipped, doesn't crash."""
-        rows = [
-            f"11608-0-448000000-1234-5000-448000000-445000000-{TIMESTAMP}",
-            "bad-data-here-not-numeric-extra-fields-ok-fine",
-            f"11629-0-250000000-200-2000-250000000-248000000-{TIMESTAMP}",
-        ]
-        raw: dict[str, Any] = {"resultCode": 0, "resultMsg": "|".join(rows)}
-        records = normalize_response(raw)
-        # The malformed row has 8 fields but "bad" etc are not ints
-        # So it should be skipped
-        assert len(records) == 2
+    def test_malformed_item_skipped(self) -> None:
+        """A non-numeric price is skipped; valid siblings survive."""
+        bad = _item(11608, 0)
+        bad["basePrice"] = "not-a-number"
+        records = normalize_response([bad, _item(11629, 0)])
+        assert [r.item_id for r in records] == [11629]
 
-    def test_wrong_number_of_fields_skipped(self) -> None:
-        """A row with too few fields is skipped."""
-        rows = [
-            f"11608-0-448000000-1234-5000-448000000-445000000-{TIMESTAMP}",
-            "11608-0-448000000",  # only 3 fields
-        ]
-        raw: dict[str, Any] = {"resultCode": 0, "resultMsg": "|".join(rows)}
-        records = normalize_response(raw)
-        assert len(records) == 1
+    def test_missing_field_skipped(self) -> None:
+        """An item missing a required field is skipped, doesn't crash."""
+        incomplete = _item(11608, 0)
+        del incomplete["priceMin"]
+        records = normalize_response([incomplete, _item(11629, 0)])
+        assert [r.item_id for r in records] == [11629]
 
-    def test_trailing_pipe_ignored(self) -> None:
-        """Trailing | produces empty string which is skipped."""
-        raw: dict[str, Any] = {
-            "resultCode": 0,
-            "resultMsg": f"11608-0-448000000-1234-5000-448000000-445000000-{TIMESTAMP}|",
-        }
-        records = normalize_response(raw)
-        assert len(records) == 1
+    def test_dict_without_identity_keys_skipped(self) -> None:
+        records = normalize_response([{"name": "no id or sid"}, _item(11629, 0)])
+        assert [r.item_id for r in records] == [11629]
+
+    def test_scalars_ignored(self) -> None:
+        records = normalize_response([None, 42, "string", _item(11608, 0)])
+        assert [r.item_id for r in records] == [11608]
 
 
 # ---------------------------------------------------------------------------
@@ -217,10 +238,7 @@ class TestFetchSubList:
 
     def test_fetch_sub_list_success(self) -> None:
         client = ArshaClient()
-        response_data = {
-            "resultCode": 0,
-            "resultMsg": f"11608-0-448000000-100-1000-448000000-445000000-{TIMESTAMP}",
-        }
+        response_data = _item(11608, 0)  # bare object (single item shape)
         mock_resp = MagicMock()
         mock_resp.read.return_value = json.dumps(response_data).encode()
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
@@ -253,7 +271,7 @@ class TestFetchSubList:
         ids = list(range(1, 101))
 
         call_count = 0
-        response_data = {"resultCode": 0, "resultMsg": ""}
+        response_data: list[Any] = []  # empty list shape
 
         def fake_urlopen(url: str, timeout: int = 10) -> MagicMock:
             nonlocal call_count

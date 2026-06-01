@@ -189,3 +189,37 @@ Each entry uses the template below; aim for ≤ 200 words.
 - Property-based tests for normalizer deferred (hypothesis not in deps).
 - Integration tests with real Postgres deferred to Phase 4 (CI
   ephemeral Postgres).
+
+
+---
+
+## 2026-06-01 — Fix arsha_client to parse real arsha.io v2 JSON
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `redesign-v3`
+**Phase:** 3 — Shared layer (`bdo-common`)
+**Commits:** see `redesign-v3` (follow-up to `5bb2370`)
+
+### Done
+- Review of `redesign-v3` confirmed Phases 0–3 align with the spec and
+  the local gate is green (ruff, mypy strict, pytest).
+- Found and fixed a contract mismatch: `arsha_client.normalize_response`
+  parsed the legacy pipe-delimited `resultCode`/`resultMsg` string (the
+  raw official BDO API), but the spec targets `api.arsha.io/v2`, which
+  returns JSON. Verified the real shape against the original `main`
+  `fetchData`/`cleanData`/`storeData` (camelCase keys; list-of-lists).
+- Rewrote the normalizer to recursively flatten arsha's polymorphic JSON
+  (object / list / list-of-lists / mixed) into `Record`s.
+- Extended `Record` with `name`, `max_enhance`, `price_min`, `price_max`
+  so `storeData` (Phase 4) can populate the `item_sid` table.
+- Rewrote `test_arsha_client.py` against genuine JSON shapes; updated
+  `test_models.py`. 95 tests pass.
+
+### Decisions
+- Identify item dicts by presence of `id`+`sid`; skip non-item/malformed
+  dicts with a warning — no ADR (local choice).
+
+### Deferred / open questions
+- Live-API verification still pending (sandbox network blocks arsha.io);
+  covered by the Phase 4 integration test.

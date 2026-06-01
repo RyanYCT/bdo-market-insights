@@ -21,37 +21,51 @@ class TestRecord:
         r = Record(
             item_id=11608,
             sid=0,
+            name="Deboreka Ring",
             base_price=448_000_000,
             current_stock=100,
             total_trades=5000,
             last_sold_price=445_000_000,
             last_sold_at=datetime(2024, 5, 30, 8, 0, 0, tzinfo=UTC),
+            max_enhance=5,
+            price_min=100_000_000,
+            price_max=5_000_000_000,
         )
         assert r.item_id == 11608
         assert r.sid == 0
         assert r.base_price == 448_000_000
+        assert r.name == "Deboreka Ring"
+        assert r.price_max == 5_000_000_000
 
     def test_invalid_type_raises_validation_error(self) -> None:
         with pytest.raises(ValidationError):
             Record(
                 item_id="not_an_int",
                 sid=0,
+                name="x",
                 base_price=100,
                 current_stock=1,
                 total_trades=1,
                 last_sold_price=100,
                 last_sold_at="not a datetime",
+                max_enhance=0,
+                price_min=1,
+                price_max=10,
             )
 
     def test_frozen_rejects_mutation(self) -> None:
         r = Record(
             item_id=1,
             sid=0,
+            name="x",
             base_price=100,
             current_stock=1,
             total_trades=1,
             last_sold_price=100,
             last_sold_at=datetime(2024, 1, 1, tzinfo=UTC),
+            max_enhance=0,
+            price_min=1,
+            price_max=10,
         )
         with pytest.raises(ValidationError):
             r.item_id = 999  # type: ignore[misc]

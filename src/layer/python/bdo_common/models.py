@@ -9,17 +9,27 @@ from pydantic import BaseModel, ConfigDict
 
 
 class Record(BaseModel):
-    """Normalized arsha.io response row."""
+    """Normalized arsha.io GetWorldMarketSubList row.
+
+    Maps arsha.io v2 JSON fields (camelCase) onto snake_case attributes.
+    One Record corresponds to a single (item_id, sid) pair. The price_min,
+    price_max and max_enhance fields feed the ``item_sid`` reference table;
+    the remaining fields feed ``market_snapshot``.
+    """
 
     model_config = ConfigDict(frozen=True)
 
-    item_id: int
-    sid: int
-    base_price: int
-    current_stock: int
-    total_trades: int
-    last_sold_price: int
-    last_sold_at: datetime
+    item_id: int  # arsha "id"
+    sid: int  # arsha "sid" (enhancement level)
+    name: str  # arsha "name"
+    base_price: int  # arsha "basePrice"
+    current_stock: int  # arsha "currentStock"
+    total_trades: int  # arsha "totalTrades"
+    last_sold_price: int  # arsha "lastSoldPrice"
+    last_sold_at: datetime  # arsha "lastSoldTime" (unix seconds)
+    max_enhance: int  # arsha "maxEnhance"
+    price_min: int  # arsha "priceMin" (system bid floor)
+    price_max: int  # arsha "priceMax" (system ask ceiling)
 
 
 class Item(BaseModel):

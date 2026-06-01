@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import urllib.request
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,61 +16,68 @@ logger = logging.getLogger(__name__)
 _MAX_BATCH_SIZE = 50
 _MAX_URL_LENGTH = 1900
 
+# arsha.io item dicts are identified by the presence of these keys. Anything
+# else encountered while flattening (empty dicts, error envelopes) is ignored.
+_IDENTITY_KEYS = ("id", "sid")
 
-def normalize_response(raw: dict[str, Any]) -> list[Record]:
-    """Parse an arsha.io GetWorldMarketSubList response into Record objects.
 
-    Handles all 5 polymorphic response shapes (single/multi item,
-    enhanceable/non-enhanceable/mixed). Malformed rows are skipped with
-    a warning log.
+def _iter_item_dicts(node: Any) -> Iterator[dict[str, Any]]:
+    """Recursively yield item dicts from arsha's polymorphic JSON.
+
+    arsha.io returns one of several shapes depending on how many items and
+    enhancement levels are requested:
+
+    * a single object              -> one non-enhanceable item
+    * a list of objects            -> one enhanceable item, or many sid=0 items
+    * a list of lists of objects   -> many enhanceable items
+    * any mixture of the above
+
+    Walking the structure recursively flattens every shape: dicts are item
+    rows, lists are containers to descend into, scalars are ignored.
     """
-    result_code = raw.get("resultCode")
-    if result_code != 0:
-        logger.warning("Non-zero resultCode: %s", result_code)
-        return []
+    if isinstance(node, dict):
+        yield node
+    elif isinstance(node, list):
+        for element in node:
+            yield from _iter_item_dicts(element)
 
-    result_msg = raw.get("resultMsg")
-    if not result_msg or not isinstance(result_msg, str):
-        return []
 
-    records: list[Record] = []
-    rows = result_msg.split("|")
+def _parse_record(obj: dict[str, Any]) -> Record | None:
+    """Map a single arsha.io item dict onto a Record, or None if not parseable.
 
-    for row in rows:
-        row = row.strip()
-        if not row:
-            continue
-        try:
-            parts = row.split("-")
-            if len(parts) != 8:
-                logger.warning("Malformed row (expected 8 fields, got %d): %s", len(parts), row)
-                continue
+    Dicts that lack the identity keys (e.g. ``{}`` or an error envelope) are
+    not item rows and return None silently. Item rows that are present but
+    malformed are skipped with a warning.
+    """
+    if not all(key in obj for key in _IDENTITY_KEYS):
+        return None
+    try:
+        return Record(
+            item_id=int(obj["id"]),
+            sid=int(obj["sid"]),
+            name=str(obj["name"]),
+            base_price=int(obj["basePrice"]),
+            current_stock=int(obj["currentStock"]),
+            total_trades=int(obj["totalTrades"]),
+            last_sold_price=int(obj["lastSoldPrice"]),
+            last_sold_at=datetime.fromtimestamp(int(obj["lastSoldTime"]), tz=UTC),
+            max_enhance=int(obj["maxEnhance"]),
+            price_min=int(obj["priceMin"]),
+            price_max=int(obj["priceMax"]),
+        )
+    except (KeyError, ValueError, TypeError, OverflowError, OSError) as exc:
+        logger.warning("Skipping malformed arsha item %r: %s", obj, exc)
+        return None
 
-            item_id = int(parts[0])
-            sid = int(parts[1])
-            base_price = int(parts[2])
-            current_stock = int(parts[3])
-            total_trades = int(parts[4])
-            # parts[5] is base_price repeated -- skip
-            last_sold_price = int(parts[6])
-            last_sold_at_ts = int(parts[7])
-            last_sold_at = datetime.fromtimestamp(last_sold_at_ts, tz=UTC)
 
-            record = Record(
-                item_id=item_id,
-                sid=sid,
-                base_price=base_price,
-                current_stock=current_stock,
-                total_trades=total_trades,
-                last_sold_price=last_sold_price,
-                last_sold_at=last_sold_at,
-            )
-            records.append(record)
-        except (ValueError, TypeError) as exc:
-            logger.warning("Failed to parse row %r: %s", row, exc)
-            continue
+def normalize_response(raw: Any) -> list[Record]:
+    """Flatten an arsha.io GetWorldMarketSubList response into Record objects.
 
-    return records
+    Handles all polymorphic shapes (single/multi item,
+    enhanceable/non-enhanceable, and mixed) by recursively flattening the JSON
+    into item dicts. Non-item dicts and malformed rows are skipped.
+    """
+    return [record for obj in _iter_item_dicts(raw) if (record := _parse_record(obj)) is not None]
 
 
 class ArshaClient:
@@ -126,7 +134,7 @@ class ArshaClient:
             url = self._build_url(batch)
             try:
                 with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310
-                    data: dict[str, Any] = json.loads(resp.read().decode())
+                    data: Any = json.loads(resp.read().decode())
                 records = normalize_response(data)
                 all_records.extend(records)
             except Exception:
