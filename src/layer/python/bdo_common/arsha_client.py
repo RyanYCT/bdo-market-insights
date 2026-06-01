@@ -114,31 +114,43 @@ class ArshaClient:
             result.extend(self._split_batch_by_url_length(right))
         return result
 
-    def fetch_sub_list(self, item_ids: list[int]) -> list[Record]:
-        """Fetch market data for the given item IDs.
-
-        Batches into groups of <= 50 IDs, further splitting if the URL
-        exceeds 1900 characters. Network errors are logged and skipped.
-        """
-        if not item_ids:
-            return []
-
-        # Initial batching by max batch size
+    def _plan_batches(self, item_ids: list[int]) -> list[list[int]]:
+        """Group IDs into <= 50-ID batches, splitting any over-long URL."""
         batches: list[list[int]] = []
         for i in range(0, len(item_ids), _MAX_BATCH_SIZE):
             chunk = item_ids[i : i + _MAX_BATCH_SIZE]
             batches.extend(self._split_batch_by_url_length(chunk))
+        return batches
 
-        all_records: list[Record] = []
-        for batch in batches:
+    def fetch_raw(self, item_ids: list[int]) -> list[Any]:
+        """Fetch raw arsha.io JSON payloads (one per HTTP request), unparsed.
+
+        Batches into groups of <= 50 IDs, further splitting if the URL
+        exceeds 1900 characters. Network errors are logged and skipped.
+        Used by the ETL ``fetchData`` Lambda so that parsing happens in a
+        separate ``cleanData`` stage (retries never re-hit the network).
+        """
+        if not item_ids:
+            return []
+
+        payloads: list[Any] = []
+        for batch in self._plan_batches(item_ids):
             url = self._build_url(batch)
             try:
                 with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310
-                    data: Any = json.loads(resp.read().decode())
-                records = normalize_response(data)
-                all_records.extend(records)
+                    payloads.append(json.loads(resp.read().decode()))
             except Exception:
                 logger.exception("Failed to fetch batch from %s", url)
                 continue
+        return payloads
 
+    def fetch_sub_list(self, item_ids: list[int]) -> list[Record]:
+        """Fetch and normalize market data for the given item IDs.
+
+        Convenience wrapper over :meth:`fetch_raw` + :func:`normalize_response`
+        for callers that want parsed records in one call.
+        """
+        all_records: list[Record] = []
+        for payload in self.fetch_raw(item_ids):
+            all_records.extend(normalize_response(payload))
         return all_records

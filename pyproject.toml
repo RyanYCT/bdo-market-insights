@@ -42,6 +42,11 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
+# Lambda handlers all share the file name app.py with no __init__.py (one
+# entry point per src/functions/<name>/). explicit_package_bases + mypy_path
+# give each a unique module name (<name>.app) and resolve the shared layer.
+explicit_package_bases = true
+mypy_path = ["src/layer/python", "src/functions"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
