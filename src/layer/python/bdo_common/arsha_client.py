@@ -137,7 +137,8 @@ class ArshaClient:
         for batch in self._plan_batches(item_ids):
             url = self._build_url(batch)
             try:
-                with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310
+                # URL is built internally and is always https://api.arsha.io/...
+                with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310  # nosec B310
                     payloads.append(json.loads(resp.read().decode()))
             except Exception:
                 logger.exception("Failed to fetch batch from %s", url)

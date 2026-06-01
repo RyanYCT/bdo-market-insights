@@ -145,7 +145,7 @@ class SnapshotRepo:
             WHERE {" AND ".join(conditions)}
             ORDER BY snapshot_at DESC
             LIMIT %s
-        """
+        """  # nosec B608 - conditions are fixed fragments; all values are %s params
         rows = conn.execute(sql, params).fetchall()
         return [
             SnapshotRow(
@@ -344,7 +344,7 @@ class DailyRepo:
             FROM market_daily
             WHERE {" AND ".join(conditions)}
             ORDER BY trade_date DESC
-        """
+        """  # nosec B608 - conditions are fixed fragments; all values are %s params
         rows = conn.execute(sql, params).fetchall()
         return [
             DailyRow(
