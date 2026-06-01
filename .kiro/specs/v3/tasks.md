@@ -78,20 +78,20 @@ Domain math is specified normatively in `.kiro/specs/v3/domain-model.md`.
 
 ## Phase 4 — ETL pipeline
 
-- [ ] `src/functions/{retrieve_items,fetch_data,clean_data,store_data,
+- [x] `src/functions/{retrieve_items,fetch_data,clean_data,store_data,
       rollup_daily,purge_old_snapshots}/app.py`
-- [ ] `retrieveItems` projects full DynamoDB metadata into the Step
+- [x] `retrieveItems` projects full DynamoDB metadata into the Step
       Functions input (id, name, category, …)
-- [ ] `storeData` upserts `item` and `item_sid`, then bulk-inserts
+- [x] `storeData` upserts `item` and `item_sid`, then bulk-inserts
       `market_snapshot`, in one transaction
-- [ ] `infra/etl.yaml` — Step Functions ASL (Map, Choice),
+- [x] `infra/etl.yaml` — Step Functions ASL (Map, Choice),
       EventBridge crons (ETL hourly with `region` input;
       retention daily 00:30 UTC)
-- [ ] Integration test: full ETL run with moto + dockerised Postgres
-- [ ] In-VPC migrator Lambda — runs `alembic upgrade head` from inside
+- [x] Integration test: full ETL run with moto + dockerised Postgres
+- [x] In-VPC migrator Lambda — runs `alembic upgrade head` from inside
       the VPC on deploy (replaces the manual bastion-tunnel migration
       for routine schema changes; see Phase 2 notes)
-- [ ] `accessory_cron_v1` pricing model — Markov chain (60% retain /
+- [x] `accessory_cron_v1` pricing model — Markov chain (60% retain /
       40% drop-one on cron failure), cron counts from `rates.json`
       tables a/b; registered alongside `accessory_v1` (ADR-0012)
 

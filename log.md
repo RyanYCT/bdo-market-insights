@@ -223,3 +223,91 @@ Each entry uses the template below; aim for ≤ 200 words.
 ### Deferred / open questions
 - Live-API verification still pending (sandbox network blocks arsha.io);
   covered by the Phase 4 integration test.
+
+
+---
+
+## 2026-06-01 — Phase 4 ETL pipeline: handlers + Step Functions
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `redesign-v3`
+**Phase:** 4 — ETL pipeline
+**Commits:** `19f320e`, `3b28695`, `73775c0`, `1af8b28`
+
+### Done
+- Implemented all six ETL Lambda handlers under `src/functions/`:
+  `retrieve_items` (DynamoDB scan of `tracked=true` + full metadata
+  projection and a per-execution hour-truncated `snapshot_at`, FR-2),
+  `fetch_data`, `clean_data`, `store_data` (single-transaction
+  `item`/`item_sid` upsert + idempotent `market_snapshot` bulk-insert
+  with rollback and `EtlFailedItems`/`EtlSuccessfulItems` metrics,
+  FR-5/NFR-4), `rollup_daily` (server-side OHLC on `base_price`,
+  idempotent), and `purge_old_snapshots`.
+- Added `infra/etl.yaml` Step Functions ASL matching `design.md`:
+  `RetrieveItems → Map(maxConc=5)[FetchData→CleanData→StoreData] →
+  Choice(is_day_first_run) → RollupDaily`, hourly ETL cron with
+  `{"region": ...}` input (FR-1) and a separate `purgeOldSnapshots`
+  daily cron at 00:30 UTC (FR-7); wired into `template.yaml` as
+  `EtlStack`.
+- Unit tests for all handlers (`tests/unit/test_etl_*.py`). Local gate
+  green: ruff, ruff format, mypy strict (28 files), 109 pytest.
+
+### Decisions
+- No ADR — handlers follow the layer/Powertools patterns already
+  established in Phases 2–3 (local choices).
+
+### Deferred / open questions
+- Documentation drift corrected this session: Phase 4 checkboxes for
+  the four completed items were ticked in `tasks.md` (they had been
+  committed without ticking), and this entry was added retroactively.
+- Phase 4 remaining: integration test (moto + dockerised Postgres),
+  in-VPC migrator Lambda, and the `accessory_cron_v1` pricing model.
+
+
+---
+
+## 2026-06-01 — Phase 4 completion: integration test, migrator, cron model
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `redesign-v3`
+**Phase:** 4 — ETL pipeline (final 3 tasks)
+**Commits:** `2d4a058`, `cae6f02`, `e297bec`, plus this entry
+
+### Done
+- Reviewed the branch and realigned drifted tracking docs (ticked the four
+  already-implemented Phase 4 boxes; logged the prior ETL session).
+- ETL integration suite (`tests/integration/`): end-to-end run of the real
+  handlers against moto DynamoDB + a real Postgres (schema via Alembic
+  `0001`), stubbing only arsha.io. Skips unless `TEST_DATABASE_URL` is set;
+  CI runs it in a `postgres:16` service job.
+- In-VPC migrator Lambda (`src/functions/migrator/` + `0003_migrator_role`):
+  runs `alembic upgrade head` inside the VPC via IAM auth as `lambda_migrator`
+  (no Secrets Manager / NAT). CI deploy invokes it; `make migrate-lambda` for
+  dev. Chose a CI-invoke trigger over a CFN custom resource (no-NAT VPC can't
+  signal cfnresponse to S3).
+- `accessory_cron_v1` pricing model (Option B): cron Markov chain
+  (retain 0.60 / drop 0.40), first-passage attempts, cost = clean fuel + cron
+  stone, additive cumulative. Made the cron section of `domain-model.md`
+  normative with a worked example on real Deboreka Ring data.
+- Fixed two latent bugs found en route: Alembic needs `postgresql+psycopg://`
+  (only psycopg v3 is installed), and three false-positive bandit findings
+  now carry `# nosec` so the CI scan job is green.
+- Gate: ruff, format, mypy(strict, 33 files), bandit, cfn-lint, 120 pytest
+  pass + 4 integration skips.
+
+### Decisions
+- Migrator trigger = CI-invoke, not CFN custom resource — no ADR (local
+  choice forced by ADR-0006 no-NAT placement).
+- `accessory_cron_v1` uses the documented 60/40 Markov chain and the shared
+  `accessory_v1` curve, not the captured `cron_counts` — real Deboreka prices
+  showed the placeholder counts give absurd costs; counts retained for a
+  future calibrated model. No ADR (model choice recorded in domain-model.md).
+
+### Deferred / open questions
+- `p(4->5)=0.005` (`default_stack` 0) is a placeholder; the cron model's PEN
+  numbers are provisional until a real cron failstack is set.
+- `cron_counts` (tables a/b) still unverified; revisit when live-TW data lands.
+- This batch was committed together (deferred across the session), so the
+  Phase 4 checkbox ticks landed in the docs commit rather than per-box.
