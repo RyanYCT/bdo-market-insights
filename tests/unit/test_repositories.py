@@ -238,3 +238,57 @@ class TestDailyRepo:
         sql, params = mock_conn.execute.call_args[0]
         assert "LIMIT %s" in sql
         assert params == ("tw", 11608, 0, 7)
+
+
+# ---------------------------------------------------------------------------
+# SnapshotRepo.purge_older_than
+# ---------------------------------------------------------------------------
+
+
+class TestSnapshotPurge:
+    """Test the retention sweep DELETE."""
+
+    def test_purge_older_than(self, mock_conn: MagicMock) -> None:
+        cursor = mock_conn.cursor.return_value
+        cursor.rowcount = 42
+        cutoff = datetime(2026, 3, 3, tzinfo=UTC)
+
+        result = SnapshotRepo.purge_older_than(mock_conn, cutoff)
+
+        assert result == 42
+        cursor.execute.assert_called_once()
+        sql, params = cursor.execute.call_args[0]
+        assert "DELETE FROM market_snapshot" in sql
+        assert "snapshot_at < %s" in sql
+        assert params == (cutoff,)
+
+
+# ---------------------------------------------------------------------------
+# DailyRepo.rollup_day
+# ---------------------------------------------------------------------------
+
+
+class TestDailyRollup:
+    """Test the server-side daily aggregation."""
+
+    def test_rollup_day_params_and_bounds(self, mock_conn: MagicMock) -> None:
+        cursor = mock_conn.cursor.return_value
+        cursor.rowcount = 7
+
+        result = DailyRepo.rollup_day(mock_conn, region="tw", trade_date=date(2026, 5, 31))
+
+        assert result == 7
+        cursor.execute.assert_called_once()
+        sql, params = cursor.execute.call_args[0]
+        assert "INSERT INTO market_daily" in sql
+        assert "ON CONFLICT" in sql
+        # OHLC open/close via ordered array_agg on base_price (canonical price)
+        assert "array_agg(base_price ORDER BY snapshot_at ASC)" in sql
+        assert "array_agg(base_price ORDER BY snapshot_at DESC)" in sql
+        region, day_start, day_end, region2, trade_date = params
+        assert region == "tw"
+        assert region2 == "tw"
+        # half-open UTC day [trade_date, trade_date+1)
+        assert day_start == datetime(2026, 5, 31, 0, 0, tzinfo=UTC)
+        assert day_end == datetime(2026, 6, 1, 0, 0, tzinfo=UTC)
+        assert trade_date == date(2026, 5, 31)

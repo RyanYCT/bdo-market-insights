@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
 from bdo_common.models import DailyRow, SnapshotRow
@@ -196,6 +196,20 @@ class SnapshotRepo:
             for r in rows
         ]
 
+    @staticmethod
+    def purge_older_than(
+        conn: psycopg.Connection[tuple[Any, ...]],
+        cutoff: datetime,
+    ) -> int:
+        """Delete snapshots with ``snapshot_at < cutoff``. Returns rows deleted.
+
+        Backs the daily retention sweep (FR-7); the ``(snapshot_at)`` index
+        keeps the scan cheap.
+        """
+        cur = conn.cursor()
+        cur.execute("DELETE FROM market_snapshot WHERE snapshot_at < %s", (cutoff,))
+        return cur.rowcount
+
 
 class DailyRepo:
     """market_daily table operations."""
@@ -235,6 +249,69 @@ class DailyRepo:
                 row.snapshot_count,
             ),
         )
+
+    @staticmethod
+    def rollup_day(
+        conn: psycopg.Connection[tuple[Any, ...]],
+        *,
+        region: str,
+        trade_date: date,
+    ) -> int:
+        """Aggregate one UTC day's snapshots into ``market_daily`` (idempotent).
+
+        OHLC is computed on ``base_price`` (the canonical price): ``open``/
+        ``close`` are the day's earliest/latest snapshot by ``snapshot_at``,
+        ``high``/``low`` the extremes, ``avg_price`` the mean. ``total_trades_delta``
+        is last-minus-first cumulative trades; ``avg_stock`` the mean stock;
+        ``snapshot_count`` the number of snapshots. The aggregation runs entirely
+        server-side over the half-open UTC day ``[trade_date, trade_date+1)`` and
+        upserts on ``(region, item_id, sid, trade_date)``. Returns rows upserted.
+        """
+        day_start = datetime.combine(trade_date, time.min, tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+        sql = """
+            WITH s AS (
+                SELECT item_id, sid, snapshot_at, base_price, current_stock, total_trades
+                FROM market_snapshot
+                WHERE region = %s AND snapshot_at >= %s AND snapshot_at < %s
+            ),
+            agg AS (
+                SELECT
+                    item_id,
+                    sid,
+                    (array_agg(base_price ORDER BY snapshot_at ASC))[1]   AS open_price,
+                    MAX(base_price)                                        AS high_price,
+                    MIN(base_price)                                        AS low_price,
+                    (array_agg(base_price ORDER BY snapshot_at DESC))[1]  AS close_price,
+                    AVG(base_price)::bigint                                AS avg_price,
+                    (array_agg(total_trades ORDER BY snapshot_at DESC))[1]
+                    - (array_agg(total_trades ORDER BY snapshot_at ASC))[1]
+                    AS total_trades_delta,
+                    AVG(current_stock)::int                                AS avg_stock,
+                    COUNT(*)                                               AS snapshot_count
+                FROM s
+                GROUP BY item_id, sid
+            )
+            INSERT INTO market_daily (
+                region, trade_date, item_id, sid, open_price, high_price, low_price,
+                close_price, avg_price, total_trades_delta, avg_stock, snapshot_count
+            )
+            SELECT %s, %s, item_id, sid, open_price, high_price, low_price,
+                   close_price, avg_price, total_trades_delta, avg_stock, snapshot_count
+            FROM agg
+            ON CONFLICT (region, item_id, sid, trade_date) DO UPDATE SET
+                open_price = EXCLUDED.open_price,
+                high_price = EXCLUDED.high_price,
+                low_price = EXCLUDED.low_price,
+                close_price = EXCLUDED.close_price,
+                avg_price = EXCLUDED.avg_price,
+                total_trades_delta = EXCLUDED.total_trades_delta,
+                avg_stock = EXCLUDED.avg_stock,
+                snapshot_count = EXCLUDED.snapshot_count
+        """
+        cur = conn.cursor()
+        cur.execute(sql, (region, day_start, day_end, region, trade_date))
+        return cur.rowcount
 
     @staticmethod
     def get_daily(
