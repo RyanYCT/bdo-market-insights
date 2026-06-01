@@ -1,0 +1,5 @@
+# Runtime dependencies bundled into the bdo-common Lambda layer (ADR-0003).
+# Kept in sync with the runtime deps in pyproject.toml [project].dependencies.
+aws-lambda-powertools>=3,<4
+pydantic>=2,<3
+psycopg[binary]>=3,<4

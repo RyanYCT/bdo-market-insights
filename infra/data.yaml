@@ -137,6 +137,14 @@ Resources:
             Principal:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
+      # Shared execution role for the in-VPC ETL Lambdas (storeData,
+      # rollupDaily, purgeOldSnapshots) and marketQuery. The managed
+      # policies grant ENI management + log delivery (VPC access) and
+      # X-Ray write; the inline policy is the only data-plane grant and is
+      # scoped to a single dbuser (no wildcards, NFR-10).
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
       Policies:
         - PolicyName: RdsIamConnect
           PolicyDocument:

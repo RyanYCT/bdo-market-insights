@@ -1,25 +1,305 @@
 AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
 Description: >
-  ETL pipeline placeholder (Step Functions + EventBridge).
-  Implemented in Phase 4.
-
-# Placeholder stack: declares the Stage/BdoRegion interface it will use
-# in Phase 4 so the root template's parameter flow is stable now.
-Metadata:
-  cfn-lint:
-    config:
-      ignore_checks:
-        - W2001
+  ETL pipeline for bdo-market-insights: the shared bdo-common Lambda layer,
+  six ETL functions, the Step Functions state machine (hourly), and the
+  daily retention sweep (EventBridge).
 
 Parameters:
   Stage:
     Type: String
-    AllowedValues:
-      - dev
-      - prod
+    AllowedValues: [dev, prod]
   BdoRegion:
     Type: String
+    Description: BDO server region injected into the hourly ETL trigger input
+  LambdaSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: SG for in-VPC Lambdas (egress to RDS)
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet::Id
+    Description: Primary private subnet; in-VPC Lambdas run here only (ADR-0011)
+  DynamoDbTableName:
+    Type: String
+    Description: bdo-v3-items table name
+  RdsEndpoint:
+    Type: String
+    Description: RDS Postgres endpoint address
+  RdsPort:
+    Type: String
+    Description: RDS Postgres port
+  LambdaRdsAuthRoleArn:
+    Type: String
+    Description: Execution role for in-VPC Lambdas (VPC + X-Ray + rds-db:connect)
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 256
+    Tracing: Active
+    Layers:
+      - !Ref CommonLayer
+    Environment:
+      Variables:
+        STAGE: !Ref Stage
+        BDO_REGION: !Ref BdoRegion
+        POWERTOOLS_SERVICE_NAME: bdo-market-insights
+        POWERTOOLS_METRICS_NAMESPACE: BdoMarket
 
 Resources:
-  Placeholder:
-    Type: AWS::CloudFormation::WaitConditionHandle
+  # ──────────────────────────────────────────────
+  # Shared layer (ADR-0003) — bdo_common + runtime deps
+  # ──────────────────────────────────────────────
+  CommonLayer:
+    Type: AWS::Serverless::LayerVersion
+    Metadata:
+      BuildMethod: python3.12
+    Properties:
+      LayerName: !Sub 'bdo-${Stage}-common'
+      Description: Shared bdo_common code and runtime dependencies
+      ContentUri: ../src/layer
+      CompatibleRuntimes:
+        - python3.12
+      RetentionPolicy: Delete
+
+  # ──────────────────────────────────────────────
+  # ETL functions — not in VPC (DynamoDB / arsha.io / pure)
+  # ──────────────────────────────────────────────
+  RetrieveItemsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-retrieve-items'
+      CodeUri: ../src/functions/retrieve_items
+      Handler: app.handler
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref DynamoDbTableName
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref DynamoDbTableName
+
+  FetchDataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-fetch-data'
+      CodeUri: ../src/functions/fetch_data
+      Handler: app.handler
+      Timeout: 60
+
+  CleanDataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-clean-data'
+      CodeUri: ../src/functions/clean_data
+      Handler: app.handler
+
+  # ──────────────────────────────────────────────
+  # ETL functions — in VPC (RDS via IAM auth)
+  # ──────────────────────────────────────────────
+  StoreDataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-store-data'
+      CodeUri: ../src/functions/store_data
+      Handler: app.handler
+      Role: !Ref LambdaRdsAuthRoleArn
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroupId
+        SubnetIds:
+          - !Ref PrivateSubnetA
+      Environment:
+        Variables:
+          DB_HOST: !Ref RdsEndpoint
+          DB_PORT: !Ref RdsPort
+          DB_NAME: bdo
+          DB_USER: lambda_rds_user
+          USE_IAM_AUTH: 'true'
+
+  RollupDailyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-rollup-daily'
+      CodeUri: ../src/functions/rollup_daily
+      Handler: app.handler
+      Role: !Ref LambdaRdsAuthRoleArn
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroupId
+        SubnetIds:
+          - !Ref PrivateSubnetA
+      Environment:
+        Variables:
+          DB_HOST: !Ref RdsEndpoint
+          DB_PORT: !Ref RdsPort
+          DB_NAME: bdo
+          DB_USER: lambda_rds_user
+          USE_IAM_AUTH: 'true'
+
+  PurgeOldSnapshotsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-purge-old-snapshots'
+      CodeUri: ../src/functions/purge_old_snapshots
+      Handler: app.handler
+      Role: !Ref LambdaRdsAuthRoleArn
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroupId
+        SubnetIds:
+          - !Ref PrivateSubnetA
+      Environment:
+        Variables:
+          DB_HOST: !Ref RdsEndpoint
+          DB_PORT: !Ref RdsPort
+          DB_NAME: bdo
+          DB_USER: lambda_rds_user
+          USE_IAM_AUTH: 'true'
+      Events:
+        DailyRetentionSweep:
+          Type: Schedule
+          Properties:
+            Schedule: cron(30 0 * * ? *)
+            Description: Delete market_snapshot rows older than 90 days (FR-7)
+
+  # ──────────────────────────────────────────────
+  # Step Functions state machine (hourly ETL, FR-1)
+  # ──────────────────────────────────────────────
+  EtlStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub 'bdo-${Stage}-etl'
+      Type: STANDARD
+      Tracing:
+        Enabled: true
+      DefinitionSubstitutions:
+        RetrieveItemsArn: !GetAtt RetrieveItemsFunction.Arn
+        FetchDataArn: !GetAtt FetchDataFunction.Arn
+        CleanDataArn: !GetAtt CleanDataFunction.Arn
+        StoreDataArn: !GetAtt StoreDataFunction.Arn
+        RollupDailyArn: !GetAtt RollupDailyFunction.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref RetrieveItemsFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref FetchDataFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CleanDataFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref StoreDataFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref RollupDailyFunction
+      Events:
+        HourlyEtl:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 * * * ? *)
+            Input: !Sub '{"region": "${BdoRegion}"}'
+            Description: Hourly market snapshot ingestion (FR-1)
+      Definition:
+        Comment: BDO hourly market-data ETL
+        StartAt: RetrieveItems
+        States:
+          RetrieveItems:
+            Type: Task
+            Resource: '${RetrieveItemsArn}'
+            Parameters:
+              region.$: '$.region'
+              execution_start_time.$: '$$.Execution.StartTime'
+            Retry:
+              - ErrorEquals:
+                  - Lambda.ServiceException
+                  - Lambda.AWSLambdaException
+                  - Lambda.SdkClientException
+                  - Lambda.TooManyRequestsException
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+            Next: ProcessBatches
+          ProcessBatches:
+            Type: Map
+            ItemsPath: '$.batches'
+            MaxConcurrency: 5
+            ResultPath: '$.batch_results'
+            ItemProcessor:
+              ProcessorConfig:
+                Mode: INLINE
+              StartAt: FetchData
+              States:
+                FetchData:
+                  Type: Task
+                  Resource: '${FetchDataArn}'
+                  Retry:
+                    - ErrorEquals:
+                        - Lambda.ServiceException
+                        - Lambda.AWSLambdaException
+                        - Lambda.SdkClientException
+                        - Lambda.TooManyRequestsException
+                        - States.Timeout
+                      IntervalSeconds: 3
+                      MaxAttempts: 3
+                      BackoffRate: 2
+                  Next: CleanData
+                CleanData:
+                  Type: Task
+                  Resource: '${CleanDataArn}'
+                  Retry:
+                    - ErrorEquals:
+                        - Lambda.ServiceException
+                        - Lambda.AWSLambdaException
+                        - Lambda.SdkClientException
+                        - Lambda.TooManyRequestsException
+                      IntervalSeconds: 2
+                      MaxAttempts: 3
+                      BackoffRate: 2
+                  Next: StoreData
+                StoreData:
+                  Type: Task
+                  Resource: '${StoreDataArn}'
+                  Retry:
+                    - ErrorEquals:
+                        - Lambda.ServiceException
+                        - Lambda.AWSLambdaException
+                        - Lambda.SdkClientException
+                        - Lambda.TooManyRequestsException
+                      IntervalSeconds: 2
+                      MaxAttempts: 3
+                      BackoffRate: 2
+                  End: true
+            Next: IsDayFirstRun
+          IsDayFirstRun:
+            Type: Choice
+            Choices:
+              - Variable: '$.is_day_first_run'
+                BooleanEquals: true
+                Next: RollupDaily
+            Default: Done
+          RollupDaily:
+            Type: Task
+            Resource: '${RollupDailyArn}'
+            Parameters:
+              region.$: '$.region'
+              snapshot_at.$: '$.snapshot_at'
+            Retry:
+              - ErrorEquals:
+                  - Lambda.ServiceException
+                  - Lambda.AWSLambdaException
+                  - Lambda.SdkClientException
+                  - Lambda.TooManyRequestsException
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+            End: true
+          Done:
+            Type: Succeed
+
+Outputs:
+  CommonLayerArn:
+    Value: !Ref CommonLayer
+    Export:
+      Name: !Sub '${AWS::StackName}-CommonLayerArn'
+
+  EtlStateMachineArn:
+    Value: !Ref EtlStateMachine
+    Export:
+      Name: !Sub '${AWS::StackName}-EtlStateMachineArn'

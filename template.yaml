@@ -99,7 +99,14 @@ Resources:
       Parameters:
         Stage: !Ref Stage
         BdoRegion: !Ref BdoRegion
-    DependsOn: DataStack
+        LambdaSecurityGroupId: !GetAtt NetworkStack.Outputs.LambdaSecurityGroupId
+        PrivateSubnetA: !GetAtt NetworkStack.Outputs.PrivateSubnetA
+        DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
+        RdsEndpoint: !GetAtt DataStack.Outputs.RdsEndpoint
+        RdsPort: !GetAtt DataStack.Outputs.RdsPort
+        LambdaRdsAuthRoleArn: !GetAtt DataStack.Outputs.LambdaRdsAuthRoleArn
+    # Ordering after Network/Data is enforced by the !GetAtt *.Outputs
+    # references above; an explicit DependsOn would be redundant (W3005).
 
   ApiStack:
     Type: AWS::CloudFormation::Stack
