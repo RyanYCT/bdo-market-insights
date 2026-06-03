@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test test-integration build deploy deploy-dev deploy-prod db-tunnel-up db-tunnel-down migrate migrate-lambda seed clean
+.PHONY: lint format typecheck test test-integration openapi build deploy deploy-dev deploy-prod db-tunnel-up db-tunnel-down migrate migrate-lambda seed clean
 
 STAGE ?= dev
 AWS_REGION ?= ap-northeast-1
@@ -20,6 +20,11 @@ test:
 # container). Skips automatically when TEST_DATABASE_URL is unset.
 test-integration:
 	uv run pytest -m integration
+
+# Regenerate infra/openapi.yaml from the Powertools API handlers. CI runs the
+# same export and fails if the committed spec is out of date.
+openapi:
+	uv run python scripts/export_openapi.py
 
 build:
 	sam build

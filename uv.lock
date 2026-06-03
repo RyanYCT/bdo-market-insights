@@ -164,6 +164,7 @@ dev = [
     { name = "pip-audit" },
     { name = "pytest" },
     { name = "pytest-mock" },
+    { name = "pyyaml" },
     { name = "ruff" },
     { name = "sqlalchemy" },
 ]
@@ -186,6 +187,7 @@ dev = [
     { name = "pip-audit" },
     { name = "pytest" },
     { name = "pytest-mock" },
+    { name = "pyyaml" },
     { name = "ruff" },
     { name = "sqlalchemy" },
 ]

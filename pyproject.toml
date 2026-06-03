@@ -25,6 +25,7 @@ dev = [
     "bandit",
     "alembic",
     "sqlalchemy",
+    "pyyaml",
 ]
 
 [tool.hatch.build.targets.wheel]
