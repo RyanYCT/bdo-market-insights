@@ -3,7 +3,7 @@ name = "bdo-market-insights"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "aws-lambda-powertools>=3,<4",
+    "aws-lambda-powertools[tracer]>=3,<4",
     "pydantic>=2,<3",
     "psycopg[binary]>=3,<4",
 ]

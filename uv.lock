@@ -100,6 +100,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/bc/0f/ba8da75a8bd0f0c180be1ebf7ff73e8c2843b77ca9cc8a7945e6c92e4e4a/aws_lambda_powertools-3.29.0-py3-none-any.whl", hash = "sha256:e9ca87b5a8a835a7f7e327d5bafa43b6e0c150c6cb8c6b42158b0814377edc7a", size = 935956, upload-time = "2026-05-04T09:49:18.079Z" },
 ]
 
+[package.optional-dependencies]
+tracer = [
+    { name = "aws-xray-sdk" },
+]
+
 [[package]]
 name = "aws-sam-translator"
 version = "1.110.0"
@@ -148,7 +153,7 @@ name = "bdo-market-insights"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "aws-lambda-powertools" },
+    { name = "aws-lambda-powertools", extra = ["tracer"] },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
 ]
@@ -171,7 +176,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aws-lambda-powertools", specifier = ">=3,<4" },
+    { name = "aws-lambda-powertools", extras = ["tracer"], specifier = ">=3,<4" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3,<4" },
     { name = "pydantic", specifier = ">=2,<3" },
 ]

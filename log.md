@@ -480,3 +480,45 @@ Each entry uses the template below; aim for ≤ 200 words.
 - Requires `make build` + `make deploy-dev` (new layer version + all functions
   rebound) before APIs/ETL work. The DB bootstrap (bastion) and the two Phase 6
   validation boxes (X-Ray map, alarm smoke-test) are still pending.
+
+
+
+---
+
+## 2026-06-03 — First dev deploy + runtime/packaging fixes
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `redesign-v3`
+**Phase:** 6 — Observability (dev-deploy validation)
+**Commits:** see `redesign-v3` (this session): region `us-east-1`, CAPABILITY_NAMED_IAM,
+migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
+
+### Done
+- Stood up the `dev` stack in `us-east-1` for the first time and worked through
+  the first-deploy failures end to end:
+  - `samconfig` granted only `CAPABILITY_IAM`; DataStack's named roles need
+    `CAPABILITY_NAMED_IAM` (deploy rolled back). Fixed dev + prod.
+  - Corrected the AWS region from `ap-northeast-1` to `us-east-1` everywhere
+    (samconfig, CI, Makefile, IAM-auth fallbacks, tests).
+  - First real `sam build` exposed packaging bugs (never exercised before — the
+    tag-gated deploy job hadn't run): the layer omitted `bdo_common`
+    (`BuildMethod: python3.12` installs only requirements), and Windows builds
+    shipped host-native wheels. Switched the layer + migrator to makefile builds
+    that bundle the code and pin pip to the Lambda target
+    (`manylinux2014_x86_64`, cp312).
+  - `aws-xray-sdk` was missing (Tracer needs the powertools `[tracer]` extra);
+    added it to the layer requirements + `pyproject.toml`, refreshed `uv.lock`.
+- itemRegistry API verified working (GET/POST against `/v1/items`).
+
+### Decisions
+- Makefile builds for the layer and migrator, with pip pinned to the Lambda
+  runtime target, so `make build` works on any host OS without Docker — no ADR
+  (build-tooling choice).
+
+### Deferred / open questions
+- DB schema/roles not yet bootstrapped: needs the bastion (`EnableBastion=true`)
+  for the one-time `make migrate` as master user; until then ETL `storeData`
+  and marketQuery stay non-functional.
+- Phase 6 boxes still open: verify the X-Ray service map end-to-end and
+  smoke-test the alarms.
