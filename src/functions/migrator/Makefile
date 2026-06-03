@@ -1,12 +1,10 @@
-# SAM custom build (Metadata.BuildMethod: makefile). Bundles the
-# single-source-of-truth migrations/ tree from the repo root alongside the
-# handler and installs the Alembic engine. psycopg v3 comes from the shared
-# bdo-common layer at runtime, so it is intentionally not reinstalled here.
+# SAM custom build (Metadata.BuildMethod: makefile). Delegates to build.py so
+# the recipe is identical on Windows, macOS and Linux -- the previous POSIX
+# `mkdir -p`/`cp` recipe failed under Windows cmd.exe, and its CWD-relative
+# `../../../migrations` path could not resolve from SAM's scratch build dir.
 #
-# SAM runs this target with CWD set to this directory (the function CodeUri)
-# and ARTIFACTS_DIR pointing at the build output.
+# build.py bundles app.py, the repo-root migrations/ tree (located via
+# ARTIFACTS_DIR), and the Alembic engine; psycopg v3 comes from the shared
+# bdo-common layer at runtime.
 build-MigratorFunction:
-	mkdir -p "$(ARTIFACTS_DIR)"
-	cp app.py "$(ARTIFACTS_DIR)/"
-	cp -R ../../../migrations "$(ARTIFACTS_DIR)/migrations"
-	python -m pip install -r requirements.txt -t "$(ARTIFACTS_DIR)"
+	python build.py "$(ARTIFACTS_DIR)"

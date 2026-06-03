@@ -410,3 +410,39 @@ Each entry uses the template below; aim for ≤ 200 words.
   DB identifier across stacks; add later if useful.
 - Pre-existing log groups on an already-deployed stack would need CFN import;
   fine for greenfield v3 — worth a runbook note at cutover.
+
+
+
+---
+
+## 2026-06-03 — Fix: cross-platform migrator `sam build`
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `redesign-v3`
+**Phase:** 6 — Observability (incidental build fix during dev-deploy validation)
+**Commits:** see `redesign-v3` (this session)
+
+### Done
+- First real `sam build` (on a Windows host) failed in the migrator's custom
+  makefile build: `mkdir -p`/`cp` are POSIX-only (Windows cmd.exe errored on the
+  pre-existing ARTIFACTS_DIR), and `cp -R ../../../migrations` could never
+  resolve because SAM runs the recipe from a scratch *copy* of the function dir.
+  `sam build` had not run before (the tag-gated CI deploy job never fired), so
+  the bug was latent since Phase 4.
+- Replaced the shell recipe with `src/functions/migrator/build.py` (one-line
+  Makefile delegates to it): pure `shutil`/`subprocess`, and it finds the
+  repo-root `migrations/` by walking up from `ARTIFACTS_DIR` (always inside
+  `.aws-sam/`) instead of a CWD-relative path. Verified end-to-end on Linux
+  (copies app.py + migrations/, installs the Alembic engine).
+- Gate stays green: ruff, format, mypy(strict, 38 files), bandit (nosec B404/B603
+  on the build-time pip call), cfn-lint.
+
+### Decisions
+- Build logic in Python, not portable shell — the only reliable way to run the
+  same recipe on Windows/macOS/Linux and to survive SAM's scratch-dir copy. No
+  ADR (local build-tooling choice).
+
+### Deferred / open questions
+- Still pending a live `dev` stack: X-Ray service-map check and alarm
+  smoke-tests (the two open Phase 6 boxes).
