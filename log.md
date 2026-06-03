@@ -311,3 +311,56 @@ Each entry uses the template below; aim for ≤ 200 words.
 - `cron_counts` (tables a/b) still unverified; revisit when live-TW data lands.
 - This batch was committed together (deferred across the session), so the
   Phase 4 checkbox ticks landed in the docs commit rather than per-box.
+
+
+
+---
+
+## 2026-06-03 — Phase 5 APIs: itemRegistry + marketQuery + OpenAPI export
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `redesign-v3`
+**Phase:** 5 — APIs
+**Commits:** see `redesign-v3` (this session; logical commits on top of `27f3831`)
+
+### Done
+- Reconstructed Phase 5 from a prior shell-outage handover (code was
+  written but never run) and verified it end-to-end.
+- `itemRegistry` (`/v1/items`, DynamoDB-only, not in VPC): Powertools
+  REST resolver with list/get/create/patch/soft-delete; POST validates
+  the id against arsha.io before writing (FR-8..12).
+- `marketQuery` (`/v1/market`, RDS read-only, in VPC via IAM auth):
+  snapshots, daily rollups, and a combined analysis (base-rate
+  `accessory_v1` per-tier cost over a `{sid: base_price}` ladder +
+  volatility/liquidity/anomaly); rolls back after each request
+  (FR-13..15).
+- `infra/api.yaml`: REST API GW with API key + PER_API usage plan
+  (10 burst / 5 sustained, 1000/day; FR-16/17, ADR-0005), shares the
+  ETL stack's `bdo-common` layer; wired all params via `template.yaml`.
+- `scripts/export_openapi.py` + `make openapi` merge both resolvers'
+  schemas into `infra/openapi.yaml`; new CI `openapi` job fails on
+  drift. Added `pyyaml` dev dep (refreshed `uv.lock`).
+- Gate green: ruff, format, mypy(strict, 37 files), bandit, cfn-lint,
+  132 pytest + 4 integration skips.
+
+### Decisions
+- `APIGatewayRestResolver(enable_validation=True)` on both handlers to
+  enable native OpenAPI export — no ADR (local choice).
+- `marketQuery` stays RDS-only; analysis builds the price ladder from
+  the latest snapshots instead of a DynamoDB cross-read for `model_id`
+  — no ADR (local choice).
+- cfn-lint: ignore W3005 in `api.yaml` (SAM transform auto-generates the
+  ApiKey/UsagePlan DependsOn; not authored here) and exclude the
+  generated `infra/openapi.yaml` via `.cfnlintrc.yaml` — no ADR.
+
+### Deferred / open questions
+- Fixed a latent loader bug: dynamic `importlib` loads (in the OpenAPI
+  export script and `tests/conftest.py`) didn't register modules in
+  `sys.modules`, so Pydantic couldn't resolve the new request-body
+  models' PEP 563 annotations. Registered them before `exec_module`;
+  Phase 5 is the first handler with API body models, so this never
+  surfaced before.
+- Query-string params (region/sid/limit/from/to/window_days) are read
+  dynamically, so they don't appear in the OpenAPI spec — revisit if
+  full request documentation is needed.

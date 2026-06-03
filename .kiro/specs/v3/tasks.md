@@ -97,12 +97,12 @@ Domain math is specified normatively in `.kiro/specs/v3/domain-model.md`.
 
 ## Phase 5 — APIs
 
-- [ ] `src/functions/item_registry/app.py` — Powertools event handler;
+- [x] `src/functions/item_registry/app.py` — Powertools event handler;
       writes only to DynamoDB; arsha.io ID validation on POST
-- [ ] `src/functions/market_query/app.py` — joins `item`, `item_sid`,
+- [x] `src/functions/market_query/app.py` — joins `item`, `item_sid`,
       `market_snapshot` for snapshots/daily/analysis routes
-- [ ] `infra/api.yaml` — REST API GW, usage plan, API key, OpenAPI export
-- [ ] CI step regenerates `infra/openapi.yaml` from Powertools handlers
+- [x] `infra/api.yaml` — REST API GW, usage plan, API key, OpenAPI export
+- [x] CI step regenerates `infra/openapi.yaml` from Powertools handlers
 
 ## Phase 6 — Observability
 
