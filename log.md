@@ -446,3 +446,37 @@ Each entry uses the template below; aim for ≤ 200 words.
 ### Deferred / open questions
 - Still pending a live `dev` stack: X-Ray service-map check and alarm
   smoke-tests (the two open Phase 6 boxes).
+
+
+
+---
+
+## 2026-06-03 — Fix: bundle bdo_common into the shared layer
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `redesign-v3`
+**Phase:** 6 — Observability (incidental fix during dev-deploy validation)
+**Commits:** see `redesign-v3` (this session)
+
+### Done
+- First live invocation (itemRegistry POST) returned API GW 500; CloudWatch
+  showed `Runtime.ImportModuleError: No module named 'bdo_common'`. Root cause:
+  the layer used `BuildMethod: python3.12`, which installs only requirements.txt
+  into `python/` and drops the hand-authored `bdo_common` package — so the layer
+  shipped pydantic/powertools/psycopg but not `bdo_common`. This broke *every*
+  function at init, not just the API.
+- Converted the layer to `BuildMethod: makefile` with `src/layer/build_layer.py`
+  (mirrors the migrator pattern): copies `bdo_common` and pip-installs
+  requirements.txt, both under `python/`. Verified locally that the artifact
+  contains `python/bdo_common/` plus the deps.
+- Gate green: ruff, format, mypy(strict, 39 files), bandit, cfn-lint.
+
+### Decisions
+- Makefile build for the layer over restructuring as a pip-installable package —
+  explicit, version-independent, and consistent with the migrator. No ADR.
+
+### Deferred / open questions
+- Requires `make build` + `make deploy-dev` (new layer version + all functions
+  rebound) before APIs/ETL work. The DB bootstrap (bastion) and the two Phase 6
+  validation boxes (X-Ray map, alarm smoke-test) are still pending.
