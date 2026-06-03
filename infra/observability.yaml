@@ -1,23 +1,410 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Observability placeholder (CloudWatch dashboard + alarms).
-  Implemented in Phase 6.
-
-# Placeholder stack: declares the Stage interface it will use in Phase 6
-# so the root template's parameter flow is stable now.
-Metadata:
-  cfn-lint:
-    config:
-      ignore_checks:
-        - W2001
+  Observability for bdo-market-insights: one CloudWatch dashboard, the three
+  SLO alarms (API 5xx rate, API p95 latency, ETL execution failure -> SNS),
+  and log-group retention for every Lambda. Targets match docs/slo.md and the
+  Observability section of .kiro/specs/v3/design.md.
 
 Parameters:
   Stage:
     Type: String
-    AllowedValues:
-      - dev
-      - prod
+    AllowedValues: [dev, prod]
+  EtlStateMachineArn:
+    Type: String
+    Description: ARN of the ETL state machine (from the ETL stack) for AWS/States alarms
+  LogRetentionInDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 180, 365, 400, 545, 731, 1827, 3653]
+    Description: Retention applied to every Lambda log group (default 30, matches the API SLO window)
+  AlarmEmail:
+    Type: String
+    Default: ''
+    Description: Optional email subscribed to the alarm SNS topic (blank = no subscription)
+
+Conditions:
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
 
 Resources:
-  Placeholder:
-    Type: AWS::CloudFormation::WaitConditionHandle
+  # ──────────────────────────────────────────────
+  # Alarm notifications
+  # ──────────────────────────────────────────────
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'bdo-${Stage}-alarms'
+      DisplayName: !Sub 'bdo-${Stage} alarms'
+
+  AlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlarmEmail
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  # ──────────────────────────────────────────────
+  # SLO alarms (docs/slo.md)
+  # ──────────────────────────────────────────────
+  # API availability: 5xx rate > 1% over 5 minutes. Rate is 5XXError / Count
+  # (metric math). The SLO excludes 429s from the denominator; API Gateway
+  # does not expose 429 as its own metric, so throttled requests stay in Count
+  # and make this alarm marginally conservative (acceptable).
+  ApiFiveXxRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-${Stage}-api-5xx-rate'
+      AlarmDescription: 'API 5xx error rate above 1% over 5 minutes (SLO: API availability)'
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 1
+      EvaluationPeriods: 1
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      Metrics:
+        - Id: e_rate
+          Label: API 5xx %
+          Expression: 100 * (m_5xx) / m_count
+          ReturnData: true
+        - Id: m_5xx
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/ApiGateway
+              MetricName: 5XXError
+              Dimensions:
+                - Name: ApiName
+                  Value: !Sub 'bdo-${Stage}-api'
+                - Name: Stage
+                  Value: !Ref Stage
+            Period: 300
+            Stat: Sum
+        - Id: m_count
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/ApiGateway
+              MetricName: Count
+              Dimensions:
+                - Name: ApiName
+                  Value: !Sub 'bdo-${Stage}-api'
+                - Name: Stage
+                  Value: !Ref Stage
+            Period: 300
+            Stat: Sum
+
+  # API p95 latency > 500 ms over 5 minutes.
+  ApiLatencyP95Alarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-${Stage}-api-latency-p95'
+      AlarmDescription: 'API p95 latency above 500 ms over 5 minutes (SLO: latency)'
+      Namespace: AWS/ApiGateway
+      MetricName: Latency
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub 'bdo-${Stage}-api'
+        - Name: Stage
+          Value: !Ref Stage
+      ExtendedStatistic: p95
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 500
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # ETL reliability: any non-success terminal execution in a 24h window. The
+  # SLO/design wording says "ABORTED", but a retry-exhausted run terminates as
+  # FAILED (ABORTED is a manual stop) and a stuck run as TIMED_OUT, so this
+  # alarm sums all three to catch real ETL failures, not just manual aborts.
+  EtlExecutionFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-${Stage}-etl-execution-failure'
+      AlarmDescription: 'One or more ETL executions failed/aborted/timed out in 24h (SLO: ETL reliability)'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 1
+      EvaluationPeriods: 1
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      Metrics:
+        - Id: e_bad
+          Label: ETL non-success executions
+          Expression: FILL(m_failed, 0) + FILL(m_aborted, 0) + FILL(m_timedout, 0)
+          ReturnData: true
+        - Id: m_failed
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/States
+              MetricName: ExecutionsFailed
+              Dimensions:
+                - Name: StateMachineArn
+                  Value: !Ref EtlStateMachineArn
+            Period: 86400
+            Stat: Sum
+        - Id: m_aborted
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/States
+              MetricName: ExecutionsAborted
+              Dimensions:
+                - Name: StateMachineArn
+                  Value: !Ref EtlStateMachineArn
+            Period: 86400
+            Stat: Sum
+        - Id: m_timedout
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/States
+              MetricName: ExecutionsTimedOut
+              Dimensions:
+                - Name: StateMachineArn
+                  Value: !Ref EtlStateMachineArn
+            Period: 86400
+            Stat: Sum
+
+  # ──────────────────────────────────────────────
+  # Log-group retention (one per Lambda; names follow the FunctionName
+  # convention bdo-${Stage}-<name> from infra/etl.yaml and infra/api.yaml).
+  # Created here so retention is managed centrally; on a fresh deploy the
+  # functions have not logged yet, so these own the groups.
+  # ──────────────────────────────────────────────
+  RetrieveItemsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-retrieve-items'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  FetchDataLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-fetch-data'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  CleanDataLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-clean-data'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  StoreDataLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-store-data'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  RollupDailyLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-rollup-daily'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  PurgeOldSnapshotsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-purge-old-snapshots'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  MigratorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-migrator'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  ItemRegistryLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-item-registry'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  MarketQueryLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-market-query'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  # ──────────────────────────────────────────────
+  # Dashboard
+  # ──────────────────────────────────────────────
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub 'bdo-${Stage}'
+      DashboardBody: !Sub |-
+        {
+          "widgets": [
+            {
+              "type": "text", "x": 0, "y": 0, "width": 24, "height": 1,
+              "properties": { "markdown": "## API  -  bdo-${Stage}-api" }
+            },
+            {
+              "type": "metric", "x": 0, "y": 1, "width": 12, "height": 6,
+              "properties": {
+                "title": "API requests & errors",
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 300,
+                "view": "timeSeries",
+                "metrics": [
+                  [ "AWS/ApiGateway", "Count", "ApiName", "bdo-${Stage}-api", "Stage", "${Stage}", { "label": "Requests" } ],
+                  [ "AWS/ApiGateway", "4XXError", "ApiName", "bdo-${Stage}-api", "Stage", "${Stage}", { "label": "4XX" } ],
+                  [ "AWS/ApiGateway", "5XXError", "ApiName", "bdo-${Stage}-api", "Stage", "${Stage}", { "label": "5XX" } ]
+                ]
+              }
+            },
+            {
+              "type": "metric", "x": 12, "y": 1, "width": 12, "height": 6,
+              "properties": {
+                "title": "API latency",
+                "region": "${AWS::Region}",
+                "period": 300,
+                "view": "timeSeries",
+                "yAxis": { "left": { "label": "ms", "showUnits": false } },
+                "metrics": [
+                  [ "AWS/ApiGateway", "Latency", "ApiName", "bdo-${Stage}-api", "Stage", "${Stage}", { "stat": "p50", "label": "Latency p50" } ],
+                  [ "AWS/ApiGateway", "Latency", "ApiName", "bdo-${Stage}-api", "Stage", "${Stage}", { "stat": "p95", "label": "Latency p95" } ],
+                  [ "AWS/ApiGateway", "IntegrationLatency", "ApiName", "bdo-${Stage}-api", "Stage", "${Stage}", { "stat": "p95", "label": "Integration p95" } ]
+                ],
+                "annotations": { "horizontal": [ { "label": "p95 SLO 500ms", "value": 500 } ] }
+              }
+            },
+            {
+              "type": "metric", "x": 0, "y": 7, "width": 8, "height": 6,
+              "properties": {
+                "title": "API 5xx %",
+                "region": "${AWS::Region}",
+                "period": 300,
+                "view": "timeSeries",
+                "metrics": [
+                  [ { "expression": "100*(m2)/m1", "label": "5xx %", "id": "e1" } ],
+                  [ "AWS/ApiGateway", "Count", "ApiName", "bdo-${Stage}-api", "Stage", "${Stage}", { "id": "m1", "stat": "Sum", "visible": false } ],
+                  [ "AWS/ApiGateway", "5XXError", "ApiName", "bdo-${Stage}-api", "Stage", "${Stage}", { "id": "m2", "stat": "Sum", "visible": false } ]
+                ],
+                "annotations": { "horizontal": [ { "label": "SLO 1%", "value": 1 } ] }
+              }
+            },
+            {
+              "type": "metric", "x": 8, "y": 7, "width": 8, "height": 6,
+              "properties": {
+                "title": "API Lambdas - invocations / errors / throttles",
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 300,
+                "view": "timeSeries",
+                "metrics": [
+                  [ "AWS/Lambda", "Invocations", "FunctionName", "bdo-${Stage}-item-registry" ],
+                  [ "AWS/Lambda", "Errors", "FunctionName", "bdo-${Stage}-item-registry" ],
+                  [ "AWS/Lambda", "Throttles", "FunctionName", "bdo-${Stage}-item-registry" ],
+                  [ "AWS/Lambda", "Invocations", "FunctionName", "bdo-${Stage}-market-query" ],
+                  [ "AWS/Lambda", "Errors", "FunctionName", "bdo-${Stage}-market-query" ],
+                  [ "AWS/Lambda", "Throttles", "FunctionName", "bdo-${Stage}-market-query" ]
+                ]
+              }
+            },
+            {
+              "type": "metric", "x": 16, "y": 7, "width": 8, "height": 6,
+              "properties": {
+                "title": "API Lambdas - duration p95",
+                "region": "${AWS::Region}",
+                "stat": "p95",
+                "period": 300,
+                "view": "timeSeries",
+                "yAxis": { "left": { "label": "ms", "showUnits": false } },
+                "metrics": [
+                  [ "AWS/Lambda", "Duration", "FunctionName", "bdo-${Stage}-item-registry", { "label": "item-registry" } ],
+                  [ "AWS/Lambda", "Duration", "FunctionName", "bdo-${Stage}-market-query", { "label": "market-query" } ]
+                ]
+              }
+            },
+            {
+              "type": "text", "x": 0, "y": 13, "width": 24, "height": 1,
+              "properties": { "markdown": "## ETL  -  bdo-${Stage}-etl" }
+            },
+            {
+              "type": "metric", "x": 0, "y": 14, "width": 12, "height": 6,
+              "properties": {
+                "title": "ETL executions",
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 86400,
+                "view": "timeSeries",
+                "metrics": [
+                  [ "AWS/States", "ExecutionsStarted", "StateMachineArn", "${EtlStateMachineArn}", { "label": "Started" } ],
+                  [ "AWS/States", "ExecutionsSucceeded", "StateMachineArn", "${EtlStateMachineArn}", { "label": "Succeeded" } ],
+                  [ "AWS/States", "ExecutionsFailed", "StateMachineArn", "${EtlStateMachineArn}", { "label": "Failed" } ],
+                  [ "AWS/States", "ExecutionsAborted", "StateMachineArn", "${EtlStateMachineArn}", { "label": "Aborted" } ],
+                  [ "AWS/States", "ExecutionsTimedOut", "StateMachineArn", "${EtlStateMachineArn}", { "label": "TimedOut" } ]
+                ]
+              }
+            },
+            {
+              "type": "metric", "x": 12, "y": 14, "width": 12, "height": 6,
+              "properties": {
+                "title": "ETL Lambda errors",
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 300,
+                "view": "timeSeries",
+                "metrics": [
+                  [ "AWS/Lambda", "Errors", "FunctionName", "bdo-${Stage}-retrieve-items", { "label": "retrieve-items" } ],
+                  [ "AWS/Lambda", "Errors", "FunctionName", "bdo-${Stage}-fetch-data", { "label": "fetch-data" } ],
+                  [ "AWS/Lambda", "Errors", "FunctionName", "bdo-${Stage}-clean-data", { "label": "clean-data" } ],
+                  [ "AWS/Lambda", "Errors", "FunctionName", "bdo-${Stage}-store-data", { "label": "store-data" } ],
+                  [ "AWS/Lambda", "Errors", "FunctionName", "bdo-${Stage}-rollup-daily", { "label": "rollup-daily" } ],
+                  [ "AWS/Lambda", "Errors", "FunctionName", "bdo-${Stage}-purge-old-snapshots", { "label": "purge-old-snapshots" } ],
+                  [ "AWS/Lambda", "Errors", "FunctionName", "bdo-${Stage}-migrator", { "label": "migrator" } ]
+                ]
+              }
+            },
+            {
+              "type": "text", "x": 0, "y": 20, "width": 24, "height": 1,
+              "properties": { "markdown": "## Domain metrics  -  BdoMarket" }
+            },
+            {
+              "type": "metric", "x": 0, "y": 21, "width": 12, "height": 6,
+              "properties": {
+                "title": "ETL items stored vs failed",
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 3600,
+                "view": "timeSeries",
+                "metrics": [
+                  [ "BdoMarket", "EtlSuccessfulItems", "service", "bdo-market-insights", { "label": "Successful" } ],
+                  [ "BdoMarket", "EtlFailedItems", "service", "bdo-market-insights", { "label": "Failed" } ]
+                ]
+              }
+            },
+            {
+              "type": "metric", "x": 12, "y": 21, "width": 12, "height": 6,
+              "properties": {
+                "title": "API key hits & anomalies detected",
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 3600,
+                "view": "timeSeries",
+                "metrics": [
+                  [ "BdoMarket", "ApiKeyHits", "service", "bdo-market-insights", { "label": "ApiKeyHits" } ],
+                  [ "BdoMarket", "AnomaliesDetected", "service", "bdo-market-insights", { "label": "AnomaliesDetected" } ]
+                ]
+              }
+            }
+          ]
+        }
+
+Outputs:
+  AlarmTopicArn:
+    Description: SNS topic that all SLO alarms publish to
+    Value: !Ref AlarmTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-AlarmTopicArn'
+
+  DashboardName:
+    Value: !Sub 'bdo-${Stage}'
+    Export:
+      Name: !Sub '${AWS::StackName}-DashboardName'

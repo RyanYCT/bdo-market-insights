@@ -364,3 +364,49 @@ Each entry uses the template below; aim for ≤ 200 words.
 - Query-string params (region/sid/limit/from/to/window_days) are read
   dynamically, so they don't appear in the OpenAPI spec — revisit if
   full request documentation is needed.
+
+
+
+---
+
+## 2026-06-03 — Phase 6 observability stack: dashboard, SLO alarms, log retention
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `redesign-v3`
+**Phase:** 6 — Observability
+**Commits:** see `redesign-v3` (this session)
+
+### Done
+- Replaced the `infra/observability.yaml` placeholder with the real stack,
+  grounded in `docs/slo.md` and the design's Observability section:
+  - Three SLO alarms -> SNS topic `bdo-${Stage}-alarms` (Alarm + OK actions):
+    API 5xx rate >1%/5min (metric math 5XXError/Count), API p95 `Latency`
+    >500ms/5min, and ETL non-success in 24h.
+  - CloudWatch dashboard `bdo-${Stage}` (12 widgets): API traffic/errors,
+    latency p50/p95 (+500ms annotation), 5xx % (+1% annotation), API-Lambda
+    invocations/errors/throttles/duration, Step Functions outcomes, ETL-Lambda
+    errors, and the four `BdoMarket` domain metrics.
+  - Log-group retention for all 9 Lambdas (`LogRetentionInDays`, default 30).
+  - Optional `AlarmEmail` -> conditional SNS email subscription.
+- Wired `EtlStateMachineArn` into `ObservabilityStack` (template.yaml) via
+  `!GetAtt EtlStack.Outputs...`; trimmed its `DependsOn` to `ApiStack`.
+- Gate: cfn-lint green on the full template set; dashboard JSON parses.
+
+### Decisions
+- ETL alarm sums Failed+Aborted+TimedOut, not just ABORTED as the spec text
+  says — a retry-exhausted run ends FAILED (ABORTED is a manual stop), so the
+  literal wording would miss real failures — no ADR (strengthening; flagged).
+- 429s stay in the 5xx-rate denominator (no standalone API GW 429 metric), so
+  the availability alarm is marginally conservative — no ADR (documented).
+- Lambda log groups are owned by this stack (safe on fresh deploy); alarms
+  publish to an SNS topic with no default subscription (email opt-in) — no ADR.
+
+### Deferred / open questions
+- Two Phase 6 boxes remain and need a live `dev` stack: verify the X-Ray
+  service map end-to-end, and smoke-test the alarms (force an ETL failure and
+  a 5xx). Tracked unticked in `tasks.md`.
+- RDS dashboard widgets (CPU/connections/storage) left out to avoid wiring the
+  DB identifier across stacks; add later if useful.
+- Pre-existing log groups on an already-deployed stack would need CFN import;
+  fine for greenfield v3 — worth a runbook note at cutover.

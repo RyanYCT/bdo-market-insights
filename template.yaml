@@ -129,8 +129,12 @@ Resources:
 
   ObservabilityStack:
     Type: AWS::CloudFormation::Stack
-    DependsOn: [EtlStack, ApiStack]
+    # EtlStack ordering is enforced by the !GetAtt below. ApiStack is not
+    # referenced by output (alarms/log groups target it by name), so its
+    # ordering is kept explicit via DependsOn (cfn-lint W3005-safe).
+    DependsOn: ApiStack
     Properties:
       TemplateURL: infra/observability.yaml
       Parameters:
         Stage: !Ref Stage
+        EtlStateMachineArn: !GetAtt EtlStack.Outputs.EtlStateMachineArn
