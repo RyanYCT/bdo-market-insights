@@ -1,23 +1,184 @@
 AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
 Description: >
-  API Gateway placeholder (REST API + usage plan).
-  Implemented in Phase 5.
+  REST API for bdo-market-insights: itemRegistry (DynamoDB, /v1/items) and
+  marketQuery (RDS, /v1/market) Lambdas behind API Gateway with an API key and
+  usage plan (FR-8..17, ADR-0005). Shares the bdo-common layer from the ETL stack.
 
-# Placeholder stack: declares the Stage interface it will use in Phase 5
-# so the root template's parameter flow is stable now.
+# W3005: the SAM transform expands Auth.ApiKeyRequired + Auth.UsagePlan into
+# ApiKey / UsagePlan / UsagePlanKey resources that carry both a Ref and an
+# auto-generated DependsOn. That redundancy is emitted by the transform, not
+# authored here (this template declares no explicit DependsOn), so the warning
+# is a false positive and is ignored.
 Metadata:
   cfn-lint:
     config:
       ignore_checks:
-        - W2001
+        - W3005
 
 Parameters:
   Stage:
     Type: String
-    AllowedValues:
-      - dev
-      - prod
+    AllowedValues: [dev, prod]
+  BdoRegion:
+    Type: String
+    Description: Default BDO region (arsha.io validation in itemRegistry POST)
+  CommonLayerArn:
+    Type: String
+    Description: ARN of the shared bdo-common Lambda layer (from the ETL stack)
+  DynamoDbTableName:
+    Type: String
+    Description: bdo-v3-items table name
+  LambdaSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: SG for in-VPC Lambdas (marketQuery egress to RDS)
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet::Id
+    Description: Primary private subnet; marketQuery runs here only (ADR-0011)
+  RdsEndpoint:
+    Type: String
+    Description: RDS Postgres endpoint address
+  RdsPort:
+    Type: String
+    Description: RDS Postgres port
+  LambdaRdsAuthRoleArn:
+    Type: String
+    Description: Execution role for in-VPC Lambdas (VPC + X-Ray + rds-db:connect)
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 256
+    Tracing: Active
+    Layers:
+      - !Ref CommonLayerArn
+    Environment:
+      Variables:
+        STAGE: !Ref Stage
+        BDO_REGION: !Ref BdoRegion
+        POWERTOOLS_SERVICE_NAME: bdo-market-insights
+        POWERTOOLS_METRICS_NAMESPACE: BdoMarket
 
 Resources:
-  Placeholder:
-    Type: AWS::CloudFormation::WaitConditionHandle
+  # ──────────────────────────────────────────────
+  # REST API — API key + usage plan (FR-16/17, ADR-0005)
+  # ──────────────────────────────────────────────
+  BdoApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub 'bdo-${Stage}-api'
+      StageName: !Ref Stage
+      TracingEnabled: true
+      Auth:
+        ApiKeyRequired: true
+        UsagePlan:
+          CreateUsagePlan: PER_API
+          Description: !Sub 'bdo-${Stage} default plan: 10 RPS burst / 5 sustained, 1000/day'
+          Quota:
+            Limit: 1000
+            Period: DAY
+          Throttle:
+            BurstLimit: 10
+            RateLimit: 5
+
+  # ──────────────────────────────────────────────
+  # itemRegistry — DynamoDB registry, not in VPC (FR-8..12)
+  # ──────────────────────────────────────────────
+  ItemRegistryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-item-registry'
+      CodeUri: ../src/functions/item_registry
+      Handler: app.handler
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref DynamoDbTableName
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DynamoDbTableName
+      Events:
+        ListItems:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BdoApi
+            Path: /v1/items
+            Method: get
+        CreateItem:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BdoApi
+            Path: /v1/items
+            Method: post
+        GetItem:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BdoApi
+            Path: /v1/items/{item_id}
+            Method: get
+        UpdateItem:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BdoApi
+            Path: /v1/items/{item_id}
+            Method: patch
+        DeleteItem:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BdoApi
+            Path: /v1/items/{item_id}
+            Method: delete
+
+  # ──────────────────────────────────────────────
+  # marketQuery — RDS reads, in VPC via IAM auth (FR-13..15)
+  # ──────────────────────────────────────────────
+  MarketQueryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-market-query'
+      CodeUri: ../src/functions/market_query
+      Handler: app.handler
+      Role: !Ref LambdaRdsAuthRoleArn
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroupId
+        SubnetIds:
+          - !Ref PrivateSubnetA
+      Environment:
+        Variables:
+          DB_HOST: !Ref RdsEndpoint
+          DB_PORT: !Ref RdsPort
+          DB_NAME: bdo
+          DB_USER: lambda_rds_user
+          USE_IAM_AUTH: 'true'
+      Events:
+        Snapshots:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BdoApi
+            Path: /v1/market/items/{item_id}/snapshots
+            Method: get
+        Daily:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BdoApi
+            Path: /v1/market/items/{item_id}/daily
+            Method: get
+        Analysis:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BdoApi
+            Path: /v1/market/items/{item_id}/analysis
+            Method: get
+
+Outputs:
+  ApiUrl:
+    Description: Base invoke URL for the /v1 API (requires x-api-key header)
+    Value: !Sub 'https://${BdoApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiUrl'
+
+  ApiId:
+    Value: !Ref BdoApi
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiId'

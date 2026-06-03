@@ -115,7 +115,17 @@ Resources:
       TemplateURL: infra/api.yaml
       Parameters:
         Stage: !Ref Stage
-    DependsOn: DataStack
+        BdoRegion: !Ref BdoRegion
+        CommonLayerArn: !GetAtt EtlStack.Outputs.CommonLayerArn
+        DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
+        LambdaSecurityGroupId: !GetAtt NetworkStack.Outputs.LambdaSecurityGroupId
+        PrivateSubnetA: !GetAtt NetworkStack.Outputs.PrivateSubnetA
+        RdsEndpoint: !GetAtt DataStack.Outputs.RdsEndpoint
+        RdsPort: !GetAtt DataStack.Outputs.RdsPort
+        LambdaRdsAuthRoleArn: !GetAtt DataStack.Outputs.LambdaRdsAuthRoleArn
+    # Ordering after Network/Data/Etl is enforced by the !GetAtt *.Outputs
+    # references above (incl. the shared CommonLayerArn); an explicit
+    # DependsOn would be redundant (cfn-lint W3005).
 
   ObservabilityStack:
     Type: AWS::CloudFormation::Stack
