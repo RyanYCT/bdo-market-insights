@@ -30,7 +30,7 @@ def test_handler_runs_upgrade_head_and_returns_revision(
     monkeypatch.setenv("DB_NAME", "bdo")
     monkeypatch.setenv("DB_USER", "lambda_migrator")
     monkeypatch.setenv("USE_IAM_AUTH", "true")
-    monkeypatch.setenv("AWS_REGION", "ap-northeast-1")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
 
     from bdo_common.config import get_settings
 

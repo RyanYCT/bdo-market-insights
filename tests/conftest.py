@@ -22,8 +22,8 @@ import pytest
 os.environ.setdefault("POWERTOOLS_TRACE_DISABLED", "1")
 os.environ.setdefault("POWERTOOLS_SERVICE_NAME", "bdo-market-test")
 os.environ.setdefault("POWERTOOLS_METRICS_NAMESPACE", "BdoMarket")
-os.environ.setdefault("AWS_DEFAULT_REGION", "ap-northeast-1")
-os.environ.setdefault("AWS_REGION", "ap-northeast-1")
+os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+os.environ.setdefault("AWS_REGION", "us-east-1")
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -54,7 +54,7 @@ def lambda_context() -> Any:
     return SimpleNamespace(
         function_name="test-fn",
         function_version="$LATEST",
-        invoked_function_arn="arn:aws:lambda:ap-northeast-1:123456789012:function:test-fn",
+        invoked_function_arn="arn:aws:lambda:us-east-1:123456789012:function:test-fn",
         memory_limit_in_mb=128,
         aws_request_id="test-request-id",
     )

@@ -70,7 +70,7 @@ def get_connection() -> psycopg.Connection[tuple[Any, ...]]:
 
     password: str | None = None
     if use_iam:
-        aws_region = os.environ.get("AWS_REGION", "ap-northeast-1")
+        aws_region = os.environ.get("AWS_REGION", "us-east-1")
         password = _generate_iam_token(host, port, user, aws_region)
         logger.info("Generated IAM auth token for %s@%s:%d", user, host, port)
 

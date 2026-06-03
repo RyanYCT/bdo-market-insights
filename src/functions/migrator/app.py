@@ -50,7 +50,7 @@ def _database_url() -> str:
     from bdo_common.config import get_settings
 
     settings = get_settings()
-    region = os.environ.get("AWS_REGION", "ap-northeast-1")
+    region = os.environ.get("AWS_REGION", "us-east-1")
     token = _iam_auth_token(settings.db_host, settings.db_port, settings.db_user, region)
     url = URL.create(
         "postgresql+psycopg",

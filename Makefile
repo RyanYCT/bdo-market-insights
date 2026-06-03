@@ -1,7 +1,7 @@
 .PHONY: lint format typecheck test test-integration openapi build deploy deploy-dev deploy-prod db-tunnel-up db-tunnel-down migrate migrate-lambda seed clean
 
 STAGE ?= dev
-AWS_REGION ?= ap-northeast-1
+AWS_REGION ?= us-east-1
 LOCAL_DB_PORT ?= 5432
 
 lint:
