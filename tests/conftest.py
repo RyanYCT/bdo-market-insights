@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import pathlib
+import sys
 from collections.abc import Callable
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -37,6 +38,10 @@ def load_handler() -> Callable[[str], ModuleType]:
         if spec is None or spec.loader is None:
             raise ImportError(f"cannot load handler module at {path}")
         module = importlib.util.module_from_spec(spec)
+        # Register before executing so Pydantic can resolve handler models'
+        # postponed annotations (PEP 563) via ``sys.modules[cls.__module__]`` --
+        # required by the API handlers' request-body models (e.g. ItemCreate).
+        sys.modules[spec.name] = module
         spec.loader.exec_module(module)
         return module
 
