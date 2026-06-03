@@ -39,6 +39,10 @@ def main() -> None:
         dirs_exist_ok=True,
         ignore=_IGNORE,
     )
+    # Install for the Lambda runtime target (Amazon Linux x86_64, cp312), not
+    # the build host. Without this, a Windows/macOS build pulls native wheels
+    # (pydantic_core, psycopg_binary) whose binaries Lambda's Linux runtime
+    # cannot load -> "No module named 'pydantic_core._pydantic_core'".
     subprocess.run(  # noqa: S603  # nosec B603 - fixed argv (sys.executable + repo-internal paths), no shell, no user input
         [
             sys.executable,
@@ -47,8 +51,16 @@ def main() -> None:
             "install",
             "-r",
             str(here / "requirements.txt"),
-            "-t",
+            "--target",
             str(python_dir),
+            "--platform",
+            "manylinux2014_x86_64",
+            "--implementation",
+            "cp",
+            "--python-version",
+            "3.12",
+            "--only-binary=:all:",
+            "--upgrade",
         ],
         check=True,
     )
