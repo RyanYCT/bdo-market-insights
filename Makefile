@@ -46,11 +46,13 @@ db-tunnel-up:
 	if [ -z "$$BASTION_ID" ] || [ "$$BASTION_ID" = "None" ]; then \
 		echo "No running bastion for stage '$(STAGE)'. Deploy with EnableBastion=true."; exit 1; fi; \
 	RDS_ENDPOINT=$$(aws cloudformation describe-stacks --region $(AWS_REGION) \
-		--query "Stacks[?starts_with(StackName,'bdo-$(STAGE)')].Outputs[?OutputKey=='RdsEndpoint'].OutputValue | [][0]" \
+		--query "Stacks[?starts_with(StackName,'bdo-market-$(STAGE)')].Outputs[?OutputKey=='RdsEndpoint'].OutputValue | [][0]" \
 		--output text); \
+	if [ -z "$$RDS_ENDPOINT" ] || [ "$$RDS_ENDPOINT" = "None" ]; then \
+		echo "Could not resolve RdsEndpoint output from stack 'bdo-market-$(STAGE)'. Is the stack deployed?"; exit 1; fi; \
 	echo "Tunnel: localhost:$(LOCAL_DB_PORT) -> $$RDS_ENDPOINT:5432 via $$BASTION_ID (Ctrl-C to close)"; \
 	aws ec2-instance-connect ssh --instance-id $$BASTION_ID --region $(AWS_REGION) \
-		--connection-type eice -- -N -L $(LOCAL_DB_PORT):$$RDS_ENDPOINT:5432
+		--connection-type eice --local-forwarding "$(LOCAL_DB_PORT):$$RDS_ENDPOINT:5432"
 
 db-tunnel-down:
 	@pkill -f "ec2-instance-connect ssh" && echo "Tunnel closed." || echo "No active tunnel."
