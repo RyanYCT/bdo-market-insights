@@ -11,20 +11,27 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Override sqlalchemy.url from environment variable
-config.set_main_option(
-    "sqlalchemy.url",
-    os.environ.get("DATABASE_URL", "postgresql://localhost/bdo"),
-)
-
 target_metadata = None
+
+
+def _database_url() -> str:
+    """Return the DB URL from the environment.
+
+    Consumed directly (offline) or injected into the engine-config dict
+    (online) -- never via ``config.set_main_option``, which routes through
+    ConfigParser and would treat the ``%`` characters in an RDS IAM auth
+    token as interpolation syntax (``ValueError: invalid interpolation
+    syntax``). The master password used during the bastion bootstrap has no
+    ``%``, which is why this only surfaced on the IAM-authenticated migrator
+    Lambda.
+    """
+    return os.environ.get("DATABASE_URL", "postgresql://localhost/bdo")
 
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=_database_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -35,8 +42,13 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
+    # Build the engine config from the [alembic] section, then inject the URL
+    # into the plain dict so the IAM token's '%'-encoded bytes bypass
+    # ConfigParser interpolation (see _database_url).
+    configuration = dict(config.get_section(config.config_ini_section, {}) or {})
+    configuration["sqlalchemy.url"] = _database_url()
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
