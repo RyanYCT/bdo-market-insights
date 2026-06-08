@@ -72,6 +72,14 @@ def upgrade() -> None:
     op.execute("GRANT rds_iam TO lambda_rds_user;")
     op.execute(_GRANTS.format(role="lambda_rds_user"))
 
+    # CRITICAL (RDS + Postgres 16): creating lambda_rds_user auto-grants the
+    # master (the creating CREATEROLE role) membership in it. Because the role
+    # holds rds_iam, that makes the master a *transitive* member of rds_iam,
+    # which forces RDS to route the master to PAM (IAM) auth and breaks its
+    # password login (FATAL: PAM authentication failed for user "postgres").
+    # Drop the auto-granted membership; lambda_rds_user keeps rds_iam itself.
+    op.execute("REVOKE lambda_rds_user FROM CURRENT_USER;")
+
     # dba: human login role; created only when a password is supplied.
     dba_password = os.environ.get("DBA_PASSWORD")
     if dba_password:

@@ -93,6 +93,15 @@ def upgrade() -> None:
     )
     op.execute("RESET ROLE;")
 
+    # CRITICAL (RDS + Postgres 16): the master created lambda_migrator, so PG16
+    # auto-grants it membership in the role, and the GRANT above reinforces it.
+    # Because lambda_migrator holds rds_iam, that membership makes the master a
+    # *transitive* member of rds_iam -- which makes RDS route the master to PAM
+    # (IAM) auth and breaks master *password* login entirely (FATAL: PAM
+    # authentication failed for user "postgres"). Drop the membership so the
+    # master keeps password auth; lambda_migrator keeps rds_iam in its own right.
+    op.execute("REVOKE lambda_migrator FROM CURRENT_USER;")
+
 
 def downgrade() -> None:
     # Match the upgrade: adopt lambda_migrator to revoke its default privileges,
