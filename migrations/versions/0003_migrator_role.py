@@ -72,6 +72,31 @@ def upgrade() -> None:
     for table in _APP_TABLES:
         op.execute(f"ALTER TABLE {table} OWNER TO lambda_migrator;")
 
+    # Alembic created alembic_version during this bootstrap run (as the master),
+    # so the master owns it and lambda_migrator cannot touch it. The in-VPC
+    # migrator Lambda runs `alembic upgrade head` as lambda_migrator on every
+    # routine migration; even a no-op at head does SELECT version_num, and a
+    # real upgrade DELETEs/INSERTs the row. Without DML here that Lambda fails
+    # with "permission denied for table alembic_version". Grant DML (not
+    # ownership) so the master keeps ownership and can still run bootstrap-level
+    # migrations through the bastion. Guarded in case the version table does not
+    # exist yet (e.g. 0003 applied in isolation).
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = 'alembic_version'
+            ) THEN
+                EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE'
+                        ' ON alembic_version TO lambda_migrator';
+            END IF;
+        END
+        $$;
+        """
+    )
+
     # Tables the migrator creates in later revisions keep granting DML to the
     # runtime role automatically (mirrors the grants in 0002).
     #
