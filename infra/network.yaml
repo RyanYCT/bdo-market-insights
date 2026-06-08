@@ -114,11 +114,13 @@ Resources:
         - Key: Name
           Value: !Sub 'bdo-${Stage}-bastion-sg'
 
-  # NOTE: These SGs intentionally omit inline egress, so AWS applies the
-  # default allow-all-egress rule. In a no-NAT VPC (ADR-0006) egress is
-  # already constrained by routing: the only reachable destinations are
-  # in-VPC (RDS) and the DynamoDB gateway endpoint (via its prefix list).
-  # The explicit 5432 egress rules below document the RDS dependency.
+  # NOTE: Adding any standalone AWS::EC2::SecurityGroupEgress rule causes EC2 to
+  # drop the implicit allow-all-egress rule for that SG, so each SG below is
+  # restricted to exactly the egress declared here. In a no-NAT VPC (ADR-0006)
+  # the only reachable destinations are in-VPC (RDS) and the DynamoDB gateway
+  # endpoint (via its prefix list); the in-VPC Lambdas only need RDS, so 5432 is
+  # all they require. The bastion additionally needs SSH egress to itself so the
+  # co-located EICE can reach it (see BastionSshEgress).
 
   # -- Lambda SG Egress --
   LambdaToRdsEgress:
@@ -168,6 +170,22 @@ Resources:
       Description: Allow SSH from the EC2 Instance Connect Endpoint
 
   # -- Bastion SG Egress --
+  # The EICE shares this SG and connects to the bastion on :22 with
+  # PreserveClientIp=false, so the traffic's source is this SG. Because the
+  # standalone egress rules below remove the implicit allow-all, the bastion
+  # needs an explicit self-referencing SSH egress rule or the EICE cannot reach
+  # it (operator -> EICE -> bastion :22). Without this the tunnel fails with
+  # "Websocket Closure Reason: Unable to connect to target".
+  BastionSshEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref BastionSG
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      DestinationSecurityGroupId: !Ref BastionSG
+      Description: Allow the co-located EICE to reach the bastion on SSH
+
   BastionToRdsEgress:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
