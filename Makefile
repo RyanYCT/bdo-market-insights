@@ -46,7 +46,7 @@ db-tunnel-up:
 	if [ -z "$$BASTION_ID" ] || [ "$$BASTION_ID" = "None" ]; then \
 		echo "No running bastion for stage '$(STAGE)'. Deploy with EnableBastion=true."; exit 1; fi; \
 	RDS_ENDPOINT=$$(aws cloudformation describe-stacks --region $(AWS_REGION) \
-		--query "Stacks[?starts_with(StackName,'bdo-market-$(STAGE)')].Outputs[?OutputKey=='RdsEndpoint'].OutputValue | [][0]" \
+		--query "Stacks[?starts_with(StackName,'bdo-market-$(STAGE)')].Outputs[] | [?OutputKey=='RdsEndpoint'].OutputValue | [0]" \
 		--output text); \
 	if [ -z "$$RDS_ENDPOINT" ] || [ "$$RDS_ENDPOINT" = "None" ]; then \
 		echo "Could not resolve RdsEndpoint output from stack 'bdo-market-$(STAGE)'. Is the stack deployed?"; exit 1; fi; \
