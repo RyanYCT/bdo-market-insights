@@ -76,14 +76,16 @@ def upgrade() -> None:
     # runtime role automatically (mirrors the grants in 0002).
     #
     # ALTER DEFAULT PRIVILEGES FOR ROLE <r> requires the executing user to hold
-    # the *inherited* privileges of <r>. On RDS the master user is not a
-    # superuser, and the membership Postgres 16 auto-grants to a role's creator
-    # is INHERIT FALSE, so the "FOR ROLE lambda_migrator" form is denied even
-    # though the master can already reassign table ownership to the role. Adopt
-    # the role via SET ROLE (the auto-granted membership is SET TRUE) and set the
-    # defaults as lambda_migrator itself; the explicit GRANT keeps this robust if
-    # the role pre-exists from an earlier partial run.
-    op.execute("GRANT lambda_migrator TO CURRENT_USER;")
+    # the *inherited* privileges of <r>. On RDS the master is not a superuser,
+    # and the membership Postgres 16 auto-grants to a role's creator is
+    # INHERIT FALSE, so the "FOR ROLE lambda_migrator" form is denied even though
+    # the master can already reassign table ownership to the role. Instead adopt
+    # the role via SET ROLE -- the auto-granted membership is SET TRUE (the same
+    # membership that let ALTER TABLE ... OWNER TO succeed above) -- and set the
+    # defaults as lambda_migrator itself. We deliberately do NOT add an explicit
+    # GRANT ... TO CURRENT_USER here: that would create a second membership edge
+    # (a different grantor) and the single REVOKE below would leave one behind,
+    # keeping the master transitively in rds_iam.
     op.execute("SET ROLE lambda_migrator;")
     op.execute(
         """
@@ -94,12 +96,13 @@ def upgrade() -> None:
     op.execute("RESET ROLE;")
 
     # CRITICAL (RDS + Postgres 16): the master created lambda_migrator, so PG16
-    # auto-grants it membership in the role, and the GRANT above reinforces it.
-    # Because lambda_migrator holds rds_iam, that membership makes the master a
-    # *transitive* member of rds_iam -- which makes RDS route the master to PAM
-    # (IAM) auth and breaks master *password* login entirely (FATAL: PAM
-    # authentication failed for user "postgres"). Drop the membership so the
-    # master keeps password auth; lambda_migrator keeps rds_iam in its own right.
+    # auto-granted it membership in the role (WITH ADMIN OPTION, so the master
+    # may revoke it). Because lambda_migrator holds rds_iam, that membership
+    # makes the master a *transitive* member of rds_iam -- which makes RDS route
+    # the master to PAM (IAM) auth and breaks master *password* login entirely
+    # (FATAL: PAM authentication failed for user "postgres"). Drop the single
+    # auto-membership edge so the master keeps password auth; lambda_migrator
+    # keeps rds_iam in its own right.
     op.execute("REVOKE lambda_migrator FROM CURRENT_USER;")
 
 
