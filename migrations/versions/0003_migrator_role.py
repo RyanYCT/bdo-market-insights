@@ -74,21 +74,38 @@ def upgrade() -> None:
 
     # Tables the migrator creates in later revisions keep granting DML to the
     # runtime role automatically (mirrors the grants in 0002).
+    #
+    # ALTER DEFAULT PRIVILEGES FOR ROLE <r> requires the executing user to hold
+    # the *inherited* privileges of <r>. On RDS the master user is not a
+    # superuser, and the membership Postgres 16 auto-grants to a role's creator
+    # is INHERIT FALSE, so the "FOR ROLE lambda_migrator" form is denied even
+    # though the master can already reassign table ownership to the role. Adopt
+    # the role via SET ROLE (the auto-granted membership is SET TRUE) and set the
+    # defaults as lambda_migrator itself; the explicit GRANT keeps this robust if
+    # the role pre-exists from an earlier partial run.
+    op.execute("GRANT lambda_migrator TO CURRENT_USER;")
+    op.execute("SET ROLE lambda_migrator;")
     op.execute(
         """
-        ALTER DEFAULT PRIVILEGES FOR ROLE lambda_migrator IN SCHEMA public
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public
             GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO lambda_rds_user;
         """
     )
+    op.execute("RESET ROLE;")
 
 
 def downgrade() -> None:
+    # Match the upgrade: adopt lambda_migrator to revoke its default privileges,
+    # since the RDS master cannot use the "FOR ROLE" form directly (see upgrade).
+    op.execute("GRANT lambda_migrator TO CURRENT_USER;")
+    op.execute("SET ROLE lambda_migrator;")
     op.execute(
         """
-        ALTER DEFAULT PRIVILEGES FOR ROLE lambda_migrator IN SCHEMA public
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public
             REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES FROM lambda_rds_user;
         """
     )
+    op.execute("RESET ROLE;")
     # Return table ownership to the role running the downgrade (the master).
     for table in _APP_TABLES:
         op.execute(f"ALTER TABLE {table} OWNER TO CURRENT_USER;")
