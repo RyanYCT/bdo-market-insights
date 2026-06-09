@@ -119,6 +119,6 @@ Domain math is specified normatively in `.kiro/specs/v3/domain-model.md`.
 - [ ] Rename remote branch `rewrite-project` →
       `archive/rewrite-project`
 - [ ] Force-update `main` to `redesign-v3`
-- [ ] `docs/cleanup-tasks.md` — list of legacy AWS resources to delete
+- [x] `docs/cleanup-tasks.md` — list of legacy AWS resources to delete
       (old IAM users/roles/policies, old RDS, old DynamoDB tables);
       manual sign-off required per item
