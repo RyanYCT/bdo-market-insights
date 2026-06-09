@@ -681,3 +681,38 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 - Run the legacy decommission (`docs/cleanup-tasks.md`) — discovery first
   (sweep `us-east-1` **and** `ap-northeast-1`), then per-item sign-off.
 - Delete the merged `redesign-v3` branch once `main` is confirmed stable.
+
+
+
+---
+
+## 2026-06-09 — Legacy v1 decommission completed
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `main` (post-cutover)
+**Phase:** Post-cutover cleanup
+**Commits:** this entry
+
+### Done
+- Completed the legacy v1 resource decommission planned in
+  `docs/cleanup-tasks.md`. Discovery ran read-only across both regions; each
+  candidate was confirmed not owned by a `bdo-market-*` (v3) stack before
+  deletion, and data stores were backed up first.
+- Migrated the still-useful legacy item metadata into the v3 per-stage
+  registries (`bdo-dev-items` / `bdo-prod-items`) ahead of dropping the source
+  tables, then removed the obsolete v1 compute, data, IAM, storage, and log
+  resources plus an orphaned empty stack in the secondary region.
+- Verified post-deletion: only the v3 resources remain (e.g. `bdo-dev-items`
+  and `bdo-prod-items` present; no legacy tables/functions left).
+
+### Decisions
+- Resource-level specifics (account id, names/ARNs, per-item sign-off) are kept
+  out of the repo and tracked privately — no concrete inventory committed to
+  GitHub (security preference). `docs/cleanup-tasks.md` remains the generic
+  template only.
+
+### Deferred / open questions
+- Drop the predeletion DynamoDB backups after a short retention window.
+- v3 is live on `main` with all phases complete; no further v1 footprint
+  outstanding.
