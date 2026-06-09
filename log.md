@@ -522,3 +522,46 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   and marketQuery stay non-functional.
 - Phase 6 boxes still open: verify the X-Ray service map end-to-end and
   smoke-test the alarms.
+
+
+
+---
+
+## 2026-06-08 — DB bootstrap via bastion: `make migrate` end-to-end
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `redesign-v3`
+**Phase:** 6 — Observability (dev-deploy validation; the deferred DB bootstrap)
+**Commits:** `0742593`, `349469f`, `6b4a12c`, `5254a66`, `aa827c5`, `9b13783`, `6403197`, `49e986e`, `44b0a20`, `cd68d30`, plus this entry
+
+### Done
+- Closed the DB-bootstrap item deferred at the first dev deploy: ran the
+  one-time `make migrate` (`0001`→`0003`) against the private RDS through the
+  EICE bastion tunnel as the master user, then worked through every failure:
+  - **Tunnel/Make:** fixed `db-tunnel-up` stack prefix + EICE port forwarding
+    and switched `RdsEndpoint` lookup to a working JMESPath query.
+  - **Network:** added the bastion's SSH self-egress so the EICE tunnel can
+    establish.
+  - **Alembic:** resolved `script_location` via `%(here)s` (CWD-independent),
+    and injected the DB URL past ConfigParser's `%`-interpolation.
+  - **Roles/grants (ADR-0008):** set default privileges as `lambda_migrator`
+    via `SET ROLE`, kept the RDS master out of `rds_iam` (revoked auto
+    membership), dropped the explicit master GRANT in `0003` (single revocable
+    edge), and granted the migrator DML on `alembic_version`.
+- Rewrote the runbook bootstrap into copy-pasteable steps with EICE/`rds_iam`
+  caveats. Local gate stays green.
+
+### Decisions
+- Migrator owns object default privileges via `SET ROLE lambda_migrator` rather
+  than granting per-object after the fact — keeps the master's role-graph edges
+  minimal and revocable. No ADR (refines ADR-0008's IAM-auth role model).
+
+### Deferred / open questions
+- Two Phase 6 boxes still need the live stack post-bootstrap: verify the X-Ray
+  service map end-to-end and smoke-test the SLO alarms (force an ETL failure
+  and a 5xx).
+- CI `audit` job now fails on a newly-disclosed pip self-vuln (PYSEC-2026-196,
+  fix 26.1.2) — unrelated to project deps; decide bump-vs-ignore before cutover.
+- Phase 7 cutover (soak, archive `main`, force-replace) remains, with explicit
+  approval required.
