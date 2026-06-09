@@ -22,6 +22,9 @@ dev = [
     "boto3",
     "boto3-stubs",
     "pip-audit",
+    # pip is pulled in transitively as the venv seed; pin past PYSEC-2026-196
+    # (fixed in 26.1.2) so the CI audit job stays green.
+    "pip>=26.1.2",
     "bandit",
     "alembic",
     "sqlalchemy",
