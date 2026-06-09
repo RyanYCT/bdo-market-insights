@@ -113,12 +113,12 @@ Domain math is specified normatively in `.kiro/specs/v3/domain-model.md`.
 
 ## Phase 7 — Cutover
 
-- [ ] Deploy `dev` stack; soak for 24 h
-- [ ] Deploy `prod` stack
-- [ ] Tag `archive/main-v1` at `origin/main`
-- [ ] Rename remote branch `rewrite-project` →
+- [x] Deploy `dev` stack; soak for 24 h
+- [x] Deploy `prod` stack
+- [x] Tag `archive/main-v1` at `origin/main`
+- [x] Rename remote branch `rewrite-project` →
       `archive/rewrite-project`
-- [ ] Force-update `main` to `redesign-v3`
+- [x] Force-update `main` to `redesign-v3`
 - [x] `docs/cleanup-tasks.md` — list of legacy AWS resources to delete
       (old IAM users/roles/policies, old RDS, old DynamoDB tables);
       manual sign-off required per item
