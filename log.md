@@ -643,3 +643,41 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   --target-table bdo-dev-items`. Prod is a clean first create.
 - Remaining Phase 7: deploy prod, archive `main`/`rewrite-project`,
   force-replace `main` — destructive, explicit approval required.
+
+
+
+---
+
+## 2026-06-09 — Phase 7 cutover: v3 is now `main`
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `redesign-v3` → `main` (cutover); follow-up on `main`
+**Phase:** 7 — Cutover (complete)
+**Commits:** PR #2 `6f8e69b` (CI retarget), plus this entry
+
+### Done
+- **Cutover executed by the operator** (destructive git ops run locally with
+  approval): tagged `archive/main-v1` at the old `origin/main`, renamed remote
+  `rewrite-project` → `archive/rewrite-project`, and force-replaced `main` with
+  `redesign-v3`. `main` now carries the v3 implementation (Phases 0–6).
+- Redeployed `dev` to pick up the DynamoDB stage-scope rename
+  (`bdo-v3-items` → `bdo-dev-items`, a CFN table replacement) and re-seeded the
+  dev registry; `prod` stood up and bootstrapped ahead of cutover.
+- Fixed a post-cutover CI gap (PR #2): the workflow still triggered on
+  `redesign-v3`, so `main` would have run no gates. Pointed `push`/
+  `pull_request` at `main` (tag-based `v*` deploy unchanged). Merged via
+  squash; this was the first CI run to register the job names on `main`.
+- Ticked the five Phase 7 boxes in `tasks.md`. All seven phases now complete.
+
+### Decisions
+- Standardise future merges into `main` on squash (clean, linear history after
+  the cutover rewrite) — no ADR (workflow choice).
+
+### Deferred / open questions
+- Enable `main` branch protection with the now-registered required status
+  checks (`lint`/`typecheck`/`test`/`integration`/`audit`/`scan`/`validate`/
+  `openapi`); re-enable PR-required + no-force-push/delete.
+- Run the legacy decommission (`docs/cleanup-tasks.md`) — discovery first
+  (sweep `us-east-1` **and** `ap-northeast-1`), then per-item sign-off.
+- Delete the merged `redesign-v3` branch once `main` is confirmed stable.
