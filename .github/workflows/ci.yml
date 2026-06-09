@@ -2,10 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [redesign-v3]
+    branches: [main]
     tags: ['v*']
   pull_request:
-    branches: [redesign-v3]
+    branches: [main]
 
 jobs:
   lint:
