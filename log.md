@@ -601,3 +601,45 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 - Phase 6 is now complete. Phase 7 cutover remains (soak dev 24h, deploy
   prod, archive `main`/`rewrite-project`, force-replace `main`,
   `docs/cleanup-tasks.md`) — destructive, explicit approval required.
+
+
+
+---
+
+## 2026-06-09 — Phase 7 prep: stage-scope the DynamoDB table
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `redesign-v3`
+**Phase:** 7 — Cutover (pre-prod-deploy fix)
+**Commits:** `5953a42` (cleanup-doc discovery review), `cc234c1`, plus this entry
+
+### Done
+- Reviewed the discovery commands in `docs/cleanup-tasks.md` and hardened them:
+  multi-region sweep (v1 likely in `ap-northeast-1`, per `1c5f554`),
+  history-expansion-safe Lambda query (grep not JMESPath `!`), plus Aurora,
+  HTTP-API (apigatewayv2), and custom EventBridge-bus coverage.
+- Answered a pre-prod question ("do dev/prod share data stores?") by auditing
+  `infra/data.yaml`: RDS is per-stack (auto-named, isolated, prod deletion
+  protection) — but the DynamoDB table name was hard-coded `bdo-v3-items`, the
+  lone resource not stage-scoped. A prod deploy would have collided with dev's
+  existing table (CREATE_FAILED) — and otherwise prod/dev would share one item
+  registry.
+- Fixed: `TableName: !Sub 'bdo-${Stage}-items'`. The name already propagates
+  dynamically (`DynamoDbTableName` output → `DYNAMODB_TABLE` env), so only the
+  one line plus name-default fallbacks (`dynamo.py`, `config.py`, seed script)
+  and descriptive docs/tests changed. Gate green: ruff, format, mypy(39),
+  132 pytest + 4 skip, cfn-lint.
+
+### Decisions
+- Stage-scope the items table to match every other `bdo-${Stage}-*` resource —
+  no ADR (corrects an oversight; consistent with the per-stage isolation in
+  `data.yaml`).
+
+### Deferred / open questions
+- **Action on next dev deploy:** the live dev table is still literally
+  `bdo-v3-items`; the rename is a CFN replacement (creates `bdo-dev-items`,
+  deletes the old one). Re-seed dev: `python scripts/seed_items.py
+  --target-table bdo-dev-items`. Prod is a clean first create.
+- Remaining Phase 7: deploy prod, archive `main`/`rewrite-project`,
+  force-replace `main` — destructive, explicit approval required.
