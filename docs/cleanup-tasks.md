@@ -40,46 +40,68 @@ points at a `bdo-market-*` stack, **keep it.**
 
 ## Discovery inventory (do this first)
 
-Read-only. Run in the target account/region (`us-east-1`) and paste results
-back into the table. Adjust the `bdo`/`bdo.` name filters to whatever the v1
-naming actually was.
+Read-only. Paste results back into the table, then fill the **Resource**
+column. Adjust the `bdo`/`bdo.` name filters to whatever the v1 naming
+actually was.
+
+> **Sweep more than one region.** v3 runs in `us-east-1`, but v1 almost
+> certainly ran in **`ap-northeast-1`** — this repo's region was corrected
+> *from* `ap-northeast-1` to `us-east-1` during the v3 bring-up
+> (commit `1c5f554`). If you only scan `us-east-1` the legacy inventory may
+> come back empty and look "already clean." Run the regional block below for
+> **each** of `us-east-1` and `ap-northeast-1` (add any others v1 may have
+> used). IAM is global — run that block once.
 
 ```sh
-REGION=us-east-1
+# --- Run once PER region -------------------------------------------------
+for REGION in us-east-1 ap-northeast-1; do
+echo "================ REGION: $REGION ================"
 
 # CloudFormation: separate v3 (keep) from any legacy stacks (candidates)
-aws cloudformation describe-stacks --region $REGION \
-  --query "Stacks[].StackName" --output table
+aws cloudformation describe-stacks --region "$REGION" \
+  --query "Stacks[].StackName" --output text | tr '\t' '\n'
 
 # DynamoDB tables — expect bdo-v3-items (KEEP) + legacy bdo.accessory (candidate)
-aws dynamodb list-tables --region $REGION --output table
+aws dynamodb list-tables --region "$REGION" --output text
 
-# RDS instances/clusters — keep the v3 one (tagged to bdo-market-*)
-aws rds describe-db-instances --region $REGION \
-  --query "DBInstances[].[DBInstanceIdentifier,Engine,DBInstanceStatus]" --output table
+# RDS instances AND Aurora clusters — keep the v3 one (tagged to bdo-market-*)
+aws rds describe-db-instances --region "$REGION" \
+  --query "DBInstances[].[DBInstanceIdentifier,Engine,DBInstanceStatus]" --output text
+aws rds describe-db-clusters --region "$REGION" \
+  --query "DBClusters[].[DBClusterIdentifier,Engine,Status]" --output text
 
-# Lambda functions NOT prefixed bdo-dev-/bdo-prod- (i.e. legacy candidates)
-aws lambda list-functions --region $REGION \
-  --query "Functions[?!starts_with(FunctionName,'bdo-dev-') && !starts_with(FunctionName,'bdo-prod-')].FunctionName" \
-  --output table
+# Lambda functions NOT prefixed bdo-dev-/bdo-prod- (i.e. legacy candidates).
+# Negation is done with grep, not JMESPath '!', to avoid bash history expansion.
+aws lambda list-functions --region "$REGION" \
+  --query "Functions[].FunctionName" --output text \
+  | tr '\t' '\n' | grep -vE '^bdo-(dev|prod)-' || true
 
-# IAM users/roles/policies mentioning the project (review each before delete)
-aws iam list-users  --query "Users[?contains(UserName,'bdo')].UserName" --output table
-aws iam list-roles  --query "Roles[?contains(RoleName,'bdo')].RoleName" --output table
+# EventBridge: default bus rules + any custom buses (which may carry their own rules)
+aws events list-rules --region "$REGION" --query "Rules[].Name" --output text
+aws events list-event-buses --region "$REGION" --query "EventBuses[].Name" --output text
+
+# API Gateway: both REST (v1) and HTTP/WebSocket (v2) APIs
+aws apigateway get-rest-apis --region "$REGION" \
+  --query "items[].[name,id]" --output text
+aws apigatewayv2 get-apis --region "$REGION" \
+  --query "Items[].[Name,ApiId,ProtocolType]" --output text
+
+done
+
+# --- Run ONCE (IAM is global, no region) ---------------------------------
+# Review each: the 'bdo' filter also surfaces v3's NAMED roles — exclude
+# anything tagged to a bdo-market-* stack (see ownership check below).
+aws iam list-users  --query "Users[?contains(UserName,'bdo')].UserName" --output text
+aws iam list-roles  --query "Roles[?contains(RoleName,'bdo')].RoleName" --output text
 aws iam list-policies --scope Local \
-  --query "Policies[?contains(PolicyName,'bdo')].[PolicyName,Arn]" --output table
-
-# EventBridge rules + API Gateway REST APIs not owned by a bdo-market-* stack
-aws events list-rules --region $REGION --query "Rules[].Name" --output table
-aws apigateway get-rest-apis --region $REGION \
-  --query "items[].[name,id]" --output table
+  --query "Policies[?contains(PolicyName,'bdo')].[PolicyName,Arn]" --output text
 ```
 
 For any candidate, confirm ownership before acting:
 
 ```sh
 # Is this resource part of a v3 stack? (example: a DynamoDB table)
-aws dynamodb list-tags-of-resource --region $REGION \
+aws dynamodb list-tags-of-resource --region "$REGION" \
   --resource-arn <arn> \
   --query "Tags[?Key=='aws:cloudformation:stack-name']"
 ```
@@ -146,6 +168,9 @@ policies before deleting roles/users.
 - Exact legacy names are intentionally blank — fill from discovery rather than
   assume. The only legacy name hard-referenced in this repo is the DynamoDB
   table **`bdo.accessory`** (`scripts/seed_items.py`).
+- **Region:** v1 likely ran in `ap-northeast-1` (the region this repo was
+  corrected away from in `1c5f554`); the discovery block sweeps both that and
+  `us-east-1`. Confirm the actual v1 region before concluding "nothing found."
 - Confirm whether v1 ran any **NAT Gateway** — it bills hourly + per-GB, so
   it is the highest-value early deletion (v3 has none, per ADR-0006).
 - Branch archiving (`tag archive/main-v1`, rename `rewrite-project` →
