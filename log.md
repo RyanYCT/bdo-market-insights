@@ -565,3 +565,39 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   fix 26.1.2) — unrelated to project deps; decide bump-vs-ignore before cutover.
 - Phase 7 cutover (soak, archive `main`, force-replace) remains, with explicit
   approval required.
+
+
+
+---
+
+## 2026-06-09 — Phase 6 close-out: live dev validation + CI audit fix
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `redesign-v3`
+**Phase:** 6 — Observability (final two boxes)
+**Commits:** `69134a2`, `da0c13f`, plus this entry
+
+### Done
+- Reviewed `redesign-v3`; reconciled a disjoint local history against the
+  true remote tip (`cd68d30`) and rebuilt the branch cleanly so changes
+  fast-forward (no force-push).
+- Recorded the previously un-logged 2026-06-08 DB-bootstrap session (`make
+  migrate` end-to-end via the EICE bastion; 10 commits).
+- Fixed the CI `audit` job: pinned `pip>=26.1.2` (PyPI `uv.lock` refresh) to
+  clear PYSEC-2026-196 in pip itself; `pip-audit` now exits 0. Local gate
+  green (ruff, format, mypy strict 39 files, 132 pytest + 4 integration skip).
+- Closed the two open Phase 6 boxes against the live `bdo-market-dev` stack
+  (us-east-1), confirmed by the operator:
+  - X-Ray service map connected end-to-end (API GW → Lambda → RDS/DynamoDB).
+  - SLO alarms transition to ALARM and SNS fires on a forced ETL failure and
+    a forced API 5xx.
+
+### Decisions
+- Pin pip as an explicit dev dependency rather than `--ignore-vuln` — keeps
+  the audit honest and self-heals once the runner image ships 26.1.2. No ADR.
+
+### Deferred / open questions
+- Phase 6 is now complete. Phase 7 cutover remains (soak dev 24h, deploy
+  prod, archive `main`/`rewrite-project`, force-replace `main`,
+  `docs/cleanup-tasks.md`) — destructive, explicit approval required.

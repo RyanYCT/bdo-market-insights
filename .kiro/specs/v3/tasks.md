@@ -108,8 +108,8 @@ Domain math is specified normatively in `.kiro/specs/v3/domain-model.md`.
 
 - [x] `infra/observability.yaml` — CloudWatch dashboard, alarms,
       log-group retention
-- [ ] Verify X-Ray service map end-to-end against `dev` stack
-- [ ] Smoke-test alarms (force ETL failure, force 5xx)
+- [x] Verify X-Ray service map end-to-end against `dev` stack
+- [x] Smoke-test alarms (force ETL failure, force 5xx)
 
 ## Phase 7 — Cutover
 
