@@ -33,7 +33,7 @@ os.environ.setdefault("AWS_SESSION_TOKEN", "testing")
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 _MIGRATIONS_DIR = _REPO_ROOT / "migrations"
-_TABLE_NAME = "bdo-v3-items"
+_TABLE_NAME = "bdo-dev-items"
 
 
 def _to_psycopg_url(url: str) -> str:
@@ -121,7 +121,7 @@ def db_conn(_schema: None, pg_url: str) -> Iterator[psycopg.Connection[tuple[Any
 
 @pytest.fixture
 def dynamo_table(_db_env: None) -> Iterator[None]:
-    """Provide a moto-mocked ``bdo-v3-items`` table, active for the test body."""
+    """Provide a moto-mocked ``bdo-<stage>-items`` table, active for the test body."""
     with moto.mock_aws():
         client = boto3.client("dynamodb", region_name=os.environ["AWS_REGION"])
         client.create_table(

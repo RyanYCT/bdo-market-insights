@@ -38,7 +38,7 @@ class TestGetSettings:
         assert s.db_port == 5432
         assert s.db_name == "bdo"
         assert s.db_user == "lambda_rds_user"
-        assert s.dynamodb_table == "bdo-v3-items"
+        assert s.dynamodb_table == "bdo-dev-items"
         assert s.stage == "dev"
         assert s.use_iam_auth is False
 

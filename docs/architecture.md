@@ -22,7 +22,7 @@ API Gateway (REST, API key)
 
 Data Stores
   - RDS Postgres   : market_snapshot, market_daily, item, item_sid
-  - DynamoDB       : bdo-v3-items (item registry)
+  - DynamoDB       : bdo-<stage>-items (item registry)
 
 Shared Layer (bdo-common)
   arsha_client, db, models, repositories, pricing, analytics

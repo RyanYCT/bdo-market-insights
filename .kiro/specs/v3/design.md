@@ -137,7 +137,7 @@ All price columns are `BIGINT` (BDO prices reach 3 × 10¹¹).
 
 ### DynamoDB
 
-- **`bdo-v3-items`** — PK `id` (Number), `PAY_PER_REQUEST`. Sole
+- **`bdo-${Stage}-items`** — PK `id` (Number), `PAY_PER_REQUEST`. Sole
   authoritative source for item registry. Postgres `item` is its
   read-side projection, populated lazily by `storeData` on first
   observation (ADR-0010). Seeded once from `bdo.accessory`.

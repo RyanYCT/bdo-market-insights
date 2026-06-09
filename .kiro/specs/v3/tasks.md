@@ -40,7 +40,7 @@ deferred to Phase 7 — cutover — and are listed there.
 - [x] `infra/network.yaml` — VPC, 2 private subnets, DynamoDB gateway
       endpoint, security groups (Lambda SG, RDS SG, bastion SG)
 - [x] `infra/data.yaml` — RDS Postgres (db `bdo`), DynamoDB
-      `bdo-v3-items`, IAM auth role, Secrets Manager entry for `dba`
+      `bdo-${Stage}-items`, IAM auth role, Secrets Manager entry for `dba`
       role
 - [x] `infra/bastion.yaml` — gated by `EnableBastion`; t4g.nano in
       private subnet; EC2 Instance Connect Endpoint
@@ -51,7 +51,7 @@ deferred to Phase 7 — cutover — and are listed there.
       deploy job does not run them (private RDS is unreachable from a
       GitHub runner). In-VPC migrator Lambda deferred to Phase 4.
 - [x] `scripts/seed_items.py` — one-time copy of 23 items from
-      `bdo.accessory` → `bdo-v3-items` (Postgres seeds itself via ETL)
+      `bdo.accessory` → `bdo-${Stage}-items` (Postgres seeds itself via ETL)
 - [x] Restore `sam validate` step in `.github/workflows/ci.yml` now
       that nested infra templates exist
 
@@ -64,7 +64,7 @@ Domain math is specified normatively in `.kiro/specs/v3/domain-model.md`.
       (`Record`, `Item` incl. `model_id`/`cron_table`, `ItemSid`,
       `SnapshotRow`, `DailyRow`)
 - [x] `db.py` — psycopg3 module-global connection helper, IAM-auth aware
-- [x] `dynamo.py` — typed wrappers for `bdo-v3-items`
+- [x] `dynamo.py` — typed wrappers for `bdo-${Stage}-items`
 - [x] `repositories.py` — `ItemRepo`, `ItemSidRepo`, `SnapshotRepo`,
       `DailyRepo` (parameterized SQL, no ORM)
 - [x] `pricing.py` — model registry (ADR-0012); `accessory_v1` (A1)

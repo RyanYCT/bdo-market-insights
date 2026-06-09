@@ -33,7 +33,7 @@ class Record(BaseModel):
 
 
 class Item(BaseModel):
-    """DynamoDB item (bdo-v3-items table)."""
+    """DynamoDB item (bdo-<stage>-items table)."""
 
     model_config = ConfigDict(frozen=True)
 

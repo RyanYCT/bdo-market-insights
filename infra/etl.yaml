@@ -20,7 +20,7 @@ Parameters:
     Description: Primary private subnet; in-VPC Lambdas run here only (ADR-0011)
   DynamoDbTableName:
     Type: String
-    Description: bdo-v3-items table name
+    Description: per-stage items table name (bdo-<stage>-items)
   RdsEndpoint:
     Type: String
     Description: RDS Postgres endpoint address

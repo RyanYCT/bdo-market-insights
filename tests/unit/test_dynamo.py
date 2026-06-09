@@ -13,8 +13,8 @@ from bdo_common.models import Item
 
 @pytest.fixture()
 def dynamodb_table(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """Create a mock DynamoDB table matching the bdo-v3-items schema."""
-    monkeypatch.setenv("DYNAMODB_TABLE", "bdo-v3-items")
+    """Create a mock DynamoDB table matching the bdo-<stage>-items schema."""
+    monkeypatch.setenv("DYNAMODB_TABLE", "bdo-dev-items")
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
@@ -24,7 +24,7 @@ def dynamodb_table(monkeypatch: pytest.MonkeyPatch) -> Any:
     with moto.mock_aws():
         client = boto3.client("dynamodb", region_name="us-east-1")
         client.create_table(
-            TableName="bdo-v3-items",
+            TableName="bdo-dev-items",
             KeySchema=[{"AttributeName": "id", "KeyType": "HASH"}],
             AttributeDefinitions=[
                 {"AttributeName": "id", "AttributeType": "N"},

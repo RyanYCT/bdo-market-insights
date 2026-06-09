@@ -28,7 +28,7 @@ Parameters:
     Description: ARN of the shared bdo-common Lambda layer (from the ETL stack)
   DynamoDbTableName:
     Type: String
-    Description: bdo-v3-items table name
+    Description: per-stage items table name (bdo-<stage>-items)
   LambdaSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
     Description: SG for in-VPC Lambdas (marketQuery egress to RDS)

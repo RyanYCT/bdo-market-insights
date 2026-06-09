@@ -1,6 +1,6 @@
 """itemRegistry API Lambda: DynamoDB-backed item registry (``/v1/items``).
 
-Powertools REST resolver implementing FR-8..12. The ``bdo-v3-items`` DynamoDB
+Powertools REST resolver implementing FR-8..12. The ``bdo-<stage>-items`` DynamoDB
 table is the authoritative registry (ADR-0010); the Postgres ``item`` table is
 populated lazily by the next ETL run. ``POST`` validates the item id against
 arsha.io before writing. Runs outside the VPC (DynamoDB via default egress +

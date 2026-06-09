@@ -1,4 +1,4 @@
-"""One-time seed: copy items from bdo.accessory DynamoDB table to bdo-v3-items."""
+"""One-time seed: copy items from bdo.accessory DynamoDB table to bdo-<stage>-items."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ def seed_target_table(items: list[dict], target_table_name: str, *, dry_run: boo
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Seed bdo-v3-items DynamoDB table from bdo.accessory"
+        description="Seed the per-stage items DynamoDB table from bdo.accessory"
     )
     parser.add_argument(
         "--source-table",
@@ -72,8 +72,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--target-table",
-        default="bdo-v3-items",
-        help="Target DynamoDB table name (default: bdo-v3-items)",
+        default="bdo-dev-items",
+        help="Target DynamoDB table name (per stage, e.g. bdo-dev-items / bdo-prod-items)",
     )
     parser.add_argument(
         "--dry-run",

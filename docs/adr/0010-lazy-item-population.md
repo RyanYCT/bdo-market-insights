@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-The item catalog lives in DynamoDB (`bdo-v3-items`). Postgres needs an `item`
+The item catalog lives in DynamoDB (`bdo-<stage>-items`). Postgres needs an `item`
 table for JOINs in market queries. Options considered were DynamoDB Streams for
 real-time sync, a scheduled batch copy, and lazy population on first
 observation.

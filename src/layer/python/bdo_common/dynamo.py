@@ -1,4 +1,4 @@
-"""Typed DynamoDB wrappers for the bdo-v3-items table."""
+"""Typed DynamoDB wrappers for the per-stage items table (bdo-<stage>-items)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from bdo_common.models import Item
 
 logger = logging.getLogger(__name__)
 
-_TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "bdo-v3-items")
+_TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "bdo-dev-items")
 _GSI_NAME = "category-tracked-index"
 
 

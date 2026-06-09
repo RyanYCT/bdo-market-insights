@@ -28,7 +28,7 @@ These belong to the live v3 stacks and must be preserved:
 
 - CloudFormation stacks `bdo-market-dev`, `bdo-market-prod` (+ their nested
   stacks).
-- DynamoDB table **`bdo-v3-items`**.
+- DynamoDB table **`bdo-${Stage}-items`** (`bdo-dev-items`, `bdo-prod-items`).
 - Everything named `bdo-<stage>-*` (e.g. `bdo-dev-*`, `bdo-prod-*`):
   Lambdas (`bdo-<stage>-migrator`, the 8 functions), the `bdo-common` layer,
   `bdo-<stage>-alarms` SNS topic, `bdo-<stage>-dba-credentials` secret, the
@@ -61,7 +61,7 @@ echo "================ REGION: $REGION ================"
 aws cloudformation describe-stacks --region "$REGION" \
   --query "Stacks[].StackName" --output text | tr '\t' '\n'
 
-# DynamoDB tables — expect bdo-v3-items (KEEP) + legacy bdo.accessory (candidate)
+# DynamoDB tables — expect bdo-<stage>-items (KEEP) + legacy bdo.accessory (candidate)
 aws dynamodb list-tables --region "$REGION" --output text
 
 # RDS instances AND Aurora clusters — keep the v3 one (tagged to bdo-market-*)
@@ -114,7 +114,7 @@ Legacy / pre-v3 only. Fill actual names from discovery; one sign-off per row.
 
 | # | Resource (actual name/ARN) | What it is | Decision | Signed off by | Done |
 |---|----------------------------|------------|----------|---------------|------|
-| D1 | `bdo.accessory` (DynamoDB) | v1 item table; v3 seed source (`scripts/seed_items.py`). Delete only after confirming `bdo-v3-items` is fully populated and authoritative. |  |  | [ ] |
+| D1 | `bdo.accessory` (DynamoDB) | v1 item table; v3 seed source (`scripts/seed_items.py`). Delete only after confirming the v3 `bdo-prod-items` table is fully populated and authoritative. |  |  | [ ] |
 | D2 | _legacy RDS instance_ | v1 Postgres/MySQL (if any). **Take a final snapshot before deletion.** |  |  | [ ] |
 | D3 | _other legacy DynamoDB tables_ | any v1/v2 tables surfaced by discovery |  |  | [ ] |
 

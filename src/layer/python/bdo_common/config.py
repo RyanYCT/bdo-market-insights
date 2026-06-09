@@ -32,7 +32,7 @@ def get_settings() -> Settings:
         db_port=int(os.environ.get("DB_PORT", "5432")),
         db_name=os.environ.get("DB_NAME", "bdo"),
         db_user=os.environ.get("DB_USER", "lambda_rds_user"),
-        dynamodb_table=os.environ.get("DYNAMODB_TABLE", "bdo-v3-items"),
+        dynamodb_table=os.environ.get("DYNAMODB_TABLE", "bdo-dev-items"),
         stage=os.environ.get("STAGE", "dev"),
         use_iam_auth=os.environ.get("USE_IAM_AUTH", "false").lower() in ("1", "true", "yes"),
     )

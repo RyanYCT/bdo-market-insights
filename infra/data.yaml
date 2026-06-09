@@ -83,12 +83,12 @@ Resources:
           Value: !Sub 'bdo-${Stage}-postgres'
 
   # ──────────────────────────────────────────────
-  # DynamoDB Table — bdo-v3-items
+  # DynamoDB Table — bdo-${Stage}-items
   # ──────────────────────────────────────────────
   ItemsTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: bdo-v3-items
+      TableName: !Sub 'bdo-${Stage}-items'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: id
