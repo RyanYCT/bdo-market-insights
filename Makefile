@@ -1,8 +1,11 @@
-.PHONY: lint format typecheck test test-integration openapi build deploy deploy-dev deploy-prod db-tunnel-up db-tunnel-down migrate migrate-lambda seed clean
+.PHONY: lint format typecheck test test-integration openapi build verify-layer deploy deploy-dev deploy-prod db-tunnel-up db-tunnel-down migrate migrate-lambda seed clean
 
 STAGE ?= dev
 AWS_REGION ?= us-east-1
 LOCAL_DB_PORT ?= 5432
+
+# Built layer artifacts (CommonLayer is nested under EtlStack).
+LAYER_PYTHON := .aws-sam/build/EtlStack/CommonLayer/python
 
 lint:
 	uv run ruff check . && uv run ruff format --check .
@@ -28,14 +31,30 @@ openapi:
 
 build:
 	sam build
+	$(MAKE) verify-layer
 
-deploy:
+# Fail loudly if the built CommonLayer is missing its runtime dependencies,
+# so a broken (e.g. source-only) layer can never reach `sam deploy`. This
+# guards against pip silently vendoring nothing (exit 0) on an unwritable or
+# Windows-mounted (/mnt/*) build filesystem. build_layer.py asserts the same
+# set at build time; this is the deploy-gate backstop.
+verify-layer:
+	@for pkg in bdo_common aws_lambda_powertools pydantic pydantic_core psycopg; do \
+		test -d "$(LAYER_PYTHON)/$$pkg" || { \
+			echo "ERROR: built layer missing '$$pkg' under $(LAYER_PYTHON)"; \
+			echo "Refusing to deploy a layer without its runtime dependencies."; \
+			echo "Run 'make build' on a native Linux filesystem (not /mnt/*) first."; \
+			exit 1; }; \
+	done; \
+	echo "verify-layer: CommonLayer contains its runtime dependencies."
+
+deploy: verify-layer
 	sam deploy --config-env dev
 
-deploy-dev:
+deploy-dev: verify-layer
 	sam deploy --config-env dev
 
-deploy-prod:
+deploy-prod: verify-layer
 	sam deploy --config-env prod
 
 db-tunnel-up:

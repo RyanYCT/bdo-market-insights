@@ -24,6 +24,34 @@ from pathlib import Path
 
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc")
 
+# Top-level packages that MUST exist under the layer after a successful build.
+# pip can exit 0 having vendored nothing usable (e.g. when --target points at a
+# filesystem it cannot write to, or a wheel resolution that drops deps), which
+# silently publishes a source-only layer and breaks every function at init with
+# "No module named 'aws_lambda_powertools'". Asserting here fails the build
+# loudly instead of shipping a broken layer.
+_REQUIRED_PACKAGES = (
+    "bdo_common",  # hand-authored source (copytree step)
+    "aws_lambda_powertools",  # aws-lambda-powertools[tracer]
+    "pydantic",
+    "pydantic_core",  # native wheel; the cross-platform canary
+    "psycopg",  # psycopg[binary]
+)
+
+
+def _verify_layer(python_dir: Path) -> None:
+    """Fail the build if any required package is absent from the layer."""
+    missing = [pkg for pkg in _REQUIRED_PACKAGES if not (python_dir / pkg).is_dir()]
+    if missing:
+        raise SystemExit(
+            "Layer build is incomplete - missing package(s): "
+            + ", ".join(missing)
+            + f"\nunder {python_dir}\n"
+            "Refusing to produce a layer without its runtime dependencies. "
+            "Build on a native Linux filesystem (not a Windows-mounted /mnt/* "
+            "path) and ensure pip could write to the target directory."
+        )
+
 
 def main() -> None:
     if len(sys.argv) < 2:
@@ -64,6 +92,11 @@ def main() -> None:
         ],
         check=True,
     )
+
+    # Guardrail: never let an incomplete layer reach `sam deploy` (see
+    # _REQUIRED_PACKAGES). A bad build now fails here instead of silently
+    # publishing a source-only layer that breaks all functions at init.
+    _verify_layer(python_dir)
 
 
 if __name__ == "__main__":

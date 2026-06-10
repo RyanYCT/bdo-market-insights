@@ -716,3 +716,44 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 - Drop the predeletion DynamoDB backups after a short retention window.
 - v3 is live on `main` with all phases complete; no further v1 footprint
   outstanding.
+
+
+
+---
+
+## 2026-06-10 — API custom domain (ADR-0013) + CommonLayer build hardening
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `api-custom-domain` (PR #8), `harden-layer-build` (PR #9)
+**Phase:** Post-cutover (operational)
+**Commits:** PR #8 `995e124` (merged), PR #9 (open)
+
+### Done
+- Re-applied a prior shell-outage handover (work was never on disk):
+  optional, parameter-driven API custom domain — regional ACM cert
+  (DNS-validated via Route 53), API GW `DomainName`, base-path mapping,
+  A-alias, gated on `HasCustomDomain`. ADR-0013 + docs. cfn-lint green;
+  `example.com` placeholders only. Merged (PR #8) and deployed/verified
+  by the operator.
+- Diagnosed a prod ETL outage (`RetrieveItems`: `No module named
+  'aws_lambda_powertools'`). Root cause from CloudTrail: a native-Windows
+  `sam build` republished `CommonLayer` with only `bdo_common` source and
+  none of its deps (~20 KB), and `RetentionPolicy: Delete` removed the
+  last-good version. Fixed by rebuilding on the WSL **native** filesystem
+  (not `/mnt/*`, where `pip install --target` fails on drvfs).
+- Hardened the layer build (PR #9): `build_layer.py` now asserts required
+  packages exist post-install, and a Makefile `verify-layer` gate blocks
+  `deploy*` on an incomplete artifact.
+
+### Decisions
+- API custom domain → ADR-0013.
+- Layer build guardrails → no ADR (build-tooling; backstops ADR-0003).
+
+### Deferred / open questions
+- Pin the layer deps (lockfile/exact versions) so the layer hash only
+  changes intentionally, not on upstream releases within the `>=,<` ranges.
+- Consider `RetentionPolicy: Retain` on `CommonLayer` to keep a rollback
+  target (the `Delete` policy left no fallback during the outage).
+- Activate the custom domain on prod via `--parameter-overrides` (inert
+  until then); dev would be `api.dev.<domain>` once rebuilt.
