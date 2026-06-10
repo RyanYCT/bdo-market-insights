@@ -43,6 +43,16 @@ Parameters:
       - 'true'
       - 'false'
     Description: Deploy t4g.nano bastion for DBA access via EICE SSH tunnel
+  ApiDomainName:
+    Type: String
+    Default: ''
+    Description: >
+      Custom API hostname (e.g. api.example.com). Empty disables the custom
+      domain. Supplied per stage at deploy time; not stored in committed config.
+  HostedZoneId:
+    Type: String
+    Default: ''
+    Description: Route 53 hosted zone ID for the parent domain (shared infra; ADR-0013).
 
 Conditions:
   DeployBastion: !Equals [!Ref EnableBastion, 'true']
@@ -123,6 +133,8 @@ Resources:
         RdsEndpoint: !GetAtt DataStack.Outputs.RdsEndpoint
         RdsPort: !GetAtt DataStack.Outputs.RdsPort
         LambdaRdsAuthRoleArn: !GetAtt DataStack.Outputs.LambdaRdsAuthRoleArn
+        ApiDomainName: !Ref ApiDomainName
+        HostedZoneId: !Ref HostedZoneId
     # Ordering after Network/Data/Etl is enforced by the !GetAtt *.Outputs
     # references above (incl. the shared CommonLayerArn); an explicit
     # DependsOn would be redundant (cfn-lint W3005).

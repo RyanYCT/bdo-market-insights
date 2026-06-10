@@ -50,7 +50,7 @@ Game economies are large, volatile, real-time datasets — a realistic stand-in 
 
 **Shared Lambda layer (`bdo-common`)** holds all reusable logic — the arsha.io client + normalizer, psycopg connection helper, Pydantic models, SQL repositories, the pricing models, and the analytics functions — so the eight handlers stay thin.
 
-See [`docs/architecture.md`](docs/architecture.md) for the full breakdown and [`docs/adr/`](docs/adr/) for the 12 Architecture Decision Records explaining the *why* behind each major choice.
+See [`docs/architecture.md`](docs/architecture.md) for the full breakdown and [`docs/adr/`](docs/adr/) for the 13 Architecture Decision Records explaining the *why* behind each major choice.
 
 ## Tech stack
 
@@ -77,7 +77,7 @@ These are the decisions a reviewer might find most relevant:
 
 ## API overview
 
-All `/v1/*` endpoints require an API key (usage plan: 10 RPS burst / 5 sustained, 1000 req/day).
+All `/v1/*` endpoints require an API key (usage plan: 10 RPS burst / 5 sustained, 1000 req/day). The API is served from the generated API Gateway URL, with an optional branded custom domain (`api[.<env>].example.com`) via ACM + Route 53 (ADR-0013).
 
 ```
 # Item registry (DynamoDB-backed)
@@ -118,7 +118,7 @@ Database schema is managed by Alembic and applied via an in-VPC migrator Lambda.
 ## Documentation
 
 - **[Architecture](docs/architecture.md)** — components, data flow, networking
-- **[ADRs](docs/adr/)** — 12 architecture decision records
+- **[ADRs](docs/adr/)** — 13 architecture decision records
 - **[Runbook](docs/runbook.md)** — operations, DB access, migrations, failure scenarios
 - **[SLOs](docs/slo.md)** — availability and latency targets
 
