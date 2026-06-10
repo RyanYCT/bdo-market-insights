@@ -17,6 +17,7 @@ EventBridge (cron)
        -> purgeOldSnapshots (daily schedule)
 
 API Gateway (REST, API key)
+  [optional custom domain: api[.<env>].example.com -> ACM cert + Route 53 alias]
   -> itemRegistry Lambda   (DynamoDB read/write)
   -> marketQuery Lambda    (RDS read)
 
@@ -55,3 +56,20 @@ VPC. A DynamoDB Gateway Endpoint provides in-VPC access without NAT.
 
 EICE (EC2 Instance Connect Endpoint) allows DBA access to RDS through
 a bastion host without a public IP or NAT gateway.
+
+## Custom Domain (optional)
+
+The REST API can be fronted by a branded hostname (ADR-0013). It is
+**opt-in**: when the `ApiDomainName` parameter is empty (the default), no
+domain resources are created and the API is reached via the generated
+`execute-api` URL.
+
+When a hostname is supplied, the API stack provisions a regional ACM
+certificate (DNS-validated through Route 53), an API Gateway custom
+`DomainName`, a base-path mapping to the stage, and a Route 53 A-alias
+record. The parent hosted zone (`example.com`) is shared infrastructure
+owned elsewhere and is referenced by ID only — this stack never creates or
+modifies the zone beyond its own record.
+
+Naming follows `{service}.{env}.example.com`, prod omitting the env label —
+e.g. `api.example.com` (prod), `api.dev.example.com` (dev).

@@ -44,6 +44,24 @@ Parameters:
   LambdaRdsAuthRoleArn:
     Type: String
     Description: Execution role for in-VPC Lambdas (VPC + X-Ray + rds-db:connect)
+  ApiDomainName:
+    Type: String
+    Default: ''
+    Description: >
+      Custom API hostname, e.g. api.example.com (prod) or api.dev.example.com
+      (dev). Empty disables the custom domain (ADR-0013). Supplied per stage at
+      deploy time; kept out of the committed config.
+  HostedZoneId:
+    Type: String
+    Default: ''
+    Description: >
+      Route 53 hosted zone ID for the parent domain (e.g. example.com). The zone
+      is shared infrastructure owned elsewhere; this stack only adds its own
+      cert/record, never the zone (ADR-0013). Required when ApiDomainName is set.
+
+Conditions:
+  # Custom domain is opt-in: only built when a hostname is supplied.
+  HasCustomDomain: !Not [!Equals [!Ref ApiDomainName, '']]
 
 Globals:
   Function:
@@ -81,6 +99,54 @@ Resources:
           Throttle:
             BurstLimit: 10
             RateLimit: 5
+
+  # ──────────────────────────────────────────────
+  # Custom domain — optional, regional (ADR-0013)
+  # ACM cert is DNS-validated through Route 53; CloudFormation writes the
+  # validation record into the (externally owned) hosted zone and waits, so the
+  # first deploy with a domain blocks for a few minutes on issuance.
+  # ──────────────────────────────────────────────
+  ApiCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasCustomDomain
+    Properties:
+      DomainName: !Ref ApiDomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref ApiDomainName
+          HostedZoneId: !Ref HostedZoneId
+
+  ApiDomain:
+    Type: AWS::ApiGateway::DomainName
+    Condition: HasCustomDomain
+    Properties:
+      DomainName: !Ref ApiDomainName
+      RegionalCertificateArn: !Ref ApiCertificate
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      SecurityPolicy: TLS_1_2
+
+  # Maps the domain root to the API's deployed stage. The routes already carry
+  # the /v1 prefix, so BasePath is left empty (domain root -> stage root).
+  ApiBasePathMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    Condition: HasCustomDomain
+    Properties:
+      DomainName: !Ref ApiDomain
+      RestApiId: !Ref BdoApi
+      Stage: !Ref Stage
+
+  ApiDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasCustomDomain
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref ApiDomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt ApiDomain.RegionalDomainName
+        HostedZoneId: !GetAtt ApiDomain.RegionalHostedZoneId
 
   # ──────────────────────────────────────────────
   # itemRegistry — DynamoDB registry, not in VPC (FR-8..12)
@@ -182,3 +248,10 @@ Outputs:
     Value: !Ref BdoApi
     Export:
       Name: !Sub '${AWS::StackName}-ApiId'
+
+  CustomApiUrl:
+    Condition: HasCustomDomain
+    Description: Custom-domain base URL for the /v1 API (requires x-api-key header)
+    Value: !Sub 'https://${ApiDomainName}/v1'
+    Export:
+      Name: !Sub '${AWS::StackName}-CustomApiUrl'

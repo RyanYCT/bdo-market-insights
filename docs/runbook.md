@@ -122,6 +122,8 @@ bastion again once you're done (`sam deploy … EnableBastion=false`).
 | Master login: "PAM authentication failed for user postgres" | Master became a (transitive) member of `rds_iam`. See the bootstrap note above — IAM-auth in and `REVOKE` the role memberships. |
 | `make migrate-lambda`: "permission denied for table alembic_version" | `lambda_migrator` lacks DML on `alembic_version`. Re-run the `0003` grant, or one-off as master: `GRANT SELECT, INSERT, UPDATE, DELETE ON alembic_version TO lambda_migrator;`. |
 | API 5xx spike | Filter CloudWatch logs by `correlation_id`; look for connection pool exhaustion or query timeouts. |
+| Custom-domain deploy hangs at `CREATE_IN_PROGRESS` on the certificate | ACM is waiting for DNS validation. Confirm `HostedZoneId` is the correct zone for `ApiDomainName`, and that the zone is the authoritative one for the domain (NS records at the registrar point to it). Validation usually completes within minutes. |
+| Custom domain returns 403 "Forbidden" | Base-path mapping or DNS not resolved yet, or the request omits `x-api-key`. Confirm the A-alias resolves to the regional API domain and include the API key. |
 | Missed ETL runs | Safe to re-execute - writes are idempotent on `(region, item_id, sid, snapshot_at)`. |
 
 ## Deployment Procedures
@@ -131,3 +133,57 @@ bastion again once you're done (`sam deploy … EnableBastion=false`).
 | Dev | `make deploy-dev` (manual; CI deploy is tag-only) |
 | Prod | Push a `v*` tag to trigger CI deploy |
 | Rollback | Deploy the previous tag |
+
+## Custom API Domain (optional, ADR-0013)
+
+The API custom domain is opt-in and off by default. The hostname and hosted
+zone are **not** stored in committed config — they are passed at deploy time via
+`--parameter-overrides` (zone ID is account-specific). Use
+`{service}.{env}.example.com`: `api.example.com` for prod, `api.dev.example.com`
+for dev.
+
+### Prerequisites
+
+- The parent domain's hosted zone exists in Route 53 (shared infra; **not**
+  created by this stack). Get its ID:
+
+  ```sh
+  aws route53 list-hosted-zones-by-name --dns-name example.com \
+    --query 'HostedZones[0].Id' --output text   # e.g. /hostedzone/ZXXXXXXXXXXXXX
+  ```
+
+  Use the bare ID (the part after `/hostedzone/`).
+- IAM permissions to create ACM certificates, API Gateway domain names, and
+  Route 53 record sets.
+
+### Enable (prod example)
+
+Pass both params; this is additive to the existing stack:
+
+```sh
+sam deploy --config-env prod \
+  --parameter-overrides "ApiDomainName=api.example.com HostedZoneId=ZXXXXXXXXXXXXX"
+```
+
+> The first deploy that sets a domain blocks for a few minutes while ACM
+> validates the certificate via the DNS record CloudFormation writes into the
+> zone. This is expected; do not cancel the deploy. Subsequent deploys are fast.
+
+Verify, then point clients at the new base URL (the `execute-api` URL keeps
+working too):
+
+```sh
+aws cloudformation describe-stacks --stack-name bdo-market-prod \
+  --query "Stacks[0].Outputs[?ends_with(OutputKey,'CustomApiUrl')].OutputValue | [0]" \
+  --output text
+curl -H "x-api-key: <KEY>" https://api.example.com/v1/items
+```
+
+### Disable
+
+Redeploy without the overrides (params default to empty), which removes the
+cert, domain, base-path mapping, and DNS record:
+
+```sh
+sam deploy --config-env prod
+```
