@@ -120,6 +120,11 @@ components:
       - type
       title: ValidationError
       type: object
+  securitySchemes:
+    ApiKeyAuth:
+      in: header
+      name: x-api-key
+      type: apiKey
 info:
   title: BDO Market Insights API
   version: 1.0.0
@@ -328,5 +333,7 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: GET /v1/market/items/{item_id}/snapshots
+security:
+- ApiKeyAuth: []
 servers:
 - url: /

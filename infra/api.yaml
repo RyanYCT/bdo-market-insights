@@ -237,6 +237,41 @@ Resources:
             Path: /v1/market/items/{item_id}/analysis
             Method: get
 
+  # ──────────────────────────────────────────────
+  # docs — serves the OpenAPI spec + Swagger UI (ADR-0005)
+  # ──────────────────────────────────────────────
+  # Publishes the API contract over the gateway itself. Both routes set
+  # Auth.ApiKeyRequired: false to override the API-wide key requirement, so the
+  # spec and Swagger UI are reachable without a key (discovery). The makefile
+  # build bundles the merged infra/openapi.yaml (from scripts/export_openapi.py)
+  # into the package; PyYAML is vendored per-function (not in the shared layer).
+  DocsFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-docs'
+      CodeUri: ../src/functions/docs
+      Handler: app.handler
+      MemorySize: 128
+      Events:
+        OpenApiSpec:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BdoApi
+            Path: /v1/openapi.json
+            Method: get
+            Auth:
+              ApiKeyRequired: false
+        SwaggerUi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BdoApi
+            Path: /v1/docs
+            Method: get
+            Auth:
+              ApiKeyRequired: false
+
 Outputs:
   ApiUrl:
     Description: Base invoke URL for the /v1 API (requires x-api-key header)
@@ -248,6 +283,14 @@ Outputs:
     Value: !Ref BdoApi
     Export:
       Name: !Sub '${AWS::StackName}-ApiId'
+
+  OpenApiUrl:
+    Description: Public OpenAPI document (no API key required)
+    Value: !Sub 'https://${BdoApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/v1/openapi.json'
+
+  DocsUrl:
+    Description: Public Swagger UI (no API key required)
+    Value: !Sub 'https://${BdoApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/v1/docs'
 
   CustomApiUrl:
     Condition: HasCustomDomain

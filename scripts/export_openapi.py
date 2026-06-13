@@ -24,6 +24,16 @@ _TITLE = "BDO Market Insights API"
 _VERSION = "1.0.0"
 _FUNCTIONS = ("item_registry", "market_query")
 
+# Documents the API-wide key requirement (FR-16/17, ADR-0005). API Gateway is
+# the actual enforcement point (Auth.ApiKeyRequired); this only surfaces the
+# requirement in the published contract so Swagger UI shows an "Authorize" box.
+# The /v1/openapi.json and /v1/docs meta routes are served key-less and are
+# intentionally not part of this generated contract.
+_API_KEY_SCHEME = "ApiKeyAuth"
+_SECURITY_SCHEMES = {
+    _API_KEY_SCHEME: {"type": "apiKey", "in": "header", "name": "x-api-key"},
+}
+
 
 def _load_resolver(name: str) -> Any:
     """Import ``src/functions/<name>/app.py`` and return its Powertools ``app``."""
@@ -56,6 +66,11 @@ def build_openapi() -> dict[str, Any]:
         merged.setdefault("paths", {}).update(schema.get("paths", {}))
         schemas = merged.setdefault("components", {}).setdefault("schemas", {})
         schemas.update(schema.get("components", {}).get("schemas", {}))
+
+    # Declare the API key globally so every documented operation reflects the
+    # x-api-key requirement enforced by API Gateway.
+    merged.setdefault("components", {})["securitySchemes"] = _SECURITY_SCHEMES
+    merged["security"] = [{_API_KEY_SCHEME: []}]
     return merged
 
 

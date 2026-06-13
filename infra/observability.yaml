@@ -229,6 +229,12 @@ Resources:
       LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-market-query'
       RetentionInDays: !Ref LogRetentionInDays
 
+  DocsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-docs'
+      RetentionInDays: !Ref LogRetentionInDays
+
   # ──────────────────────────────────────────────
   # Dashboard
   # ──────────────────────────────────────────────
