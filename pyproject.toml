@@ -29,6 +29,7 @@ dev = [
     "alembic",
     "sqlalchemy",
     "pyyaml",
+    "types-pyyaml",
 ]
 
 [tool.hatch.build.targets.wheel]

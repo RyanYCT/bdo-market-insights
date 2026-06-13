@@ -1,0 +1,4 @@
+# PyYAML parses the bundled openapi.yaml at runtime. It is not part of the
+# shared bdo-common layer (ADR-0003), so it is vendored into this function's
+# package by build.py for the Lambda runtime target.
+pyyaml>=6,<7
