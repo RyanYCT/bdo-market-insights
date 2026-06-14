@@ -4,7 +4,7 @@ A **serverless, event-driven market-data platform** for the *Black Desert Online
 
 The project is a study in building a **production-grade serverless data pipeline cheaply and safely**: IAM-authenticated database access (no passwords), a no-NAT VPC, single shared Lambda layer, infrastructure-as-code with nested stacks, and a full CI quality gate — all targeted at **under ~US$15/month** of incremental cost.
 
-> **Status:** Live (v3). 9 Lambdas, a Step Functions ETL pipeline, and two REST APIs deployed across `dev` and `prod` via AWS SAM. All implementation phases complete.
+> **Status:** Live (v3). 10 Lambdas, a Step Functions ETL pipeline, and two REST APIs deployed across `dev` and `prod` via AWS SAM. All implementation phases complete.
 
 ---
 
@@ -12,7 +12,7 @@ The project is a study in building a **production-grade serverless data pipeline
 
 Game economies are large, volatile, real-time datasets — a realistic stand-in for any financial/IoT time-series problem. The interesting engineering isn't the game; it's the constraints:
 
-- **Time-series ingestion** from a third-party API with [five different polymorphic response shapes](#data-pipeline) that must be normalized into one schema.
+- **Time-series ingestion** from a third-party API with [five different polymorphic response shapes](docs/adr/0007-aws-lambda-powertools.md) that must be normalized into one schema.
 - **Cost discipline** — a serverless architecture that deliberately avoids the usual cost traps (NAT gateways, idle compute, RDS Proxy unless needed).
 - **Security by default** — Lambdas reach Postgres via **IAM database authentication**, so there are no database passwords anywhere in the system.
 - **Domain analytics** — turning raw prices into decisions (e.g. *what does it actually cost, on average, to enhance this accessory to PEN?*) using a probabilistic Markov model.
@@ -49,14 +49,14 @@ Game economies are large, volatile, real-time datasets — a realistic stand-in 
         └─ docs         Lambda ─► OpenAPI spec + Swagger UI (key-less routes)
 ```
 
-**Shared Lambda layer (`bdo-common`)** holds all reusable logic — the arsha.io client + normalizer, psycopg connection helper, Pydantic models, SQL repositories, the pricing models, and the analytics functions — so the eight handlers stay thin.
+**Shared Lambda layer (`bdo-common`)** holds all reusable logic — the arsha.io client + normalizer, psycopg connection helper, Pydantic models, SQL repositories, the pricing models, and the analytics functions — so the individual handlers stay thin.
 
-See [`docs/architecture.md`](docs/architecture.md) for the full breakdown and [`docs/adr/`](docs/adr/) for the 13 Architecture Decision Records explaining the *why* behind each major choice.
+See [`docs/architecture.md`](docs/architecture.md) for the full breakdown and [`docs/adr/`](docs/adr/) for the 14 Architecture Decision Records explaining the *why* behind each major choice.
 
 ## Tech stack
 
 - **Language:** Python 3.12, fully type-annotated (`mypy --strict`)
-- **Compute:** AWS Lambda (8 functions + an in-VPC migrator + docs API), Step Functions, EventBridge
+- **Compute:** AWS Lambda (8 ETL/API handlers + an in-VPC migrator + a docs API — 10 total), Step Functions, EventBridge
 - **Data:** Amazon RDS for PostgreSQL (time series), DynamoDB (item registry), Alembic (schema migrations)
 - **API:** API Gateway (REST) with API-key usage plans; OpenAPI 3.1 spec auto-generated from handlers and served via interactive Swagger UI
 - **IaC:** AWS SAM — one root `template.yaml` with nested stacks (`network`, `data`, `etl`, `api`, `observability`, `bastion`)
@@ -130,7 +130,7 @@ Database schema is managed by Alembic and applied via an in-VPC migrator Lambda.
 ## Documentation
 
 - **[Architecture](docs/architecture.md)** — components, data flow, networking
-- **[ADRs](docs/adr/)** — 13 architecture decision records
+- **[ADRs](docs/adr/)** — 14 architecture decision records
 - **[Runbook](docs/runbook.md)** — operations, DB access, migrations, failure scenarios
 - **[SLOs](docs/slo.md)** — availability and latency targets
 
