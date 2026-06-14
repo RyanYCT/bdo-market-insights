@@ -51,7 +51,7 @@ Game economies are large, volatile, real-time datasets — a realistic stand-in 
 
 **Shared Lambda layer (`bdo-common`)** holds all reusable logic — the arsha.io client + normalizer, psycopg connection helper, Pydantic models, SQL repositories, the pricing models, and the analytics functions — so the individual handlers stay thin.
 
-See [`docs/architecture.md`](docs/architecture.md) for the full breakdown and [`docs/adr/`](docs/adr/) for the 14 Architecture Decision Records explaining the *why* behind each major choice.
+See [`docs/architecture.md`](docs/architecture.md) for the full breakdown and [`docs/adr/`](docs/adr/) for the 16 Architecture Decision Records explaining the *why* behind each major choice.
 
 ## Tech stack
 
@@ -152,7 +152,7 @@ Database schema is managed by Alembic and applied via an in-VPC migrator Lambda.
 ## Documentation
 
 - **[Architecture](docs/architecture.md)** — components, data flow, networking
-- **[ADRs](docs/adr/)** — 14 architecture decision records
+- **[ADRs](docs/adr/)** — 16 architecture decision records
 - **[Runbook](docs/runbook.md)** — operations, DB access, migrations, failure scenarios
 - **[SLOs](docs/slo.md)** — availability and latency targets
 
