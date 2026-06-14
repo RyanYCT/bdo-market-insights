@@ -46,7 +46,7 @@ Game economies are large, volatile, real-time datasets — a realistic stand-in 
    API Gateway (REST + API key + usage plan)                      │
         ├─ itemRegistry Lambda ─► DynamoDB (item catalog, outside VPC)
         ├─ marketQuery  Lambda ─► RDS (read-only, in-VPC)
-        └─ docs        Lambda ──► OpenAPI spec + Swagger UI (key-less routes)
+        └─ docs         Lambda ─► OpenAPI spec + Swagger UI (key-less routes)
 ```
 
 **Shared Lambda layer (`bdo-common`)** holds all reusable logic — the arsha.io client + normalizer, psycopg connection helper, Pydantic models, SQL repositories, the pricing models, and the analytics functions — so the eight handlers stay thin.
