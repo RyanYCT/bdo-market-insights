@@ -20,12 +20,12 @@ The engine, fully unit/integration-tested before any Lambda or Bedrock wiring.
 
 - [x] `0004_market_summary.py` Alembic migration (`market_summary` table)
 - [x] `models.py` — `MarketDigest`, `DigestEntry`, `Narrative`, `MarketSummary`
-- [ ] `repositories.py` — `InsightRepo.top_movers` (item⋈market_daily, daily &
+- [x] `repositories.py` — `InsightRepo.top_movers` (item⋈market_daily, daily &
       weekly windows) + `SummaryRepo.upsert` / `get`
-- [ ] `bdo_common/insights/categories.py` — category registry (`accessory`
+- [x] `bdo_common/insights/categories.py` — category registry (`accessory`
       with enhancement-cost movement via `pricing`; `buff` price/vol/liq only)
-- [ ] `bdo_common/insights/digest.py` — `build_digest(...)` over the registry
-- [ ] `bdo_common/insights/narrative.py` — `Narrative` schema + the
+- [x] `bdo_common/insights/digest.py` — `build_digest(...)` over the registry
+- [x] `bdo_common/insights/narrative.py` — `Narrative` schema + the
       deterministic fallback renderer (doubles as Phase 2's narrative)
 - [ ] Unit tests (fake repo) + integration test (ephemeral Postgres)
 
