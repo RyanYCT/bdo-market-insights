@@ -27,7 +27,7 @@ The engine, fully unit/integration-tested before any Lambda or Bedrock wiring.
 - [x] `bdo_common/insights/digest.py` — `build_digest(...)` over the registry
 - [x] `bdo_common/insights/narrative.py` — `Narrative` schema + the
       deterministic fallback renderer (doubles as Phase 2's narrative)
-- [ ] Unit tests (fake repo) + integration test (ephemeral Postgres)
+- [x] Unit tests (fake repo) + integration test (ephemeral Postgres)
 
 ## Phase 2 — Generate, store & serve (deterministic narrative; daily; tw)
 

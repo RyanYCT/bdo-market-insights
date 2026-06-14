@@ -86,10 +86,11 @@ def _db_env(pg_url: str) -> Iterator[None]:
 
 @pytest.fixture(scope="session")
 def _schema(_db_env: None) -> None:
-    """Create the four-table schema via the Alembic ``0001`` migration.
+    """Create the schema via Alembic migrations up to ``0001``, plus extras.
 
-    Stops at ``0001`` deliberately: ``0002`` bootstraps cluster roles
+    Stops at ``0001`` deliberately: ``0002``/``0003`` bootstrap cluster roles
     (``rds_iam`` and friends) that only exist on RDS, not on a vanilla Postgres.
+    Then creates ``market_summary`` (from ``0004``) directly via DDL.
     """
     from alembic import command
     from alembic.config import Config
@@ -97,6 +98,29 @@ def _schema(_db_env: None) -> None:
     cfg = Config(str(_MIGRATIONS_DIR / "alembic.ini"))
     cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
     command.upgrade(cfg, "0001")
+
+    # Apply market_summary DDL from 0004 directly (0002/0003 need RDS roles).
+    import psycopg
+
+    url = os.environ["TEST_DATABASE_URL"]
+    with psycopg.connect(url, autocommit=True) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS market_summary (
+                region VARCHAR(16) NOT NULL,
+                period VARCHAR(8) NOT NULL,
+                summary_date DATE NOT NULL,
+                lang VARCHAR(8) NOT NULL DEFAULT 'en',
+                model_id TEXT NOT NULL,
+                digest JSONB NOT NULL,
+                narrative JSONB NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (region, period, summary_date, lang)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS ix_market_summary_region_period_date
+            ON market_summary (region, period, summary_date DESC)
+        """)
 
 
 @pytest.fixture
@@ -110,7 +134,10 @@ def db_conn(_schema: None, pg_url: str) -> Iterator[psycopg.Connection[tuple[Any
     from bdo_common import db
 
     conn: psycopg.Connection[tuple[Any, ...]] = psycopg.connect(pg_url, autocommit=True)
-    conn.execute("TRUNCATE market_daily, market_snapshot, item_sid, item RESTART IDENTITY CASCADE")
+    conn.execute(
+        "TRUNCATE market_summary, market_daily, market_snapshot, item_sid, item"
+        " RESTART IDENTITY CASCADE"
+    )
     db.close_connection()
     try:
         yield conn
