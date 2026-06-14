@@ -78,6 +78,8 @@ class TestInsightRepoTopMovers:
 
         sql, params = mock_conn.execute.call_args[0]
         assert "%s" in sql
+        # weekly query uses DISTINCT ON for resilient prior lookup
+        assert "DISTINCT ON" in sql
         # weekly query also has region, target_date, category x2 + limit
         assert params == [
             "na",
@@ -90,6 +92,26 @@ class TestInsightRepoTopMovers:
         ]
         assert len(rows) == 1
         assert rows[0][1] == "Deboreka Ring"
+
+    def test_invalid_period_raises_value_error(self, mock_conn: MagicMock) -> None:
+        with pytest.raises(ValueError, match="invalid period"):
+            InsightRepo.top_movers(
+                mock_conn,
+                region="tw",
+                category="buff",
+                period="monthly",
+                target_date=date(2026, 3, 15),
+            )
+
+    def test_typo_period_raises_value_error(self, mock_conn: MagicMock) -> None:
+        with pytest.raises(ValueError, match="invalid period"):
+            InsightRepo.top_movers(
+                mock_conn,
+                region="tw",
+                category="buff",
+                period="daly",
+                target_date=date(2026, 3, 15),
+            )
 
     def test_empty_results(self, mock_conn: MagicMock) -> None:
         mock_result = MagicMock()

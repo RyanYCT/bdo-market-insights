@@ -33,6 +33,9 @@ class InsightRepo:
         Returns list of (item_id, item_name, sid, close_price, prev_close_price,
         pct_change, total_trades_delta) ordered by |pct_change| DESC.
         """
+        if period not in ("daily", "weekly"):
+            raise ValueError(f"invalid period: {period!r}, must be 'daily' or 'weekly'")
+
         if period == "daily":
             sql = """
                 WITH latest AS (
@@ -81,7 +84,7 @@ class InsightRepo:
                 limit,
             ]
         else:
-            # weekly: compare target_date close to 7 days prior
+            # weekly: compare target_date close to most recent row at least 7 days prior
             sql = """
                 WITH latest AS (
                     SELECT d.item_id, d.sid, d.close_price, d.total_trades_delta
@@ -92,12 +95,14 @@ class InsightRepo:
                       AND i.category = %s
                 ),
                 prior AS (
-                    SELECT d.item_id, d.sid, d.close_price AS prev_close_price
+                    SELECT DISTINCT ON (d.item_id, d.sid)
+                           d.item_id, d.sid, d.close_price AS prev_close_price
                     FROM market_daily d
                     JOIN item i ON i.id = d.item_id
                     WHERE d.region = %s
-                      AND d.trade_date = %s - INTERVAL '7 days'
+                      AND d.trade_date <= %s - INTERVAL '7 days'
                       AND i.category = %s
+                    ORDER BY d.item_id, d.sid, d.trade_date DESC
                 )
                 SELECT l.item_id, i.name, l.sid, l.close_price,
                        p.prev_close_price,

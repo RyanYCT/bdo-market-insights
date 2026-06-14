@@ -294,3 +294,61 @@ class TestAccessoryHandler:
         # Without sid=0, enhancement_analysis should not be called
         # and enhancement_cost_change should be None
         assert entries[0].enhancement_cost_change is None
+
+    @patch("bdo_common.insights.categories.enhancement_analysis")
+    @patch("bdo_common.repositories.DailyRepo")
+    def test_accessory_handler_preserves_mover_close_after_fetch(
+        self, mock_daily_repo: MagicMock, mock_enhancement: MagicMock
+    ) -> None:
+        """Mover's authoritative close_price is not overwritten by _fetch_sid_prices."""
+        from bdo_common.models import DailyRow
+
+        mock_daily_repo.get_daily_window.return_value = [
+            DailyRow(
+                region="tw",
+                trade_date=date(2026, 3, 15) - __import__("datetime").timedelta(days=i),
+                item_id=11608,
+                sid=3,
+                open_price=500_000_000,
+                high_price=510_000_000,
+                low_price=490_000_000,
+                close_price=500_000_000 + i * 1_000_000,
+                avg_price=500_000_000,
+                total_trades_delta=100 + i * 10,
+                avg_stock=50,
+                snapshot_count=24,
+            )
+            for i in range(5)
+        ]
+
+        # _fetch_sid_prices returns a STALE price for sid=3 (different from mover close)
+        mock_fetchall = MagicMock()
+        mock_fetchall.fetchall.return_value = [
+            (0, 100_000_000),
+            (3, 490_000_000),  # stale: differs from mover's 500_000_000
+        ]
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value = mock_fetchall
+
+        # Capture what prices dict is passed to enhancement_analysis
+        def _capture_prices(prices: dict[int, float], model_id: str) -> dict[str, list[object]]:
+            # Verify the mover's authoritative close was re-applied
+            assert prices[3] == 500_000_000.0
+            return {
+                "transitions": [
+                    {"sid_from": 0, "sid_to": 3, "roi": 0.2},
+                ],
+            }
+
+        mock_enhancement.side_effect = _capture_prices
+
+        movers: list[tuple[int, str, int, int, int, float, int]] = [
+            (11608, "Deboreka Necklace", 3, 500_000_000, 480_000_000, 4.17, 1200),
+        ]
+
+        entries = _handle_accessory(mock_conn, "tw", "daily", date(2026, 3, 15), movers)
+
+        assert len(entries) == 1
+        # enhancement_analysis was called with the correct authoritative price
+        mock_enhancement.assert_called_once()
+        assert entries[0].enhancement_cost_change == 0.2

@@ -147,6 +147,8 @@ def _handle_accessory(
         prices: dict[int, float] = {sid: float(close_price)}
         # Attempt to get sid=0 price for clean cost
         _fetch_sid_prices(conn, region=region, item_id=item_id, prices=prices)
+        # Re-apply the mover's authoritative close to prevent stale overwrite
+        prices[sid] = float(close_price)
 
         if 0 in prices and sid in prices:
             try:
