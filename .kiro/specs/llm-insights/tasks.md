@@ -18,8 +18,8 @@ LLM (Phase 3) then upgrades the prose. Domain/analytics reuse is specified in
 
 The engine, fully unit/integration-tested before any Lambda or Bedrock wiring.
 
-- [ ] `0004_market_summary.py` Alembic migration (`market_summary` table)
-- [ ] `models.py` — `MarketDigest`, `DigestEntry`, `Narrative`, `MarketSummary`
+- [x] `0004_market_summary.py` Alembic migration (`market_summary` table)
+- [x] `models.py` — `MarketDigest`, `DigestEntry`, `Narrative`, `MarketSummary`
 - [ ] `repositories.py` — `InsightRepo.top_movers` (item⋈market_daily, daily &
       weekly windows) + `SummaryRepo.upsert` / `get`
 - [ ] `bdo_common/insights/categories.py` — category registry (`accessory`
