@@ -92,6 +92,10 @@ The specification is rebuilt on each code change, validated in CI, and serves as
 ### Endpoints
 
 ```
+# API Documentation (key-less, always available)
+GET    /v1/docs                       # Swagger UI for interactive exploration
+GET    /v1/openapi.json               # OpenAPI 3.1 specification
+
 # Item registry (DynamoDB-backed)
 GET    /v1/items?category=&tracked=
 GET    /v1/items/{id}
