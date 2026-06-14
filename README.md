@@ -111,6 +111,24 @@ GET    /v1/market/items/{id}/analysis?region=&sid=&window_days=14
 
 The `analysis` response combines a per-tier `expected_enhance_cost`, rolling-window volatility (σ, CV), a liquidity measure, and an `is_anomalous` flag (|z-score| > 3 vs the trailing window).
 
+#### Query parameters
+
+The query parameters below are part of the generated OpenAPI contract, so the
+canonical, always-current reference is **Swagger UI at `/v1/docs`** (or the raw
+spec at `/v1/openapi.json`) — try requests there directly.
+
+| Param | Routes | Type / format | Default | Notes |
+|---|---|---|---|---|
+| `region` | all market routes | enum (`tw`, `na`, `eu`, `sea`, `mena`, `kr`, `ru`, `jp`, `th`, `sa`, `console_eu`, `console_na`, `console_asia`) | `tw` | An unknown region is rejected with `400`. |
+| `sid` | all market routes | integer (enhancement sub-id) | snapshots/daily: all sids · analysis: `0` (base item) | — |
+| `from` / `to` | `snapshots` | ISO-8601 **datetime** (e.g. `2026-03-01T00:00:00Z`) | unbounded | Inclusive range. |
+| `from` / `to` | `daily` | ISO-8601 **date** (`YYYY-MM-DD`) | unbounded | Inclusive range. |
+| `limit` | `snapshots` | integer | `1000` | Clamped to `1`–`1000` (out-of-range is clamped, not rejected). |
+| `window_days` | `analysis` | integer | `14` | Bounded `1`–`90` (matches snapshot retention); out-of-range is rejected with `400`. Needs ≥ 7 daily points to produce analytics. |
+
+Invalid parameter values return `400` with a `detail` list describing the
+offending field.
+
 ## Getting started
 
 ### Prerequisites

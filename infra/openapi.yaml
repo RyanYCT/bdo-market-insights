@@ -265,6 +265,50 @@ paths:
         schema:
           title: Item Id
           type: integer
+      - description: BDO server region.
+        in: query
+        name: region
+        required: false
+        schema:
+          default: tw
+          description: BDO server region.
+          enum:
+          - na
+          - eu
+          - sea
+          - mena
+          - kr
+          - ru
+          - jp
+          - th
+          - tw
+          - sa
+          - console_eu
+          - console_na
+          - console_asia
+          title: Region
+          type: string
+      - description: Enhancement sub-id (default 0, the base item).
+        in: query
+        name: sid
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          description: Enhancement sub-id (default 0, the base item).
+          title: Sid
+      - description: Trailing analytics window in days, 1-90 (default 14).
+        in: query
+        name: window_days
+        required: false
+        schema:
+          default: 14
+          description: Trailing analytics window in days, 1-90 (default 14).
+          maximum: 90.0
+          minimum: 1.0
+          title: Window Days
+          type: integer
       responses:
         '200':
           content:
@@ -291,6 +335,61 @@ paths:
         schema:
           title: Item Id
           type: integer
+      - description: BDO server region.
+        in: query
+        name: region
+        required: false
+        schema:
+          default: tw
+          description: BDO server region.
+          enum:
+          - na
+          - eu
+          - sea
+          - mena
+          - kr
+          - ru
+          - jp
+          - th
+          - tw
+          - sa
+          - console_eu
+          - console_na
+          - console_asia
+          title: Region
+          type: string
+      - description: Enhancement sub-id; omit for all sids.
+        in: query
+        name: sid
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          description: Enhancement sub-id; omit for all sids.
+          title: Sid
+      - description: ISO-8601 date lower bound, YYYY-MM-DD (inclusive).
+        in: query
+        name: from
+        required: false
+        schema:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          description: ISO-8601 date lower bound, YYYY-MM-DD (inclusive).
+          title: From
+      - description: ISO-8601 date upper bound, YYYY-MM-DD (inclusive).
+        in: query
+        name: to
+        required: false
+        schema:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          description: ISO-8601 date upper bound, YYYY-MM-DD (inclusive).
+          title: To
       responses:
         '200':
           content:
@@ -316,6 +415,70 @@ paths:
         required: true
         schema:
           title: Item Id
+          type: integer
+      - description: BDO server region.
+        in: query
+        name: region
+        required: false
+        schema:
+          default: tw
+          description: BDO server region.
+          enum:
+          - na
+          - eu
+          - sea
+          - mena
+          - kr
+          - ru
+          - jp
+          - th
+          - tw
+          - sa
+          - console_eu
+          - console_na
+          - console_asia
+          title: Region
+          type: string
+      - description: Enhancement sub-id; omit for all sids.
+        in: query
+        name: sid
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          description: Enhancement sub-id; omit for all sids.
+          title: Sid
+      - description: ISO-8601 datetime lower bound (inclusive).
+        in: query
+        name: from
+        required: false
+        schema:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: ISO-8601 datetime lower bound (inclusive).
+          title: From
+      - description: ISO-8601 datetime upper bound (inclusive).
+        in: query
+        name: to
+        required: false
+        schema:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          description: ISO-8601 datetime upper bound (inclusive).
+          title: To
+      - description: Max rows, 1-1000 (default 1000). Out-of-range values are clamped.
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 1000
+          description: Max rows, 1-1000 (default 1000). Out-of-range values are clamped.
+          title: Limit
           type: integer
       responses:
         '200':

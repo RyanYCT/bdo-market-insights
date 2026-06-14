@@ -158,3 +158,55 @@ def test_analysis_insufficient_daily_data(
     resp = mod.handler(_event("/v1/market/items/12094/analysis"), lambda_context)
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"])["analytics"]["insufficient_data"] is True
+
+
+def test_snapshots_rejects_invalid_region(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mod.SnapshotRepo, "get_snapshots", lambda conn, **kw: [])
+    resp = mod.handler(
+        _event("/v1/market/items/12094/snapshots", query={"region": "atlantis"}),
+        lambda_context,
+    )
+    assert resp["statusCode"] == 400
+
+
+def test_snapshots_parses_datetime_filters(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake(conn: Any, **kwargs: Any) -> list[SnapshotRow]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(mod.SnapshotRepo, "get_snapshots", fake)
+    resp = mod.handler(
+        _event(
+            "/v1/market/items/12094/snapshots",
+            query={"from": "2026-03-01T00:00:00Z", "to": "2026-03-15T00:00:00Z"},
+        ),
+        lambda_context,
+    )
+    assert resp["statusCode"] == 200
+    assert captured["from_dt"] == datetime(2026, 3, 1, tzinfo=UTC)
+    assert captured["to_dt"] == datetime(2026, 3, 15, tzinfo=UTC)
+
+
+def test_daily_rejects_bad_date(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mod.DailyRepo, "get_daily", lambda conn, **kw: [])
+    resp = mod.handler(
+        _event("/v1/market/items/12094/daily", query={"from": "not-a-date"}), lambda_context
+    )
+    assert resp["statusCode"] == 400
+
+
+def test_analysis_rejects_window_days_out_of_range(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resp = mod.handler(
+        _event("/v1/market/items/12094/analysis", query={"window_days": "999"}), lambda_context
+    )
+    assert resp["statusCode"] == 400
