@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
+
+#: Summary cadence. Reserved for extension (the API and repo validate it too).
+Period = Literal["daily", "weekly"]
 
 
 class DigestEntry(BaseModel):
@@ -31,7 +35,7 @@ class MarketDigest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     region: str
-    period: str
+    period: Period
     summary_date: date
     top_n: int
     entries: list[DigestEntry]
@@ -63,7 +67,7 @@ class MarketSummary(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     region: str
-    period: str
+    period: Period
     summary_date: date
     lang: str
     model_id: str

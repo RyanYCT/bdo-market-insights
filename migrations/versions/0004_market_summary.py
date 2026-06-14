@@ -2,13 +2,14 @@
 
 Revision ID: 0004
 Revises: 0003
-Create Date: 2025-01-15 00:00:00.000000
+Create Date: 2026-06-14 00:00:00.000000
 """
 
 from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 revision: str = "0004"
 down_revision: str | None = "0003"
@@ -24,8 +25,8 @@ def upgrade() -> None:
         sa.Column("summary_date", sa.Date, nullable=False),
         sa.Column("lang", sa.String(8), nullable=False, server_default="en"),
         sa.Column("model_id", sa.Text, nullable=False),
-        sa.Column("digest", sa.dialects.postgresql.JSONB, nullable=False),
-        sa.Column("narrative", sa.dialects.postgresql.JSONB, nullable=False),
+        sa.Column("digest", postgresql.JSONB, nullable=False),
+        sa.Column("narrative", postgresql.JSONB, nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),

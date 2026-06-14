@@ -37,6 +37,12 @@ def render_narrative(digest: MarketDigest) -> Narrative:
                 f"{entry.item_name} (SID {entry.sid}): "
                 f"{entry.pct_change:+.1f}% to {entry.close_price:,}"
             )
+            # Surface the category-specific enrichment when present, so the
+            # deterministic fallback isn't purely a price ticker.
+            if entry.enhancement_cost_change is not None:
+                bullet += f"; enhance cost {entry.enhancement_cost_change:+.1f}%"
+            if entry.volatility is not None:
+                bullet += f"; volatility {entry.volatility:.2f}"
             bullets.append(bullet)
         categories.append(NarrativeCategory(category=cat_name, bullets=bullets))
 

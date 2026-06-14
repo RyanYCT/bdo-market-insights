@@ -36,101 +36,62 @@ class InsightRepo:
         if period not in ("daily", "weekly"):
             raise ValueError(f"invalid period: {period!r}, must be 'daily' or 'weekly'")
 
-        if period == "daily":
-            sql = """
-                WITH latest AS (
-                    SELECT d.item_id, d.sid, d.close_price, d.total_trades_delta
-                    FROM market_daily d
-                    JOIN item i ON i.id = d.item_id
-                    WHERE d.region = %s
-                      AND d.trade_date = %s
-                      AND i.category = %s
-                ),
-                prior AS (
-                    SELECT DISTINCT ON (d.item_id, d.sid)
-                           d.item_id, d.sid, d.close_price AS prev_close_price
-                    FROM market_daily d
-                    JOIN item i ON i.id = d.item_id
-                    WHERE d.region = %s
-                      AND d.trade_date < %s
-                      AND i.category = %s
-                    ORDER BY d.item_id, d.sid, d.trade_date DESC
-                )
-                SELECT l.item_id, i.name, l.sid, l.close_price,
-                       p.prev_close_price,
-                       CASE WHEN p.prev_close_price = 0 THEN 0.0
-                            ELSE (l.close_price - p.prev_close_price)::float
-                                 / p.prev_close_price * 100.0
-                       END AS pct_change,
-                       l.total_trades_delta
-                FROM latest l
-                JOIN prior p ON l.item_id = p.item_id AND l.sid = p.sid
-                JOIN item i ON i.id = l.item_id
-                ORDER BY ABS(
-                    CASE WHEN p.prev_close_price = 0 THEN 0.0
-                         ELSE (l.close_price - p.prev_close_price)::float
-                              / p.prev_close_price * 100.0
-                    END
-                ) DESC
-                LIMIT %s
-            """
-            params: list[object] = [
-                region,
-                target_date,
-                category,
-                region,
-                target_date,
-                category,
-                limit,
-            ]
-        else:
-            # weekly: compare target_date close to most recent row at least 7 days prior
-            sql = """
-                WITH latest AS (
-                    SELECT d.item_id, d.sid, d.close_price, d.total_trades_delta
-                    FROM market_daily d
-                    JOIN item i ON i.id = d.item_id
-                    WHERE d.region = %s
-                      AND d.trade_date = %s
-                      AND i.category = %s
-                ),
-                prior AS (
-                    SELECT DISTINCT ON (d.item_id, d.sid)
-                           d.item_id, d.sid, d.close_price AS prev_close_price
-                    FROM market_daily d
-                    JOIN item i ON i.id = d.item_id
-                    WHERE d.region = %s
-                      AND d.trade_date <= %s - INTERVAL '7 days'
-                      AND i.category = %s
-                    ORDER BY d.item_id, d.sid, d.trade_date DESC
-                )
-                SELECT l.item_id, i.name, l.sid, l.close_price,
-                       p.prev_close_price,
-                       CASE WHEN p.prev_close_price = 0 THEN 0.0
-                            ELSE (l.close_price - p.prev_close_price)::float
-                                 / p.prev_close_price * 100.0
-                       END AS pct_change,
-                       l.total_trades_delta
-                FROM latest l
-                JOIN prior p ON l.item_id = p.item_id AND l.sid = p.sid
-                JOIN item i ON i.id = l.item_id
-                ORDER BY ABS(
-                    CASE WHEN p.prev_close_price = 0 THEN 0.0
-                         ELSE (l.close_price - p.prev_close_price)::float
-                              / p.prev_close_price * 100.0
-                    END
-                ) DESC
-                LIMIT %s
-            """
-            params = [
-                region,
-                target_date,
-                category,
-                region,
-                target_date,
-                category,
-                limit,
-            ]
+        # The daily and weekly queries differ only in how the "prior" reference
+        # row is chosen: the previous available day vs. the most recent row at
+        # least 7 days earlier. Everything else (the pct_change math and the
+        # |pct_change| DESC ordering) is identical, so share one template.
+        prior_predicates = {
+            "daily": "d.trade_date < %s",
+            "weekly": "d.trade_date <= %s - INTERVAL '7 days'",
+        }
+        prior_predicate = prior_predicates[period]
+
+        sql = f"""
+            WITH latest AS (
+                SELECT d.item_id, d.sid, d.close_price, d.total_trades_delta
+                FROM market_daily d
+                JOIN item i ON i.id = d.item_id
+                WHERE d.region = %s
+                  AND d.trade_date = %s
+                  AND i.category = %s
+            ),
+            prior AS (
+                SELECT DISTINCT ON (d.item_id, d.sid)
+                       d.item_id, d.sid, d.close_price AS prev_close_price
+                FROM market_daily d
+                JOIN item i ON i.id = d.item_id
+                WHERE d.region = %s
+                  AND {prior_predicate}
+                  AND i.category = %s
+                ORDER BY d.item_id, d.sid, d.trade_date DESC
+            )
+            SELECT l.item_id, i.name, l.sid, l.close_price,
+                   p.prev_close_price,
+                   CASE WHEN p.prev_close_price = 0 THEN 0.0
+                        ELSE (l.close_price - p.prev_close_price)::float
+                             / p.prev_close_price * 100.0
+                   END AS pct_change,
+                   l.total_trades_delta
+            FROM latest l
+            JOIN prior p ON l.item_id = p.item_id AND l.sid = p.sid
+            JOIN item i ON i.id = l.item_id
+            ORDER BY ABS(
+                CASE WHEN p.prev_close_price = 0 THEN 0.0
+                     ELSE (l.close_price - p.prev_close_price)::float
+                          / p.prev_close_price * 100.0
+                END
+            ) DESC
+            LIMIT %s
+        """  # nosec B608 - prior_predicate is a fixed literal; all values are %s params
+        params: list[object] = [
+            region,
+            target_date,
+            category,
+            region,
+            target_date,
+            category,
+            limit,
+        ]
 
         rows = conn.execute(sql, params).fetchall()
         return [

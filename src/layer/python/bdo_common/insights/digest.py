@@ -10,7 +10,7 @@ from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 
 from bdo_common.insights.categories import available_categories, get_handler
-from bdo_common.insights.models import DigestEntry, MarketDigest
+from bdo_common.insights.models import DigestEntry, MarketDigest, Period
 from bdo_common.insights.repositories import InsightRepo
 
 if TYPE_CHECKING:
@@ -21,7 +21,7 @@ def build_digest(
     conn: psycopg.Connection[tuple[Any, ...]],
     *,
     region: str,
-    period: str,
+    period: Period,
     target_date: date,
     top_n: int = 5,
 ) -> MarketDigest:

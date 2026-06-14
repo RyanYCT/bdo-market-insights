@@ -8,7 +8,7 @@ objects with category-specific analytics.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from datetime import date
+from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
 
 from bdo_common.analytics import daily_liquidity, daily_volatility
@@ -128,7 +128,17 @@ def _handle_accessory(
     target_date: date,
     movers: list[tuple[int, str, int, int, int, float, int]],
 ) -> list[DigestEntry]:
-    """Accessory category: price/vol/liq + enhancement cost movement."""
+    """Accessory category: price/vol/liq + enhancement-cost movement.
+
+    ``enhancement_cost_change`` is the percent change in the expected silver to
+    enhance the item up to its current ``sid`` (the ``(sid-1) -> sid`` transition
+    under ``accessory_v1``), comparing the target date to the same prior
+    reference the price move uses (the previous day for ``daily``; ~7 days back
+    for ``weekly``). It is ``None`` for base items (``sid == 0``) or when either
+    period lacks the prices the model needs. The figure is computed via
+    ``pricing.enhancement_analysis`` so it matches the per-tier API model
+    (ADR-0016).
+    """
     entries: list[DigestEntry] = []
     for item_id, item_name, sid, close_price, prev_close, pct_change, volume in movers:
         volatility: float | None = None
@@ -142,26 +152,28 @@ def _handle_accessory(
         if volumes:
             liquidity = daily_liquidity(volumes)
 
-        # Enhancement cost analysis: build prices map from current close
-        # We use close_price as the current price for this sid
-        prices: dict[int, float] = {sid: float(close_price)}
-        # Attempt to get sid=0 price for clean cost
-        _fetch_sid_prices(conn, region=region, item_id=item_id, prices=prices)
-        # Re-apply the mover's authoritative close to prevent stale overwrite
-        prices[sid] = float(close_price)
+        # Expected enhancement cost as of the target date vs the prior reference.
+        # Price ladders are taken as-of each date so re-runs/backfills don't leak
+        # future prices. (A handful of small queries per mover -- acceptable for a
+        # once-daily batch job; not worth batching.)
+        prices_now = _fetch_sid_prices_asof(
+            conn, region=region, item_id=item_id, on_or_before=target_date
+        )
+        prices_now[sid] = float(close_price)
+        if period == "weekly":
+            prices_prev = _fetch_sid_prices_asof(
+                conn, region=region, item_id=item_id, on_or_before=target_date - timedelta(days=7)
+            )
+        else:
+            prices_prev = _fetch_sid_prices_asof(
+                conn, region=region, item_id=item_id, on_or_before=target_date, strict=True
+            )
+        prices_prev[sid] = float(prev_close)
 
-        if 0 in prices and sid in prices:
-            try:
-                analysis = enhancement_analysis(prices, model_id="accessory_v1")
-                transitions = analysis.get("transitions", [])
-                # Find the transition ending at this sid
-                for t in transitions:
-                    if t["sid_to"] == sid:
-                        # enhancement_cost_change is the ROI as a proxy
-                        enhancement_cost_change = float(t["roi"])
-                        break
-            except (KeyError, ValueError):
-                pass
+        cost_now = _expected_cost_to_reach(prices_now, sid)
+        cost_prev = _expected_cost_to_reach(prices_prev, sid)
+        if cost_now is not None and cost_prev:
+            enhancement_cost_change = (cost_now - cost_prev) / cost_prev * 100.0
 
         entries.append(
             DigestEntry(
@@ -181,23 +193,56 @@ def _handle_accessory(
     return entries
 
 
-def _fetch_sid_prices(
+def _fetch_sid_prices_asof(
     conn: psycopg.Connection[tuple[Any, ...]],
     *,
     region: str,
     item_id: int,
-    prices: dict[int, float],
-) -> None:
-    """Fetch the latest close_price for all sids of an item into prices dict."""
-    sql = """
-        SELECT DISTINCT ON (sid) sid, close_price
-        FROM market_daily
-        WHERE region = %s AND item_id = %s
-        ORDER BY sid, trade_date DESC
+    on_or_before: date,
+    strict: bool = False,
+) -> dict[int, float]:
+    """Latest ``close_price`` per sid as of a date.
+
+    Returns ``{sid: close_price}`` using each sid's most recent row on or before
+    ``on_or_before`` (strictly before it when ``strict`` is set). Date-bounding
+    keeps historical/backfill digests from using prices newer than their date.
     """
-    rows: Sequence[tuple[Any, ...]] = conn.execute(sql, (region, item_id)).fetchall()
-    for r in rows:
-        prices[int(r[0])] = float(r[1])
+    if strict:
+        sql = """
+            SELECT DISTINCT ON (sid) sid, close_price
+            FROM market_daily
+            WHERE region = %s AND item_id = %s AND trade_date < %s
+            ORDER BY sid, trade_date DESC
+        """
+    else:
+        sql = """
+            SELECT DISTINCT ON (sid) sid, close_price
+            FROM market_daily
+            WHERE region = %s AND item_id = %s AND trade_date <= %s
+            ORDER BY sid, trade_date DESC
+        """
+    rows: Sequence[tuple[Any, ...]] = conn.execute(sql, (region, item_id, on_or_before)).fetchall()
+    return {int(r[0]): float(r[1]) for r in rows}
+
+
+def _expected_cost_to_reach(prices: dict[int, float], sid: int) -> float | None:
+    """Expected silver to enhance up to ``sid`` (the ``(sid-1) -> sid`` step).
+
+    Returns ``None`` for base items (``sid <= 0``) or when the ladder lacks the
+    clean (``sid 0``) or target price the model needs. Reuses
+    ``pricing.enhancement_analysis`` so the figure matches the per-tier API
+    model (ADR-0016).
+    """
+    if sid <= 0 or 0 not in prices or sid not in prices:
+        return None
+    try:
+        analysis = enhancement_analysis(prices, model_id="accessory_v1")
+    except (KeyError, ValueError):
+        return None
+    for t in analysis["transitions"]:
+        if t["sid_to"] == sid:
+            return float(t["expected_cost"])
+    return None
 
 
 # Register built-in handlers

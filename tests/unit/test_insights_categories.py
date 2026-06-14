@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -74,7 +74,7 @@ class TestBuffHandler:
         mock_daily_repo.get_daily_window.return_value = [
             DailyRow(
                 region="tw",
-                trade_date=date(2026, 3, 15) - __import__("datetime").timedelta(days=i),
+                trade_date=date(2026, 3, 15) - timedelta(days=i),
                 item_id=11608,
                 sid=0,
                 open_price=100 + i,
@@ -155,7 +155,7 @@ class TestBuffHandler:
         mock_daily_repo.get_daily_window.return_value = [
             DailyRow(
                 region="tw",
-                trade_date=date(2026, 3, 15) - __import__("datetime").timedelta(days=i),
+                trade_date=date(2026, 3, 15) - timedelta(days=i),
                 item_id=1,
                 sid=0,
                 open_price=100,
@@ -195,13 +195,13 @@ class TestAccessoryHandler:
     def test_accessory_handler_with_enhancement(
         self, mock_daily_repo: MagicMock, mock_enhancement: MagicMock
     ) -> None:
-        """Accessory handler enriches with enhancement cost change."""
+        """enhancement_cost_change is the % change in expected cost (now vs prior)."""
         from bdo_common.models import DailyRow
 
         mock_daily_repo.get_daily_window.return_value = [
             DailyRow(
                 region="tw",
-                trade_date=date(2026, 3, 15) - __import__("datetime").timedelta(days=i),
+                trade_date=date(2026, 3, 15) - timedelta(days=i),
                 item_id=11608,
                 sid=3,
                 open_price=500_000_000,
@@ -216,7 +216,7 @@ class TestAccessoryHandler:
             for i in range(5)
         ]
 
-        # Mock _fetch_sid_prices by making conn.execute return sid prices
+        # Both as-of ladders (now + prior) return the same sid prices (0 and 3 present).
         mock_fetchall = MagicMock()
         mock_fetchall.fetchall.return_value = [
             (0, 100_000_000),
@@ -227,14 +227,11 @@ class TestAccessoryHandler:
         mock_conn = MagicMock()
         mock_conn.execute.return_value = mock_fetchall
 
-        # Mock enhancement_analysis to return transitions with ROI
-        mock_enhancement.return_value = {
-            "transitions": [
-                {"sid_from": 0, "sid_to": 1, "roi": 0.5},
-                {"sid_from": 1, "sid_to": 2, "roi": 0.3},
-                {"sid_from": 2, "sid_to": 3, "roi": 0.15},
-            ],
-        }
+        # enhancement_analysis is called twice: now-ladder, then prior-ladder.
+        mock_enhancement.side_effect = [
+            {"transitions": [{"sid_from": 2, "sid_to": 3, "expected_cost": 1_150_000_000.0}]},
+            {"transitions": [{"sid_from": 2, "sid_to": 3, "expected_cost": 1_000_000_000.0}]},
+        ]
 
         movers: list[tuple[int, str, int, int, int, float, int]] = [
             (11608, "Deboreka Necklace", 3, 500_000_000, 480_000_000, 4.17, 1200),
@@ -245,23 +242,24 @@ class TestAccessoryHandler:
         assert len(entries) == 1
         entry = entries[0]
         assert entry.category == "accessory"
-        assert entry.enhancement_cost_change == 0.15
+        # (1.15e9 - 1.0e9) / 1.0e9 * 100 = +15.0%
+        assert entry.enhancement_cost_change == pytest.approx(15.0)
         assert entry.volatility is not None
         assert entry.liquidity is not None
-        mock_enhancement.assert_called_once()
+        assert mock_enhancement.call_count == 2
 
     @patch("bdo_common.insights.categories.enhancement_analysis")
     @patch("bdo_common.repositories.DailyRepo")
     def test_accessory_handler_no_sid0_price(
         self, mock_daily_repo: MagicMock, mock_enhancement: MagicMock
     ) -> None:
-        """Accessory handler handles missing sid=0 gracefully."""
+        """Without a clean (sid 0) price, enhancement cost can't be computed."""
         from bdo_common.models import DailyRow
 
         mock_daily_repo.get_daily_window.return_value = [
             DailyRow(
                 region="tw",
-                trade_date=date(2026, 3, 15) - __import__("datetime").timedelta(days=i),
+                trade_date=date(2026, 3, 15) - timedelta(days=i),
                 item_id=11608,
                 sid=3,
                 open_price=500_000_000,
@@ -276,7 +274,7 @@ class TestAccessoryHandler:
             for i in range(3)
         ]
 
-        # No sid=0 in fetchall results
+        # No sid=0 in either as-of ladder.
         mock_fetchall = MagicMock()
         mock_fetchall.fetchall.return_value = [
             (3, 500_000_000),
@@ -291,22 +289,22 @@ class TestAccessoryHandler:
         entries = _handle_accessory(mock_conn, "tw", "daily", date(2026, 3, 15), movers)
 
         assert len(entries) == 1
-        # Without sid=0, enhancement_analysis should not be called
-        # and enhancement_cost_change should be None
         assert entries[0].enhancement_cost_change is None
+        # enhancement_analysis is never called when the clean price is absent.
+        mock_enhancement.assert_not_called()
 
     @patch("bdo_common.insights.categories.enhancement_analysis")
     @patch("bdo_common.repositories.DailyRepo")
-    def test_accessory_handler_preserves_mover_close_after_fetch(
+    def test_accessory_handler_uses_asof_close_per_period(
         self, mock_daily_repo: MagicMock, mock_enhancement: MagicMock
     ) -> None:
-        """Mover's authoritative close_price is not overwritten by _fetch_sid_prices."""
+        """now-ladder uses the mover's close; prior-ladder uses prev_close."""
         from bdo_common.models import DailyRow
 
         mock_daily_repo.get_daily_window.return_value = [
             DailyRow(
                 region="tw",
-                trade_date=date(2026, 3, 15) - __import__("datetime").timedelta(days=i),
+                trade_date=date(2026, 3, 15) - timedelta(days=i),
                 item_id=11608,
                 sid=3,
                 open_price=500_000_000,
@@ -321,26 +319,23 @@ class TestAccessoryHandler:
             for i in range(5)
         ]
 
-        # _fetch_sid_prices returns a STALE price for sid=3 (different from mover close)
+        # Ladder returns a STALE sid=3 price; the handler must override it with
+        # the mover's authoritative close (now) and prev_close (prior).
         mock_fetchall = MagicMock()
         mock_fetchall.fetchall.return_value = [
             (0, 100_000_000),
-            (3, 490_000_000),  # stale: differs from mover's 500_000_000
+            (3, 490_000_000),  # stale: differs from the mover's close/prev_close
         ]
         mock_conn = MagicMock()
         mock_conn.execute.return_value = mock_fetchall
 
-        # Capture what prices dict is passed to enhancement_analysis
-        def _capture_prices(prices: dict[int, float], model_id: str) -> dict[str, list[object]]:
-            # Verify the mover's authoritative close was re-applied
-            assert prices[3] == 500_000_000.0
-            return {
-                "transitions": [
-                    {"sid_from": 0, "sid_to": 3, "roi": 0.2},
-                ],
-            }
+        seen_sid3: list[float] = []
 
-        mock_enhancement.side_effect = _capture_prices
+        def _capture(prices: dict[int, float], *, model_id: str) -> dict[str, object]:
+            seen_sid3.append(prices[3])
+            return {"transitions": [{"sid_from": 2, "sid_to": 3, "expected_cost": 1_000_000_000}]}
+
+        mock_enhancement.side_effect = _capture
 
         movers: list[tuple[int, str, int, int, int, float, int]] = [
             (11608, "Deboreka Necklace", 3, 500_000_000, 480_000_000, 4.17, 1200),
@@ -349,6 +344,7 @@ class TestAccessoryHandler:
         entries = _handle_accessory(mock_conn, "tw", "daily", date(2026, 3, 15), movers)
 
         assert len(entries) == 1
-        # enhancement_analysis was called with the correct authoritative price
-        mock_enhancement.assert_called_once()
-        assert entries[0].enhancement_cost_change == 0.2
+        # now-ladder saw the authoritative close; prior-ladder saw prev_close.
+        assert seen_sid3 == [500_000_000.0, 480_000_000.0]
+        # Equal expected_cost in both periods -> 0% change.
+        assert entries[0].enhancement_cost_change == pytest.approx(0.0)

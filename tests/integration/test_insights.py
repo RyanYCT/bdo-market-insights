@@ -7,7 +7,7 @@ migrations up to 0004. Skipped unless ``TEST_DATABASE_URL`` is set.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import psycopg
@@ -45,7 +45,19 @@ def _seed_daily(
     close_price: int,
     total_trades_delta: int = 100,
 ) -> None:
-    """Insert a row into market_daily with sensible defaults for OHLC."""
+    """Insert a row into market_daily with sensible defaults for OHLC.
+
+    ``market_daily`` has a foreign key to ``item_sid`` (region, item_id, sid),
+    so ensure that parent reference row exists first.
+    """
+    conn.execute(
+        """
+        INSERT INTO item_sid (region, item_id, sid, max_enhance, price_min, price_max)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (region, item_id, sid) DO NOTHING
+        """,
+        (region, item_id, sid, 5, 1, 1_000_000_000_000),
+    )
     conn.execute(
         """
         INSERT INTO market_daily
@@ -130,6 +142,53 @@ class TestInsightRepoIntegration:
         assert rows[1][1] == "Item B"
         assert rows[1][5] == pytest.approx(-10.0, rel=0.01)
 
+    def test_top_movers_weekly(self, db_conn: psycopg.Connection[tuple[Any, ...]]) -> None:
+        """top_movers compares target_date to a row >= 7 days prior for weekly."""
+        _seed_item(db_conn, item_id=1, name="Item A", category="buff")
+
+        # A row 7 days before the target (the weekly reference point).
+        _seed_daily(
+            db_conn,
+            region="tw",
+            trade_date=date(2026, 3, 8),
+            item_id=1,
+            sid=0,
+            close_price=100,
+        )
+        # A nearer row (within the 7-day window) that must NOT be used as prior.
+        _seed_daily(
+            db_conn,
+            region="tw",
+            trade_date=date(2026, 3, 13),
+            item_id=1,
+            sid=0,
+            close_price=130,
+        )
+        # Target day.
+        _seed_daily(
+            db_conn,
+            region="tw",
+            trade_date=date(2026, 3, 15),
+            item_id=1,
+            sid=0,
+            close_price=150,
+        )
+
+        rows = InsightRepo.top_movers(
+            db_conn,
+            region="tw",
+            category="buff",
+            period="weekly",
+            target_date=date(2026, 3, 15),
+            limit=5,
+        )
+
+        assert len(rows) == 1
+        # Compared against the 2026-03-08 close (100), not the 2026-03-13 close:
+        # (150 - 100) / 100 * 100 = +50%.
+        assert rows[0][4] == 100  # prev_close_price
+        assert rows[0][5] == pytest.approx(50.0, rel=0.01)
+
     def test_top_movers_respects_limit(self, db_conn: psycopg.Connection[tuple[Any, ...]]) -> None:
         """top_movers limits the number of results returned."""
         for i in range(1, 6):
@@ -211,7 +270,7 @@ class TestBuildDigestIntegration:
             _seed_daily(
                 db_conn,
                 region="tw",
-                trade_date=date(2026, 3, 1) + __import__("datetime").timedelta(days=i),
+                trade_date=date(2026, 3, 1) + timedelta(days=i),
                 item_id=1,
                 sid=0,
                 close_price=100 + i * 5,
@@ -248,7 +307,7 @@ class TestRenderNarrativeIntegration:
             _seed_daily(
                 db_conn,
                 region="tw",
-                trade_date=date(2026, 3, 1) + __import__("datetime").timedelta(days=i),
+                trade_date=date(2026, 3, 1) + timedelta(days=i),
                 item_id=1,
                 sid=0,
                 close_price=100 + i * 5,
