@@ -4,14 +4,26 @@ Tracking list for retiring the **pre-v3** AWS resources (the original
 `main`/v1 deployment and the abandoned `rewrite-project`/v2 attempt) once the
 v3 stack (`redesign-v3`) has cut over and soaked in production.
 
-> **This is the destructive tail of Phase 7.** Do not start it until:
-> 1. `bdo-market-prod` is deployed and has soaked (per `tasks.md` Phase 7), and
-> 2. `main` has been force-replaced from `redesign-v3`.
+> **Status: COMPLETE (2026-06-09).** The legacy pre-v3 decommission was
+> carried out and signed off; the v3 stacks (`bdo-market-dev` /
+> `bdo-market-prod`) are the only live deployment. This document is retained
+> as the **process record and reusable template** — the discovery commands and
+> the staged disable→observe→delete procedure below stand on their own for any
+> future decommission. Per repo policy, concrete legacy resource
+> names/ARNs/account-specific inventory are **not** recorded here; that detail
+> was tracked privately during the cleanup. The blank tables below are left
+> intentionally empty.
+
+> **This was the destructive tail of Phase 7.** The preconditions below were
+> required before starting it (all were met before the work was done):
 >
-> Each item below requires **explicit, individual sign-off** before deletion.
-> Deletions are irreversible; prefer the staged approach in
+> 1. `bdo-market-prod` deployed and soaked (per `tasks.md` Phase 7), and
+> 2. `main` force-replaced from `redesign-v3`.
+>
+> Each item below required **explicit, individual sign-off** before deletion.
+> Deletions are irreversible; the staged approach in
 > [Decommission procedure](#decommission-procedure) (disable → observe →
-> delete) over deleting in place.
+> delete) was preferred over deleting in place.
 
 ## How to use this list
 

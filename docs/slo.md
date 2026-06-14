@@ -25,8 +25,14 @@ count over a 30-day rolling window.
 | Metric | Condition | Action |
 |--------|-----------|--------|
 | API 5xx rate | > 1% over 5 minutes | Triggers CloudWatch alarm |
-| ETL execution | Any ABORTED execution in 24 h | Triggers CloudWatch alarm |
+| ETL execution | >= 1 non-success execution in 24 h (`ExecutionsFailed` + `ExecutionsAborted` + `ExecutionsTimedOut`) | Triggers CloudWatch alarm |
 | API p95 latency | > 500 ms | Triggers CloudWatch alarm |
+
+> The ETL alarm intentionally counts more than ABORTED. A retry-exhausted run
+> terminates as **FAILED** (ABORTED is a manual stop) and a stuck run as
+> **TIMED_OUT**, so the alarm sums all three non-success terminal states to
+> catch real failures, not just manual aborts. See
+> `EtlExecutionFailureAlarm` in `infra/observability.yaml`.
 
 ## Error Budget
 
