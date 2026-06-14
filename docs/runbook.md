@@ -192,17 +192,34 @@ sam deploy --config-env dev \
 #### Post-Deploy Verification (Dev)
 
 ```bash
-# Get the API endpoint
-API_ENDPOINT=$(aws cloudformation describe-stacks --stack-name bdo-market-dev \
-  --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" --output text)
+# Resolve the API base URL from the nested API stack. The root stack
+# (bdo-market-dev) exposes no outputs of its own, so query across all stacks
+# whose name starts with the stack prefix and pick the nested API stack's output.
+API_URL=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-dev')].Outputs[] | [?OutputKey=='ApiUrl'].OutputValue | [0]" \
+  --output text)
 
-# Get a test API key from Secrets Manager
-API_KEY=$(aws secretsmanager get-secret-value --secret-id bdo-dev-api-key \
-  --query SecretString --output text | python -c 'import json,sys; print(json.load(sys.stdin)["api_key"])')
+# The API key is an API Gateway key created by the usage plan (NOT Secrets
+# Manager). Resolve it via the REST API id so the dev/prod keys in the same
+# account are never confused.
+API_ID=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-dev')].Outputs[] | [?OutputKey=='ApiId'].OutputValue | [0]" \
+  --output text)
+USAGE_PLAN_ID=$(aws apigateway get-usage-plans \
+  --query "items[?apiStages[?apiId=='${API_ID}']].id | [0]" --output text)
+API_KEY_ID=$(aws apigateway get-usage-plan-keys --usage-plan-id "${USAGE_PLAN_ID}" \
+  --query 'items[0].id' --output text)
+API_KEY=$(aws apigateway get-api-key --api-key "${API_KEY_ID}" --include-value \
+  --query 'value' --output text)
 
-# Test the API is responding
-curl -H "x-api-key: ${API_KEY}" \
-  "${API_ENDPOINT%/}/v1/items" | head -20
+# Test the key-required API (ApiUrl already includes the stage path)
+curl -H "x-api-key: ${API_KEY}" "${API_URL}/v1/items" | head -20
+
+# Swagger UI + spec are key-less; use their dedicated outputs
+DOCS_URL=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-dev')].Outputs[] | [?OutputKey=='DocsUrl'].OutputValue | [0]" \
+  --output text)
+curl -s "${DOCS_URL}" | grep -q "swagger-ui" && echo "Swagger UI OK"
 
 # Check CloudWatch Logs for errors (last 10 minutes)
 aws logs tail /aws/lambda/bdo-dev-market-query --since 10m --follow
@@ -234,8 +251,8 @@ git push origin v1.2.0
 # The deploy job runs after all CI checks pass (lint, test, audit, etc.)
 # It then invokes the migrator Lambda to run pending migrations
 
-# Watch the workflow:
-open https://github.com/RyanYCT/bdo-market-insights/actions
+# Watch the workflow (open in a browser):
+# https://github.com/RyanYCT/bdo-market-insights/actions
 
 # Or via CLI:
 gh run list --workflow ci.yml --branch main --limit 1
@@ -247,30 +264,43 @@ gh run view <RUN_ID> --log
 Once the workflow completes (indicated by a ✓ or ✗ badge):
 
 ```bash
-# Get the API endpoint
-API_ENDPOINT=$(aws cloudformation describe-stacks --stack-name bdo-market-prod \
-  --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" --output text)
+# Resolve the API base URL from the nested API stack (same cross-stack query
+# pattern as dev; the root stack exposes no outputs of its own).
+API_URL=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-prod')].Outputs[] | [?OutputKey=='ApiUrl'].OutputValue | [0]" \
+  --output text)
 
-# Or if custom domain is enabled:
-API_DOMAIN=$(aws cloudformation describe-stacks --stack-name bdo-market-prod \
-  --query "Stacks[0].Outputs[?OutputKey=='CustomApiUrl'].OutputValue" --output text)
+# Or, if the custom domain is enabled (ADR-0013), use it instead:
+CUSTOM_URL=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-prod')].Outputs[] | [?OutputKey=='CustomApiUrl'].OutputValue | [0]" \
+  --output text)
 
-# Retrieve prod API key
-API_KEY=$(aws secretsmanager get-secret-value --secret-id bdo-prod-api-key \
-  --query SecretString --output text | python -c 'import json,sys; print(json.load(sys.stdin)["api_key"])')
+# Resolve the API Gateway key via the REST API id (NOT Secrets Manager)
+API_ID=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-prod')].Outputs[] | [?OutputKey=='ApiId'].OutputValue | [0]" \
+  --output text)
+USAGE_PLAN_ID=$(aws apigateway get-usage-plans \
+  --query "items[?apiStages[?apiId=='${API_ID}']].id | [0]" --output text)
+API_KEY_ID=$(aws apigateway get-usage-plan-keys --usage-plan-id "${USAGE_PLAN_ID}" \
+  --query 'items[0].id' --output text)
+API_KEY=$(aws apigateway get-api-key --api-key "${API_KEY_ID}" --include-value \
+  --query 'value' --output text)
 
 # Test the API
-curl -H "x-api-key: ${API_KEY}" \
-  "${API_ENDPOINT%/}/v1/items?limit=1" | head -20
+curl -H "x-api-key: ${API_KEY}" "${API_URL}/v1/items?limit=1" | head -20
 
-# Check Swagger UI is serving (key-less)
-curl "${API_ENDPOINT%/}/v1/docs" | grep -q "swagger-ui" && echo "✓ Swagger UI OK"
+# Check Swagger UI is serving (key-less) via its dedicated output
+DOCS_URL=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-prod')].Outputs[] | [?OutputKey=='DocsUrl'].OutputValue | [0]" \
+  --output text)
+curl -s "${DOCS_URL}" | grep -q "swagger-ui" && echo "Swagger UI OK"
 
-# Verify recent ETL runs succeeded
-aws cloudformation describe-stacks --stack-name bdo-market-prod \
-  --query "Stacks[0].Outputs[?OutputKey=='StepFunctionsArn'].OutputValue" --output text \
-  | xargs -I {} aws stepfunctions list-executions --state-machine-arn {} \
-    --query 'executions[:3].[name, status, stopDate]' --output table
+# Verify recent ETL runs succeeded (state machine ARN is exported by the ETL stack)
+ETL_ARN=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-prod')].Outputs[] | [?OutputKey=='EtlStateMachineArn'].OutputValue | [0]" \
+  --output text)
+aws stepfunctions list-executions --state-machine-arn "${ETL_ARN}" \
+  --query 'executions[:3].[name, status, stopDate]' --output table
 ```
 
 #### Schema Migration Verification

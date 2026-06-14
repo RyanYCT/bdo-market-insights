@@ -6,14 +6,17 @@ Read this **before** making changes. Updates require human approval.
 ## Project context
 
 `bdo-market-insights` — serverless ETL + analytics for Black Desert
-Online market data on AWS Lambda. The active design lives in
-`.kiro/specs/v3/`. The current working branch is `redesign-v3`; `main`
-will be force-replaced from it on cutover.
+Online market data on AWS Lambda. v3 is **live on `main`** (the
+`redesign-v3` cutover completed 2026-06-09; all phases done). The v3
+design lives in `.kiro/specs/v3/` and remains the reference for how the
+system is built; **new work should add its own spec** under
+`.kiro/specs/<feature>/`.
 
-History: this repo had a previous rewrite (`rewrite-project`, soon to be
-archived) that was over-engineered, broke the core BDO domain logic,
-and was shelved. v3's guiding principle is **"boring + correct"** —
-learn from those failures (see "Anti-patterns" below).
+History: this repo had a previous rewrite (`rewrite-project`, now
+archived as `archive/rewrite-project`) that was over-engineered, broke
+the core BDO domain logic, and was shelved. v3's guiding principle is
+**"boring + correct"** — learn from those failures (see "Anti-patterns"
+below).
 
 ## Where to look first
 
@@ -34,10 +37,12 @@ steering files manually.
 
 ## Workflow rules
 
-- Work on `redesign-v3` (or feature branches off it). Never push to
-  `main` directly.
-- One commit per task in `.kiro/specs/v3/tasks.md`. Tick the checkbox in
-  the same commit.
+- Work on feature branches off `main` (v3 is now `main`). Never push to
+  `main` directly; open a PR — branch protection requires the CI checks
+  to pass first.
+- For spec-driven work, one commit per task in the active feature's
+  `.kiro/specs/<feature>/tasks.md`; tick the checkbox in the same commit.
+  (The v3 build is complete; its `tasks.md` is historical.)
 - Conventional Commits: `<type>(<scope>): <imperative subject>`. Body
   explains *why*, not *what*.
 - Push via `github_push_to_remote`, never raw `git push`.
@@ -46,8 +51,9 @@ steering files manually.
 
 ## Specs and ADRs
 
-- `.kiro/specs/v3/` is the source of truth. Modify specs **before**
-  code; do not introduce design decisions only in code.
+- The active feature spec under `.kiro/specs/` is the source of truth
+  (`.kiro/specs/v3/` documents the now-shipped v3 build). Modify specs
+  **before** code; do not introduce design decisions only in code.
 - One Markdown ADR per non-obvious architectural decision, in
   `docs/adr/`, Michael Nygard format. Link from the relevant spec/code.
 - Hard cap: each spec file ≤ ~150 lines. If it grows past that, split
@@ -107,7 +113,7 @@ Behavioral rules across modes:
   `main`, deleting AWS resources) require **explicit approval each
   time**, in any mode.
 - When inheriting from a previous session, read `.kiro/steering/`,
-  the active spec at `.kiro/specs/v3/`, the latest entries in
+  the active spec under `.kiro/specs/`, the latest entries in
   `log.md`, and the current `tasks.md` checkbox state before acting.
 
 ## Anti-patterns we have already paid for
