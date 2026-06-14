@@ -5,19 +5,27 @@ rollups, and a combined analysis (per-tier expected enhancement cost via the
 base-rate ``accessory_v1`` model, plus rolling-window volatility, liquidity and
 anomaly flag). Runs in the VPC and reads RDS via IAM auth; read-only, so each
 request rolls back to release its transaction on the warm-reused connection.
+
+Query parameters are declared as typed Powertools ``Query`` params so they are
+part of the generated OpenAPI contract (``scripts/export_openapi.py`` ->
+``infra/openapi.yaml``) and render in Swagger UI. Validation failures are mapped
+to HTTP 400 (see ``handle_validation_error``) to keep the client contract stable
+rather than Powertools' default 422.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date, datetime
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import psycopg
 from aws_lambda_powertools import Logger, Metrics, Tracer
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver
-from aws_lambda_powertools.event_handler.exceptions import BadRequestError
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver, Response, content_types
+from aws_lambda_powertools.event_handler.openapi.exceptions import RequestValidationError
+from aws_lambda_powertools.event_handler.openapi.params import Query
 from aws_lambda_powertools.metrics import MetricUnit
 from aws_lambda_powertools.utilities.typing import LambdaContext
 
@@ -33,6 +41,50 @@ app = APIGatewayRestResolver(enable_validation=True)
 #: FR-13 hard cap on snapshots returned per request.
 MAX_SNAPSHOT_LIMIT = 1000
 
+#: Valid BDO server regions. Mirrors the ``BdoRegion`` AllowedValues enum in
+#: ``template.yaml`` (the IaC source); an unknown region is rejected with 400.
+Region = Literal[
+    "na",
+    "eu",
+    "sea",
+    "mena",
+    "kr",
+    "ru",
+    "jp",
+    "th",
+    "tw",
+    "sa",
+    "console_eu",
+    "console_na",
+    "console_asia",
+]
+
+#: Default region when the caller omits ``region``.
+DEFAULT_REGION: Region = "tw"
+
+
+def handle_validation_error(exc: RequestValidationError) -> Response[str]:
+    """Map query-param validation failures to 400 (not Powertools' default 422).
+
+    Keeps the existing client contract (bad ``sid``/``from``/``to`` already
+    returned 400) while now also covering the ``region`` enum and the
+    ``window_days`` bounds.
+    """
+    detail = [{"loc": err.get("loc"), "type": err.get("type")} for err in exc.errors()]
+    logger.warning("request validation failed", extra={"errors": detail})
+    return Response(
+        status_code=400,
+        content_type=content_types.APPLICATION_JSON,
+        body=json.dumps(
+            {"statusCode": 400, "message": "Invalid request parameters", "detail": detail}
+        ),
+    )
+
+
+# Registered via a call (not decorator syntax): Powertools' ``exception_handler``
+# is unannotated upstream, which would trip mypy's ``disallow_untyped_decorators``.
+app.exception_handler(RequestValidationError)(handle_validation_error)
+
 
 @contextmanager
 def _reading() -> Iterator[psycopg.Connection[tuple[Any, ...]]]:
@@ -42,40 +94,6 @@ def _reading() -> Iterator[psycopg.Connection[tuple[Any, ...]]]:
         yield conn
     finally:
         conn.rollback()
-
-
-def _region() -> str:
-    return app.current_event.get_query_string_value(name="region", default_value="tw") or "tw"
-
-
-def _opt_int(name: str) -> int | None:
-    raw = app.current_event.get_query_string_value(name=name, default_value=None)
-    if raw is None:
-        return None
-    try:
-        return int(raw)
-    except ValueError:
-        raise BadRequestError(f"{name} must be an integer") from None
-
-
-def _opt_datetime(name: str) -> datetime | None:
-    raw = app.current_event.get_query_string_value(name=name, default_value=None)
-    if raw is None:
-        return None
-    try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        raise BadRequestError(f"{name} must be an ISO-8601 datetime") from None
-
-
-def _opt_date(name: str) -> date | None:
-    raw = app.current_event.get_query_string_value(name=name, default_value=None)
-    if raw is None:
-        return None
-    try:
-        return date.fromisoformat(raw)
-    except ValueError:
-        raise BadRequestError(f"{name} must be an ISO-8601 date (YYYY-MM-DD)") from None
 
 
 def _latest_price_by_sid(rows: list[SnapshotRow]) -> dict[int, float]:
@@ -88,19 +106,32 @@ def _latest_price_by_sid(rows: list[SnapshotRow]) -> dict[int, float]:
 
 
 @app.get("/v1/market/items/<item_id>/snapshots")
-def get_snapshots(item_id: int) -> dict[str, Any]:
+def get_snapshots(
+    item_id: int,
+    region: Annotated[Region, Query(description="BDO server region.")] = DEFAULT_REGION,
+    sid: Annotated[int | None, Query(description="Enhancement sub-id; omit for all sids.")] = None,
+    from_: Annotated[
+        datetime | None,
+        Query(alias="from", description="ISO-8601 datetime lower bound (inclusive)."),
+    ] = None,
+    to: Annotated[
+        datetime | None, Query(description="ISO-8601 datetime upper bound (inclusive).")
+    ] = None,
+    limit: Annotated[
+        int,
+        Query(description="Max rows, 1-1000 (default 1000). Out-of-range values are clamped."),
+    ] = MAX_SNAPSHOT_LIMIT,
+) -> dict[str, Any]:
     """FR-13: raw hourly snapshots (capped at 1000), newest first."""
-    region = _region()
-    sid = _opt_int("sid")
-    limit = max(1, min(_opt_int("limit") or MAX_SNAPSHOT_LIMIT, MAX_SNAPSHOT_LIMIT))
+    limit = max(1, min(limit, MAX_SNAPSHOT_LIMIT))
     with _reading() as conn:
         rows = SnapshotRepo.get_snapshots(
             conn,
             region=region,
             item_id=item_id,
             sid=sid,
-            from_dt=_opt_datetime("from"),
-            to_dt=_opt_datetime("to"),
+            from_dt=from_,
+            to_dt=to,
             limit=limit,
         )
     return {
@@ -113,18 +144,27 @@ def get_snapshots(item_id: int) -> dict[str, Any]:
 
 
 @app.get("/v1/market/items/<item_id>/daily")
-def get_daily(item_id: int) -> dict[str, Any]:
+def get_daily(
+    item_id: int,
+    region: Annotated[Region, Query(description="BDO server region.")] = DEFAULT_REGION,
+    sid: Annotated[int | None, Query(description="Enhancement sub-id; omit for all sids.")] = None,
+    from_: Annotated[
+        date | None,
+        Query(alias="from", description="ISO-8601 date lower bound, YYYY-MM-DD (inclusive)."),
+    ] = None,
+    to: Annotated[
+        date | None, Query(description="ISO-8601 date upper bound, YYYY-MM-DD (inclusive).")
+    ] = None,
+) -> dict[str, Any]:
     """FR-14: daily rollups, newest first."""
-    region = _region()
-    sid = _opt_int("sid")
     with _reading() as conn:
         rows = DailyRepo.get_daily(
             conn,
             region=region,
             item_id=item_id,
             sid=sid,
-            from_date=_opt_date("from"),
-            to_date=_opt_date("to"),
+            from_date=from_,
+            to_date=to,
         )
     return {
         "item_id": item_id,
@@ -136,18 +176,26 @@ def get_daily(item_id: int) -> dict[str, Any]:
 
 
 @app.get("/v1/market/items/<item_id>/analysis")
-def get_analysis(item_id: int) -> dict[str, Any]:
+def get_analysis(
+    item_id: int,
+    region: Annotated[Region, Query(description="BDO server region.")] = DEFAULT_REGION,
+    sid: Annotated[
+        int | None, Query(description="Enhancement sub-id (default 0, the base item).")
+    ] = None,
+    window_days: Annotated[
+        int,
+        Query(ge=1, le=90, description="Trailing analytics window in days, 1-90 (default 14)."),
+    ] = analytics.WINDOW_DAYS,
+) -> dict[str, Any]:
     """FR-15: per-tier expected enhance cost + volatility/liquidity/anomaly."""
-    region = _region()
-    sid = _opt_int("sid") or 0
-    window_days = _opt_int("window_days") or analytics.WINDOW_DAYS
+    sid_val = sid if sid is not None else 0
 
     with _reading() as conn:
         ladder_rows = SnapshotRepo.get_snapshots(
             conn, region=region, item_id=item_id, limit=MAX_SNAPSHOT_LIMIT
         )
         window = DailyRepo.get_daily_window(
-            conn, region=region, item_id=item_id, sid=sid, window_days=window_days
+            conn, region=region, item_id=item_id, sid=sid_val, window_days=window_days
         )
 
     prices = _latest_price_by_sid(ladder_rows)
@@ -169,7 +217,7 @@ def get_analysis(item_id: int) -> dict[str, Any]:
     return {
         "item_id": item_id,
         "region": region,
-        "sid": sid,
+        "sid": sid_val,
         "window_days": window_days,
         "enhancement": enhancement,
         "analytics": market,
