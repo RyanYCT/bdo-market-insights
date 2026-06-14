@@ -757,3 +757,37 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   target (the `Delete` policy left no fallback during the outage).
 - Activate the custom domain on prod via `--parameter-overrides` (inert
   until then); dev would be `api.dev.<domain>` once rebuilt.
+
+
+
+## 2026-06-14 — Documentation updates: README + runbook deployment procedures
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `docs/update-readme`
+**Phase:** Post-launch improvements
+**Commits:** `11b1062` (README OpenAPI docs), `6bb5113` (runbook deployment procedures)
+
+### Done
+- **README.md:** Updated to reflect the new docs Lambda and OpenAPI integration.
+  - Bumped Lambda count from 8 to 9 in the status line.
+  - Expanded architecture diagram to show the docs Lambda providing key-less `/v1/docs` and `/v1/openapi.json` routes.
+  - Added "Interactive API Documentation" subsection explaining auto-generated Swagger UI and the OpenAPI 3.1 spec as the single source of truth, with drift detection in CI.
+  - Enhanced tech stack to call out OpenAPI 3.1 spec auto-generation, Swagger UI serving, and PyYAML for spec parsing.
+
+- **docs/runbook.md:** Addressed the operator's primary pain point — no update deployment instructions.
+  - Kept the concise "Deployment Procedures" quick-ref table.
+  - Added new comprehensive **"Updating a Deployment"** section with three workflows:
+    1. **Dev Deployment (Manual):** pre-deploy checklist → build → deploy → apply migrations (with bastion tunnel setup if needed) → post-deploy verification.
+    2. **Prod Deployment (Automated CI/CD):** pre-release checklist → tag & push → CI runs all gates → migrator Lambda runs automatically.
+    3. **Rollback Procedure:** identify previous tag, deploy it, re-verify.
+  - Included schema migration verification, breaking-change guidance, and copy-pasteable command sequences for both environments.
+  - Post-deploy verification scripts retrieve API endpoint/key, test basic endpoints, verify Swagger UI health, and check ETL execution status.
+
+### Decisions
+- Used Option B: new dedicated "Updating a Deployment" section (not merged into the table) — gives operators a narrative workflow to follow without cluttering the quick reference.
+- Included both generic and stage-specific (dev vs. prod) examples to cover the two primary use cases.
+- Emphasized pre-release checks (schema tested on dev, no breaking changes) and post-deploy smoke tests (API health, Swagger UI, ETL runs) as the safety gates.
+
+### Deferred / open questions
+- None — the section is actionable by operators now. Future improvements (auto-discovery script, bastion lifecycle automation, verify-deploy helper) remain backlog items but are not blockers.
