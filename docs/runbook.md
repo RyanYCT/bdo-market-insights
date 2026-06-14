@@ -134,6 +134,194 @@ bastion again once you're done (`sam deploy … EnableBastion=false`).
 | Prod | Push a `v*` tag to trigger CI deploy |
 | Rollback | Deploy the previous tag |
 
+## Updating a Deployment
+
+### Dev Deployment (Manual, for Testing)
+
+**Use this workflow to test changes on the dev stack before promoting to prod.**
+
+#### Pre-Deploy Checklist
+
+- [ ] Code review complete (PR merged to `main`)
+- [ ] All CI checks passed (lint, typecheck, tests, audit, scan, OpenAPI drift)
+- [ ] Schema changes? Ensure migrations are in `migrations/versions/` with sequential numbers
+- [ ] Local `make test` passes (including integration if `TEST_DATABASE_URL` is set)
+
+#### Deploy Dev
+
+```bash
+# Build and validate the SAM template
+make build
+
+# Deploy to dev stack (prompts for changeset confirmation)
+make deploy-dev
+
+# Watch the deploy progress (optional)
+aws cloudformation describe-stacks --stack-name bdo-market-dev \
+  --query 'Stacks[0].StackStatus' --output text
+
+# Once `CREATE_COMPLETE` or `UPDATE_COMPLETE`, verify...
+```
+
+#### Apply Migrations (if applicable)
+
+If your changes include schema migrations (`migrations/versions/*`):
+
+```bash
+# One-time only: enable bastion for dev (if not already deployed)
+sam deploy --config-env dev \
+  --parameter-overrides "EnableBastion=true" --no-confirm-changeset
+
+# Open tunnel in one terminal
+make db-tunnel-up STAGE=dev
+
+# In another terminal, run migrations
+make migrate STAGE=dev
+
+# Verify head migration
+uv run alembic -c migrations/alembic.ini current
+
+# Close tunnel
+make db-tunnel-down
+
+# Optional: disable bastion to save costs
+sam deploy --config-env dev \
+  --parameter-overrides "EnableBastion=false" --no-confirm-changeset
+```
+
+#### Post-Deploy Verification (Dev)
+
+```bash
+# Get the API endpoint
+API_ENDPOINT=$(aws cloudformation describe-stacks --stack-name bdo-market-dev \
+  --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" --output text)
+
+# Get a test API key from Secrets Manager
+API_KEY=$(aws secretsmanager get-secret-value --secret-id bdo-dev-api-key \
+  --query SecretString --output text | python -c 'import json,sys; print(json.load(sys.stdin)["api_key"])')
+
+# Test the API is responding
+curl -H "x-api-key: ${API_KEY}" \
+  "${API_ENDPOINT%/}/v1/items" | head -20
+
+# Check CloudWatch Logs for errors (last 10 minutes)
+aws logs tail /aws/lambda/bdo-dev-market-query --since 10m --follow
+```
+
+---
+
+### Prod Deployment (Automated via CI/CD)
+
+**Use this workflow to release changes to production. All CI checks run automatically before merge.**
+
+#### Pre-Release Checklist (Before Pushing Tag)
+
+- [ ] Changes are merged to `main` and all CI checks passed
+- [ ] Schema migrations are sequenced correctly and tested on dev
+- [ ] No breaking API changes (or clearly communicated if intentional)
+- [ ] Updated ADRs or architecture docs if architectural changes were made
+- [ ] Reviewed the diff one final time: `git diff main~1 main`
+
+#### Release to Prod
+
+```bash
+# Create and push a version tag (semver format: v1.2.3)
+# This automatically triggers the CI deploy job
+git tag v1.2.0
+git push origin v1.2.0
+
+# Monitor the deployment in GitHub Actions
+# The deploy job runs after all CI checks pass (lint, test, audit, etc.)
+# It then invokes the migrator Lambda to run pending migrations
+
+# Watch the workflow:
+open https://github.com/RyanYCT/bdo-market-insights/actions
+
+# Or via CLI:
+gh run list --workflow ci.yml --branch main --limit 1
+gh run view <RUN_ID> --log
+```
+
+#### Post-Deploy Verification (Prod)
+
+Once the workflow completes (indicated by a ✓ or ✗ badge):
+
+```bash
+# Get the API endpoint
+API_ENDPOINT=$(aws cloudformation describe-stacks --stack-name bdo-market-prod \
+  --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" --output text)
+
+# Or if custom domain is enabled:
+API_DOMAIN=$(aws cloudformation describe-stacks --stack-name bdo-market-prod \
+  --query "Stacks[0].Outputs[?OutputKey=='CustomApiUrl'].OutputValue" --output text)
+
+# Retrieve prod API key
+API_KEY=$(aws secretsmanager get-secret-value --secret-id bdo-prod-api-key \
+  --query SecretString --output text | python -c 'import json,sys; print(json.load(sys.stdin)["api_key"])')
+
+# Test the API
+curl -H "x-api-key: ${API_KEY}" \
+  "${API_ENDPOINT%/}/v1/items?limit=1" | head -20
+
+# Check Swagger UI is serving (key-less)
+curl "${API_ENDPOINT%/}/v1/docs" | grep -q "swagger-ui" && echo "✓ Swagger UI OK"
+
+# Verify recent ETL runs succeeded
+aws cloudformation describe-stacks --stack-name bdo-market-prod \
+  --query "Stacks[0].Outputs[?OutputKey=='StepFunctionsArn'].OutputValue" --output text \
+  | xargs -I {} aws stepfunctions list-executions --state-machine-arn {} \
+    --query 'executions[:3].[name, status, stopDate]' --output table
+```
+
+#### Schema Migration Verification
+
+After the CI deploy completes, verify migrations ran successfully:
+
+```bash
+# Check the migrator Lambda logs
+aws logs tail /aws/lambda/bdo-prod-migrator --since 5m --follow
+
+# Or manually invoke the migrator to check status
+aws lambda invoke --function-name bdo-prod-migrator \
+  --cli-binary-format raw-in-base64-out --payload '{}' /tmp/migrate.json
+cat /tmp/migrate.json
+```
+
+---
+
+### Rollback Procedure
+
+If the prod deploy introduces a critical issue:
+
+```bash
+# Identify the previous stable tag
+git tag --list 'v*' | sort -V | tail -5
+
+# Deploy the previous version
+git tag v1.1.9  # (example of a previous stable version)
+git push origin v1.1.9
+
+# Watch the rollback deploy in Actions
+gh run list --workflow ci.yml --branch main --limit 1
+
+# After the rollback completes, run post-deploy verification again
+# (see "Post-Deploy Verification (Prod)" section above)
+```
+
+**Note:** Rollbacks are safe for data — ETL writes are idempotent on `(region, item_id, sid, snapshot_at)`. If you rolled back past a schema migration, you may need to manually run `REVOKE` commands on your RDS roles; see the bootstrap note in "Database Access via Bastion" for details.
+
+---
+
+### Handling Breaking Changes or Major Versions
+
+If you make a breaking change (new required field, schema incompatibility, etc.):
+
+1. **Create a feature branch** and test on dev first
+2. **Communicate the change** in the PR and release notes
+3. **Deploy with a minor/major version bump** (e.g., `v2.0.0` if breaking)
+4. **Update API consumers** before removing old behavior
+5. **Consider a canary approach** if possible — deploy to dev/staging first, then prod after a soak period
+
 ## Custom API Domain (optional, ADR-0013)
 
 The API custom domain is opt-in and off by default. The hostname and hosted
