@@ -2,7 +2,9 @@
 
 Feature branches off `main`; one commit per box (tick its checkbox in the same
 commit); open a PR per phase. Phases are checkpoints — no phase ships
-half-built. Domain/analytics reuse is specified in
+half-built. Sequence is **value-first / daily-first**: a queryable product
+lands by Phase 2 using the deterministic fallback narrative (ADR-0016), and the
+LLM (Phase 3) then upgrades the prose. Domain/analytics reuse is specified in
 `.kiro/specs/v3/domain-model.md`; new decisions in ADR-0015 / ADR-0016.
 
 ## Phase 0 — Spec & ADRs
@@ -12,7 +14,9 @@ half-built. Domain/analytics reuse is specified in
 - [x] `docs/adr/0016-deterministic-digest-llm-narration.md`
 - [x] `log.md` entry for the planning session
 
-## Phase 1 — Deterministic digest (no LLM)
+## Phase 1 — Deterministic digest core (no infra, no LLM)
+
+The engine, fully unit/integration-tested before any Lambda or Bedrock wiring.
 
 - [ ] `0004_market_summary.py` Alembic migration (`market_summary` table)
 - [ ] `models.py` — `MarketDigest`, `DigestEntry`, `Narrative`, `MarketSummary`
@@ -21,33 +25,47 @@ half-built. Domain/analytics reuse is specified in
 - [ ] `bdo_common/insights/categories.py` — category registry (`accessory`
       with enhancement-cost movement via `pricing`; `buff` price/vol/liq only)
 - [ ] `bdo_common/insights/digest.py` — `build_digest(...)` over the registry
+- [ ] `bdo_common/insights/narrative.py` — `Narrative` schema + the
+      deterministic fallback renderer (doubles as Phase 2's narrative)
 - [ ] Unit tests (fake repo) + integration test (ephemeral Postgres)
 
-## Phase 2 — Summarisation, storage, scheduling (tw, daily + weekly)
+## Phase 2 — Generate, store & serve (deterministic narrative; daily; tw)
 
-- [ ] `bdo_common/insights/prompt.py` — Bedrock request from a `MarketDigest`
-- [ ] `bdo_common/insights/narrative.py` — `Narrative` parser + deterministic
-      fallback renderer
-- [ ] `src/functions/insights_compute/app.py` (in-VPC) — digest + prompt payload
-- [ ] `src/functions/insights_summarize/app.py` (out-of-VPC) — Bedrock invoke +
-      schema validation
-- [ ] `src/functions/insights_store/app.py` (in-VPC) — upsert `market_summary`
-- [ ] `infra/insights.yaml` — state machine (Compute→Summarize→Store→SNS:Publish),
-      EventBridge daily + weekly schedules, IAM (bedrock:InvokeModel least-priv),
-      `BedrockModelId` param; wire into `template.yaml`
-- [ ] Unit tests (stubbed Bedrock client; fallback path)
+Ships a queryable product: structured digest + deterministic prose, no LLM yet.
 
-## Phase 3 — API
-
-- [ ] `/v1/insights` routes in `src/functions/market_query/app.py` (typed
-      Query params: region enum, `period`, `date`, `lang`)
-- [ ] Regenerate `infra/openapi.yaml`; handler tests
+- [ ] `src/functions/insights_compute/app.py` (in-VPC) — `build_digest`
+- [ ] `src/functions/insights_store/app.py` (in-VPC) — render the deterministic
+      narrative + upsert `market_summary`
+- [ ] `infra/insights.yaml` — state machine `ComputeDigest → StoreSummary`,
+      EventBridge **daily** schedule, IAM (`rds-db:connect`); wire into
+      `template.yaml`
+- [ ] `/v1/insights` routes in `src/functions/market_query/app.py` (typed Query:
+      region enum, `period`, `date`, `lang`); regenerate `infra/openapi.yaml`;
+      handler tests
 - [ ] README: document the `/v1/insights` route + params
 
-## Phase 4 — Delivery (SNS + Discord) & observability
+## Phase 3 — LLM narrative (summarize Lambda, Bedrock Converse; daily)
 
-- [ ] SNS topic `bdo-${Stage}-insights` (+ optional email sub) in
-      `infra/insights.yaml`
+- [ ] `bdo_common/insights/prompt.py` — Converse request from a `MarketDigest`
+- [ ] `src/functions/insights_summarize/app.py` (out-of-VPC) — Bedrock
+      **Converse** call + `Narrative` schema validation
+- [ ] Insert the `Summarize` state between `ComputeDigest` and `StoreSummary`;
+      `StoreSummary` prefers the LLM narrative, falls back to deterministic on
+      failure
+- [ ] `BedrockModelId` param (Amazon Nova or Anthropic Claude) + least-privilege
+      `bedrock:Converse` on the model ARN
+- [ ] Unit tests (stubbed Bedrock client; assert fallback path)
+
+## Phase 4 — Weekly cadence
+
+- [ ] Weekly EventBridge rule (`period=weekly`); confirm the period flows
+      end-to-end (weekly window selection in `build_digest`)
+- [ ] Tests for the weekly window
+
+## Phase 5 — Delivery (SNS + Discord) & observability
+
+- [ ] SNS topic `bdo-${Stage}-insights` + native `SNS:Publish` state (+ optional
+      email sub) in `infra/insights.yaml`
 - [ ] `src/functions/insights_discord/app.py` (out-of-VPC, SNS-subscribed) —
       webhook URL from SSM SecureString; POST; no-raise on failure
 - [ ] EMF metrics (`SummariesGenerated`, `InsightFailures`,
@@ -55,10 +73,8 @@ half-built. Domain/analytics reuse is specified in
       in `infra/observability.yaml`
 - [ ] Tests: mocked HTTPS POST (no raise on failure)
 
-## Phase 5 — Enablement & docs
+## Phase 6 — Enablement & docs
 
-- [ ] Track `buff` items in the registry (seed or `POST /v1/items`); confirm
-      ETL ingests them with `category=buff` (no ETL change expected)
 - [ ] Runbook: Bedrock model enablement (account/region), the
       `/bdo/${Stage}/discord-webhook` SSM param, region activation for insights
 - [ ] `docs/architecture.md` update (insights stack + data flow)
@@ -66,6 +82,9 @@ half-built. Domain/analytics reuse is specified in
 
 ## Reserved (out of scope; upgrade paths in requirements.md)
 
+- **Collapse `summarize` into a native `bedrock:invokeModel` SF task** once the
+  prompt/output schema are stable (ADR-0015) — prompt/parse already live in the
+  shared layer, so the swap is localised
 - Game-version / patch-note context block in the digest
 - Additional languages (the `lang` column is reserved)
 - Categories beyond accessory/buff (registry is reserved)

@@ -837,3 +837,40 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   (ETL is category-agnostic, so no ETL change expected).
 - Reserved upgrade paths: patch-note/version context block, more languages,
   more categories, multi-region scheduling.
+
+
+
+## 2026-06-14 — LLM insights plan: decisions resolved (follow-up)
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `spec/llm-insights`
+**Phase:** Planning (Phase 0, follow-up to the entry above)
+**Commits:** see PR #15
+
+### Done
+- Resolved the open questions from the prior entry and folded them into the
+  spec/ADRs:
+  - **Summarisation:** `summarize` stays a Lambda for now (testable guardrails);
+    planned upgrade to the native `bedrock:invokeModel` SF task once the
+    prompt/output schema are stable. Made reversible by keeping `prompt.py` /
+    `narrative.py` in the shared layer (ADR-0015).
+  - **Provider:** first-class Bedrock only — **Amazon Nova or Anthropic
+    Claude** — via the model-agnostic **Converse API**, so the choice is a
+    `BedrockModelId` change. Google/Vertex explicitly out of scope (would amend
+    ADR-0015).
+  - **Buff items:** already tracked; seeded reproducibly via
+    `seed_items.py --source-table <buff source>`. Dropped the seeding task.
+  - **Sequence:** adopted value-first / daily-first. The deterministic fallback
+    narrative (required by ADR-0016) doubles as Phase 2's narrative, so the API
+    debuts with real digests + prose by Phase 2; the LLM (Phase 3) upgrades the
+    prose. Weekly is Phase 4; delivery + observability Phase 5.
+
+### Decisions
+- Bedrock **Converse API** for provider-agnostic Amazon/Anthropic — local
+  choice under ADR-0015.
+
+### Deferred / open questions
+- `BedrockModelId` default (Nova Lite/Micro vs Claude Haiku-class) pinned at
+  implementation; Bedrock model enablement is a one-time account/region step.
+- Implementation begins at Phase 1 once PR #15 is approved.

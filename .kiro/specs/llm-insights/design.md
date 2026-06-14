@@ -48,11 +48,19 @@ outside (ADR-0015).
 `marketQuery` gains the `/v1/insights` routes (already in-VPC, already wired to
 API Gateway) rather than standing up a new API Lambda.
 
-> **Why a `summarize` Lambda and not the native Bedrock SF integration?** The
-> Lambda lets us assemble the prompt, validate the model's JSON against a
+> **Why a `summarize` Lambda and not the native Bedrock SF integration (for now)?**
+> The Lambda lets us assemble the prompt, validate the model's JSON against a
 > Pydantic schema, and fall back deterministically — all unit-testable with a
 > stubbed Bedrock client. The native integration would push prompt shape into
-> ASL and make the guardrails (ADR-0016) hard to test. Trade-off accepted.
+> ASL and make the guardrails (ADR-0016) hard to test.
+>
+> **Planned upgrade:** once the prompt and output schema are stable, collapse
+> `summarize` into a native `bedrock:invokeModel` Step Functions task. The swap
+> is deliberately localised: prompt-building lives in `insights/prompt.py`
+> (called by `computeDigest`) and parsing/fallback in `insights/narrative.py`
+> (called by `storeSummary`), so the only change is deleting the function and
+> adding one ASL state — the shared-layer modules are reused unchanged
+> (ADR-0015).
 
 ## Shared-layer additions (`bdo-common`)
 
@@ -116,11 +124,19 @@ GET /v1/insights?region=<enum>&period=<daily|weekly>&date=<YYYY-MM-DD?>&lang=en
 
 ## Bedrock
 
-- Model id is a SAM parameter `BedrockModelId` (a low-cost model, e.g. an
-  Amazon Nova or Claude Haiku-class model); default chosen at implementation.
-- `summarize` role: `bedrock:InvokeModel` on the specific model ARN only
-  (least privilege, NFR-10). Low temperature; bounded max tokens; the prompt
-  caps input to top-N per category so token cost stays in cents/month.
+- `summarize` calls the **Bedrock Converse API** (`bedrock:Converse`), a
+  model-agnostic interface, so switching between first-class providers —
+  **Amazon Nova** or **Anthropic Claude** — is just a model-id change, no
+  request reshaping. (Google/Gemini is a Vertex AI offering and out of scope
+  for this decision; ADR-0015.)
+- Model id is a SAM parameter `BedrockModelId`. Recommended low-cost defaults
+  for this small-output narration job: **Amazon Nova Lite/Micro** (cheapest) or
+  an **Anthropic Claude Haiku-class** model (strong at structured output);
+  pinned at implementation.
+- `summarize` role: least-privilege `bedrock:Converse` (+`InvokeModel` if
+  needed) on the specific model ARN only (NFR-10). Low temperature; bounded
+  max tokens; the prompt caps input to top-N per category so token cost stays
+  in cents/month.
 - Model **enablement** in the account/region is a one-time prerequisite
   (runbook note); us-east-1 is used throughout.
 

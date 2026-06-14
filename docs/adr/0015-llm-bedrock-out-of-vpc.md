@@ -43,9 +43,20 @@ ComputeDigest (in-VPC, RDS) -> Summarize (out-of-VPC, Bedrock)
   -> StoreSummary (in-VPC, RDS) -> SNS:Publish (native)
 ```
 
-- Bedrock access is IAM, least-privilege to the specific model ARN
-  (`bedrock:InvokeModel`); no static credentials anywhere — consistent with the
-  passwordless posture of ADR-0008.
+- The chosen provider is a **first-class Bedrock** one — **Amazon Nova** or
+  **Anthropic Claude**. `summarize` uses the model-agnostic **Converse API**, so
+  switching between them is a `BedrockModelId` parameter change with no request
+  reshaping. (Google/Gemini's mainstream home is Vertex AI — an external API
+  needing a key and its own integration — so it is **out of scope** for this
+  decision; revisiting it would amend this ADR.)
+- `summarize` runs as a **Lambda initially** for testable guardrails (prompt
+  assembly, schema validation, deterministic fallback — ADR-0016). Once the
+  prompt and output schema are stable, it collapses into a **native
+  `bedrock:invokeModel` Step Functions task**; the swap is localised because
+  prompt-building (`insights/prompt.py`) and parsing/fallback
+  (`insights/narrative.py`) live in the shared layer and are reused unchanged.
+- Bedrock access is IAM, least-privilege to the specific model ARN; no static
+  credentials anywhere — consistent with the passwordless posture of ADR-0008.
 - The model id is a SAM parameter (`BedrockModelId`), defaulting to a low-cost
   model; at ~2 small calls/day with top-N-bounded prompts, token spend is
   cents/month.

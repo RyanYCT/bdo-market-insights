@@ -16,6 +16,10 @@ This builds directly on the analytics the platform already computes
 pre-computed, deterministic digest (see ADR-0016). Default region: `tw`
 (region-aware, like the ETL).
 
+Both categories are already tracked in the registry; `buff` items are seeded
+reproducibly via `scripts/seed_items.py --source-table <buff source>`, and the
+ETL ingests them unchanged (it is category-agnostic).
+
 ## Functional Requirements
 
 ### Digest computation (deterministic)
@@ -39,9 +43,12 @@ pre-computed, deterministic digest (see ADR-0016). Default region: `tw`
 
 ### Summarisation (LLM)
 
-- **FR-5** A summariser sends the digest (as grounded facts) to Amazon
-  Bedrock and returns a **structured** narrative (headline, per-category
-  bullets, overall note) validated against a Pydantic schema.
+- **FR-5** A summariser sends the digest (as grounded facts) to Amazon Bedrock
+  via the model-agnostic **Converse API** and returns a **structured** narrative
+  (headline, per-category bullets, overall note) validated against a Pydantic
+  schema. The provider is a first-class Bedrock one — **Amazon Nova** or
+  **Anthropic Claude** — selectable by the `BedrockModelId` parameter without
+  request reshaping (ADR-0015).
 - **FR-6** The LLM must narrate only figures present in the digest; the prompt
   forbids inventing numbers. On invalid/unavailable model output the pipeline
   falls back to a **deterministic template** narrative so a summary is always
