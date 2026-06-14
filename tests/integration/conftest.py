@@ -86,10 +86,13 @@ def _db_env(pg_url: str) -> Iterator[None]:
 
 @pytest.fixture(scope="session")
 def _schema(_db_env: None) -> None:
-    """Create the four-table schema via the Alembic ``0001`` migration.
+    """Create the schema via Alembic migrations, including the real ``0004``.
 
-    Stops at ``0001`` deliberately: ``0002`` bootstraps cluster roles
-    (``rds_iam`` and friends) that only exist on RDS, not on a vanilla Postgres.
+    Runs ``0001`` (the four core tables), then stamps past ``0002``/``0003``
+    (which bootstrap cluster roles -- ``rds_iam`` and friends -- that only exist
+    on RDS, not on a vanilla Postgres) and runs the real ``0004`` migration. This
+    exercises the actual ``market_summary`` migration rather than hand-written
+    DDL, so a broken migration can never pass the suite.
     """
     from alembic import command
     from alembic.config import Config
@@ -97,6 +100,10 @@ def _schema(_db_env: None) -> None:
     cfg = Config(str(_MIGRATIONS_DIR / "alembic.ini"))
     cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
     command.upgrade(cfg, "0001")
+    # Mark 0002/0003 as applied without running them (they need RDS-only roles),
+    # then run the real 0004 migration on top.
+    command.stamp(cfg, "0003")
+    command.upgrade(cfg, "0004")
 
 
 @pytest.fixture
@@ -110,7 +117,10 @@ def db_conn(_schema: None, pg_url: str) -> Iterator[psycopg.Connection[tuple[Any
     from bdo_common import db
 
     conn: psycopg.Connection[tuple[Any, ...]] = psycopg.connect(pg_url, autocommit=True)
-    conn.execute("TRUNCATE market_daily, market_snapshot, item_sid, item RESTART IDENTITY CASCADE")
+    conn.execute(
+        "TRUNCATE market_summary, market_daily, market_snapshot, item_sid, item"
+        " RESTART IDENTITY CASCADE"
+    )
     db.close_connection()
     try:
         yield conn
