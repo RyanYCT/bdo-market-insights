@@ -9,6 +9,7 @@ from bdo_common.insights.models import (
     NarrativeCategory,
 )
 from bdo_common.insights.narrative import render_narrative
+from bdo_common.insights.prompt import build_converse_request
 
 __all__ = [
     "DigestEntry",
@@ -16,6 +17,7 @@ __all__ = [
     "MarketSummary",
     "Narrative",
     "NarrativeCategory",
+    "build_converse_request",
     "build_digest",
     "render_narrative",
 ]

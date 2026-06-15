@@ -2,9 +2,10 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
   Insights pipeline for bdo-market-insights: daily digest computation,
-  deterministic narrative rendering, and upsert into market_summary.
-  Step Functions state machine (ComputeDigest -> StoreSummary) with an
-  EventBridge daily schedule.
+  LLM narrative summarisation (Bedrock Converse), deterministic fallback,
+  and upsert into market_summary.
+  Step Functions state machine (ComputeDigest -> Summarize -> StoreSummary)
+  with an EventBridge daily schedule.
 
 Parameters:
   Stage:
@@ -31,6 +32,10 @@ Parameters:
   CommonLayerArn:
     Type: String
     Description: ARN of the shared bdo-common Lambda layer (from the ETL stack)
+  BedrockModelId:
+    Type: String
+    Default: 'us.amazon.nova-lite-v1:0'
+    Description: Bedrock model ID for narrative summarisation (Converse API)
 
 Globals:
   Function:
@@ -93,6 +98,54 @@ Resources:
           USE_IAM_AUTH: 'true'
 
   # ──────────────────────────────────────────────
+  # Summarize function — out of VPC (Bedrock)
+  # ──────────────────────────────────────────────
+  InsightsSummarizeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'bdo-${Stage}-insights-summarize-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: XRayWrite
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: '*'
+        - PolicyName: BedrockConverse
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:Converse
+                  - bedrock:InvokeModel
+                Resource: !Sub 'arn:aws:bedrock:*::foundation-model/${BedrockModelId}'
+
+  InsightsSummarizeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-insights-summarize'
+      CodeUri: ../src/functions/insights_summarize
+      Handler: app.handler
+      Timeout: 60
+      Role: !GetAtt InsightsSummarizeRole.Arn
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+
+  # ──────────────────────────────────────────────
   # Step Functions state machine (daily insights)
   # ──────────────────────────────────────────────
   InsightsStateMachine:
@@ -104,10 +157,13 @@ Resources:
         Enabled: true
       DefinitionSubstitutions:
         InsightsComputeArn: !GetAtt InsightsComputeFunction.Arn
+        InsightsSummarizeArn: !GetAtt InsightsSummarizeFunction.Arn
         InsightsStoreArn: !GetAtt InsightsStoreFunction.Arn
       Policies:
         - LambdaInvokePolicy:
             FunctionName: !Ref InsightsComputeFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref InsightsSummarizeFunction
         - LambdaInvokePolicy:
             FunctionName: !Ref InsightsStoreFunction
       Events:
@@ -133,6 +189,24 @@ Resources:
                 IntervalSeconds: 2
                 MaxAttempts: 3
                 BackoffRate: 2
+            Next: Summarize
+          Summarize:
+            Type: Task
+            Resource: '${InsightsSummarizeArn}'
+            Retry:
+              - ErrorEquals:
+                  - Lambda.ServiceException
+                  - Lambda.AWSLambdaException
+                  - Lambda.SdkClientException
+                  - Lambda.TooManyRequestsException
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+            Catch:
+              - ErrorEquals:
+                  - States.ALL
+                ResultPath: $.error
+                Next: StoreSummary
             Next: StoreSummary
           StoreSummary:
             Type: Task

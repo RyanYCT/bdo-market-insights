@@ -1,9 +1,9 @@
-"""insightsStore Lambda: render narrative + upsert market_summary.
+"""insightsStore Lambda: resolve narrative + upsert market_summary.
 
-Receives the output of insights_compute (digest JSON, region, period,
-target_date), reconstructs the MarketDigest, renders the deterministic
-narrative, and upserts into market_summary. Commits on success, rolls back
-on failure.
+Receives the output of insights_summarize (or ComputeDigest on Summarize
+failure): region, period, target_date, digest, and optionally narrative +
+model_id. If a valid LLM narrative is present, uses it directly; otherwise
+falls back to the deterministic renderer.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Any
 from aws_lambda_powertools import Logger, Tracer
 
 from bdo_common import db
-from bdo_common.insights.models import MarketDigest, Period
+from bdo_common.insights.models import MarketDigest, Narrative, Period
 from bdo_common.insights.narrative import render_narrative
 from bdo_common.insights.repositories import SummaryRepo
 
@@ -22,16 +22,30 @@ logger = Logger()
 tracer = Tracer()
 
 
+def _resolve_narrative(event: dict[str, Any], digest: MarketDigest) -> tuple[Narrative, str]:
+    """Return (narrative, model_id) preferring LLM output over deterministic."""
+    raw_narrative = event.get("narrative")
+    if raw_narrative is not None:
+        try:
+            narrative = Narrative.model_validate(raw_narrative)
+            model_id: str = event.get("model_id", "deterministic-v1")
+            return narrative, model_id
+        except Exception:
+            logger.warning("LLM narrative validation failed; using deterministic fallback")
+
+    return render_narrative(digest), "deterministic-v1"
+
+
 @logger.inject_lambda_context
 @tracer.capture_lambda_handler
 def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    """Render narrative and upsert the full MarketSummary."""
+    """Resolve narrative and upsert the full MarketSummary."""
     region: str = event["region"]
     period: Period = event["period"]
     target_date = date.fromisoformat(event["target_date"])
     digest = MarketDigest.model_validate(event["digest"])
 
-    narrative = render_narrative(digest)
+    narrative, model_id = _resolve_narrative(event, digest)
 
     conn = db.get_connection()
     try:
@@ -41,7 +55,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             period=period,
             summary_date=target_date,
             lang="en",
-            model_id="deterministic-v1",
+            model_id=model_id,
             digest=digest,
             narrative=narrative,
         )
@@ -56,11 +70,17 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     logger.info(
         "insightsStore complete",
-        extra={"region": region, "period": period, "target_date": target_date.isoformat()},
+        extra={
+            "region": region,
+            "period": period,
+            "target_date": target_date.isoformat(),
+            "model_id": model_id,
+        },
     )
     return {
         "region": region,
         "period": period,
         "target_date": target_date.isoformat(),
+        "model_id": model_id,
         "status": "stored",
     }

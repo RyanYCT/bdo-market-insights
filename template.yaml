@@ -53,6 +53,10 @@ Parameters:
     Type: String
     Default: ''
     Description: Route 53 hosted zone ID for the parent domain (shared infra; ADR-0013).
+  BedrockModelId:
+    Type: String
+    Default: 'us.amazon.nova-lite-v1:0'
+    Description: Bedrock model ID for narrative summarisation (Converse API)
 
 Conditions:
   DeployBastion: !Equals [!Ref EnableBastion, 'true']
@@ -132,6 +136,7 @@ Resources:
         RdsEndpoint: !GetAtt DataStack.Outputs.RdsEndpoint
         RdsPort: !GetAtt DataStack.Outputs.RdsPort
         LambdaRdsAuthRoleArn: !GetAtt DataStack.Outputs.LambdaRdsAuthRoleArn
+        BedrockModelId: !Ref BedrockModelId
     # Ordering after Network/Data/Etl is enforced by the !GetAtt *.Outputs
     # references above (incl. the shared CommonLayerArn); an explicit
     # DependsOn would be redundant (cfn-lint W3005).
