@@ -107,9 +107,14 @@ DELETE /v1/items/{id}                 # soft delete (tracked=false)
 GET    /v1/market/items/{id}/snapshots?region=&sid=&from=&to=&limit=
 GET    /v1/market/items/{id}/daily?region=&sid=&from=&to=
 GET    /v1/market/items/{id}/analysis?region=&sid=&window_days=14
+
+# Market insights (RDS-backed)
+GET    /v1/insights?region=&period=&date=&lang=
 ```
 
 The `analysis` response combines a per-tier `expected_enhance_cost`, rolling-window volatility (σ, CV), a liquidity measure, and an `is_anomalous` flag (|z-score| > 3 vs the trailing window).
+
+The `insights` endpoint returns a structured market digest and deterministic narrative summary for a given region and period. It is produced daily by a Step Functions pipeline that builds the digest from top movers and renders a human-readable narrative.
 
 #### Query parameters
 
@@ -125,6 +130,10 @@ spec at `/v1/openapi.json`) — try requests there directly.
 | `from` / `to` | `daily` | ISO-8601 **date** (`YYYY-MM-DD`) | unbounded | Inclusive range. |
 | `limit` | `snapshots` | integer | `1000` | Clamped to `1`–`1000` (out-of-range is clamped, not rejected). |
 | `window_days` | `analysis` | integer | `14` | Bounded `1`–`90` (matches snapshot retention); out-of-range is rejected with `400`. Needs ≥ 7 daily points to produce analytics. |
+| `region` | `insights` | enum (same as market routes) | `tw` | An unknown region is rejected with `400`. |
+| `period` | `insights` | `daily` or `weekly` | `daily` | Summary cadence; invalid values are rejected with `400`. |
+| `date` | `insights` | ISO-8601 **date** (`YYYY-MM-DD`) | latest available | Specific summary date; omit to return the most recent summary. |
+| `lang` | `insights` | string | `en` | Language code for the narrative text. |
 
 Invalid parameter values return `400` with a `detail` list describing the
 offending field.

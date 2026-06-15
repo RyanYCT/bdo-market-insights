@@ -236,6 +236,12 @@ Resources:
             RestApiId: !Ref BdoApi
             Path: /v1/market/items/{item_id}/analysis
             Method: get
+        Insights:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BdoApi
+            Path: /v1/insights
+            Method: get
 
   # ──────────────────────────────────────────────
   # docs — serves the OpenAPI spec + Swagger UI (ADR-0005)

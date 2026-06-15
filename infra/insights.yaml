@@ -1,0 +1,154 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Insights pipeline for bdo-market-insights: daily digest computation,
+  deterministic narrative rendering, and upsert into market_summary.
+  Step Functions state machine (ComputeDigest -> StoreSummary) with an
+  EventBridge daily schedule.
+
+Parameters:
+  Stage:
+    Type: String
+    AllowedValues: [dev, prod]
+  BdoRegion:
+    Type: String
+    Description: BDO server region for the daily insights schedule input
+  LambdaSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: SG for in-VPC Lambdas (egress to RDS)
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet::Id
+    Description: Primary private subnet; in-VPC Lambdas run here only (ADR-0011)
+  RdsEndpoint:
+    Type: String
+    Description: RDS Postgres endpoint address
+  RdsPort:
+    Type: String
+    Description: RDS Postgres port
+  LambdaRdsAuthRoleArn:
+    Type: String
+    Description: Execution role for in-VPC Lambdas (VPC + X-Ray + rds-db:connect)
+  CommonLayerArn:
+    Type: String
+    Description: ARN of the shared bdo-common Lambda layer (from the ETL stack)
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 256
+    Tracing: Active
+    Layers:
+      - !Ref CommonLayerArn
+    Environment:
+      Variables:
+        STAGE: !Ref Stage
+        BDO_REGION: !Ref BdoRegion
+        POWERTOOLS_SERVICE_NAME: bdo-market-insights
+        POWERTOOLS_METRICS_NAMESPACE: BdoMarket
+
+Resources:
+  # ──────────────────────────────────────────────
+  # Insights functions — in VPC (RDS via IAM auth)
+  # ──────────────────────────────────────────────
+  InsightsComputeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-insights-compute'
+      CodeUri: ../src/functions/insights_compute
+      Handler: app.handler
+      Role: !Ref LambdaRdsAuthRoleArn
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroupId
+        SubnetIds:
+          - !Ref PrivateSubnetA
+      Environment:
+        Variables:
+          DB_HOST: !Ref RdsEndpoint
+          DB_PORT: !Ref RdsPort
+          DB_NAME: bdo
+          DB_USER: lambda_rds_user
+          USE_IAM_AUTH: 'true'
+
+  InsightsStoreFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-insights-store'
+      CodeUri: ../src/functions/insights_store
+      Handler: app.handler
+      Role: !Ref LambdaRdsAuthRoleArn
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroupId
+        SubnetIds:
+          - !Ref PrivateSubnetA
+      Environment:
+        Variables:
+          DB_HOST: !Ref RdsEndpoint
+          DB_PORT: !Ref RdsPort
+          DB_NAME: bdo
+          DB_USER: lambda_rds_user
+          USE_IAM_AUTH: 'true'
+
+  # ──────────────────────────────────────────────
+  # Step Functions state machine (daily insights)
+  # ──────────────────────────────────────────────
+  InsightsStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub 'bdo-${Stage}-insights'
+      Type: STANDARD
+      Tracing:
+        Enabled: true
+      DefinitionSubstitutions:
+        InsightsComputeArn: !GetAtt InsightsComputeFunction.Arn
+        InsightsStoreArn: !GetAtt InsightsStoreFunction.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref InsightsComputeFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref InsightsStoreFunction
+      Events:
+        DailyInsights:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 1 * * ? *)
+            Input: !Sub '{"region": "${BdoRegion}", "period": "daily"}'
+            Description: Daily market insights generation (~01:00 UTC)
+      Definition:
+        Comment: BDO daily market insights (digest + narrative + store)
+        StartAt: ComputeDigest
+        States:
+          ComputeDigest:
+            Type: Task
+            Resource: '${InsightsComputeArn}'
+            Retry:
+              - ErrorEquals:
+                  - Lambda.ServiceException
+                  - Lambda.AWSLambdaException
+                  - Lambda.SdkClientException
+                  - Lambda.TooManyRequestsException
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+            Next: StoreSummary
+          StoreSummary:
+            Type: Task
+            Resource: '${InsightsStoreArn}'
+            Retry:
+              - ErrorEquals:
+                  - Lambda.ServiceException
+                  - Lambda.AWSLambdaException
+                  - Lambda.SdkClientException
+                  - Lambda.TooManyRequestsException
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+            End: true
+
+Outputs:
+  InsightsStateMachineArn:
+    Value: !Ref InsightsStateMachine
+    Export:
+      Name: !Sub '${AWS::StackName}-InsightsStateMachineArn'

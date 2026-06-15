@@ -119,6 +119,23 @@ Resources:
     # Ordering after Network/Data is enforced by the !GetAtt *.Outputs
     # references above; an explicit DependsOn would be redundant (W3005).
 
+  InsightsStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: infra/insights.yaml
+      Parameters:
+        Stage: !Ref Stage
+        BdoRegion: !Ref BdoRegion
+        CommonLayerArn: !GetAtt EtlStack.Outputs.CommonLayerArn
+        LambdaSecurityGroupId: !GetAtt NetworkStack.Outputs.LambdaSecurityGroupId
+        PrivateSubnetA: !GetAtt NetworkStack.Outputs.PrivateSubnetA
+        RdsEndpoint: !GetAtt DataStack.Outputs.RdsEndpoint
+        RdsPort: !GetAtt DataStack.Outputs.RdsPort
+        LambdaRdsAuthRoleArn: !GetAtt DataStack.Outputs.LambdaRdsAuthRoleArn
+    # Ordering after Network/Data/Etl is enforced by the !GetAtt *.Outputs
+    # references above (incl. the shared CommonLayerArn); an explicit
+    # DependsOn would be redundant (cfn-lint W3005).
+
   ApiStack:
     Type: AWS::CloudFormation::Stack
     Properties:

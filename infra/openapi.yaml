@@ -130,6 +130,80 @@ info:
   version: 1.0.0
 openapi: 3.1.0
 paths:
+  /v1/insights:
+    get:
+      operationId: get_insights_v1_insights_get
+      parameters:
+      - description: BDO server region.
+        in: query
+        name: region
+        required: false
+        schema:
+          default: tw
+          description: BDO server region.
+          enum:
+          - na
+          - eu
+          - sea
+          - mena
+          - kr
+          - ru
+          - jp
+          - th
+          - tw
+          - sa
+          - console_eu
+          - console_na
+          - console_asia
+          title: Region
+          type: string
+      - description: 'Summary period: ''daily'' or ''weekly''.'
+        in: query
+        name: period
+        required: false
+        schema:
+          default: daily
+          description: 'Summary period: ''daily'' or ''weekly''.'
+          enum:
+          - daily
+          - weekly
+          title: Period
+          type: string
+      - description: Summary date (YYYY-MM-DD); omit for latest.
+        in: query
+        name: date
+        required: false
+        schema:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          description: Summary date (YYYY-MM-DD); omit for latest.
+          title: Date
+      - description: Language code (default 'en').
+        in: query
+        name: lang
+        required: false
+        schema:
+          default: en
+          description: Language code (default 'en').
+          title: Lang
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                title: Return
+                type: string
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: GET /v1/insights
   /v1/items:
     get:
       operationId: list_items_v1_items_get
