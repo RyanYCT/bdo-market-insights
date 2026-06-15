@@ -210,3 +210,81 @@ def test_analysis_rejects_window_days_out_of_range(
         _event("/v1/market/items/12094/analysis", query={"window_days": "999"}), lambda_context
     )
     assert resp["statusCode"] == 400
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# /v1/insights route tests
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _market_summary() -> Any:
+    """Build a fake MarketSummary for testing."""
+    from bdo_common.insights.models import (
+        MarketDigest,
+        MarketSummary,
+        Narrative,
+        NarrativeCategory,
+    )
+
+    return MarketSummary(
+        region="tw",
+        period="daily",
+        summary_date=date(2026, 6, 13),
+        lang="en",
+        model_id="deterministic-v1",
+        digest=MarketDigest(
+            region="tw",
+            period="daily",
+            summary_date=date(2026, 6, 13),
+            top_n=5,
+            entries=[],
+            generated_at=datetime(2026, 6, 14, 1, 0, 0, tzinfo=UTC),
+        ),
+        narrative=Narrative(
+            headline="Market summary for tw (daily) - 2026-06-13",
+            categories=[NarrativeCategory(category="accessory", bullets=["item +5%"])],
+            overall="5 items tracked across 1 categories: 3 gainers, 2 losers.",
+        ),
+        created_at=datetime(2026, 6, 14, 1, 5, 0, tzinfo=UTC),
+    )
+
+
+def test_insights_returns_summary(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mod.SummaryRepo, "get", staticmethod(lambda conn, **kw: _market_summary()))
+    resp = mod.handler(_event("/v1/insights", query={"region": "tw"}), lambda_context)
+    assert resp["statusCode"] == 200
+    body = json.loads(resp["body"])
+    assert body["region"] == "tw"
+    assert body["period"] == "daily"
+    assert body["summary_date"] == "2026-06-13"
+    assert body["model_id"] == "deterministic-v1"
+    assert "headline" in body["narrative"]
+    assert "entries" in body["digest"]
+
+
+def test_insights_returns_404_when_no_summary(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mod.SummaryRepo, "get", staticmethod(lambda conn, **kw: None))
+    resp = mod.handler(_event("/v1/insights"), lambda_context)
+    assert resp["statusCode"] == 404
+    body = json.loads(resp["body"])
+    assert body["message"] == "No summary found"
+
+
+def test_insights_rejects_invalid_region(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mod.SummaryRepo, "get", staticmethod(lambda conn, **kw: None))
+    resp = mod.handler(_event("/v1/insights", query={"region": "atlantis"}), lambda_context)
+    assert resp["statusCode"] == 400
+
+
+def test_insights_rejects_invalid_period(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mod.SummaryRepo, "get", staticmethod(lambda conn, **kw: None))
+    resp = mod.handler(_event("/v1/insights", query={"period": "hourly"}), lambda_context)
+    assert resp["statusCode"] == 400

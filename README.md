@@ -4,7 +4,7 @@ A **serverless, event-driven market-data platform** for the *Black Desert Online
 
 The project is a study in building a **production-grade serverless data pipeline cheaply and safely**: IAM-authenticated database access (no passwords), a no-NAT VPC, single shared Lambda layer, infrastructure-as-code with nested stacks, and a full CI quality gate — all targeted at **under ~US$15/month** of incremental cost.
 
-> **Status:** Live (v3). 10 Lambdas, a Step Functions ETL pipeline, and two REST APIs deployed across `dev` and `prod` via AWS SAM. All implementation phases complete.
+> **Status:** Live (v3). 12 Lambdas, two Step Functions pipelines (hourly ETL + daily market-insights), and two REST APIs deployed across `dev` and `prod` via AWS SAM.
 
 ---
 
@@ -25,6 +25,7 @@ Game economies are large, volatile, real-time datasets — a realistic stand-in 
 | **Time-series storage** | Hourly `market_snapshot` rows, compacted daily into `market_daily` (OHLC-style), with 90-day retention. |
 | **Item Registry API** | `/v1/items` — CRUD over a DynamoDB-backed catalog; new items validated against the upstream API before being tracked. |
 | **Market Query API** | `/v1/market` — raw snapshots, daily rollups, and a combined **analysis** endpoint (enhancement cost + volatility + liquidity + anomaly flag). |
+| **Market Insights** | `/v1/insights` — daily market-wide digests: top-N movers per category (accessory, buff) with volatility/liquidity and a generated text summary, produced by a scheduled Step Functions pipeline and stored in Postgres. |
 | **Region-aware** | Defaults to the TW server; KR/NA/EU/… can be activated by adding one EventBridge rule — **no code or schema change**. |
 
 ## Architecture
@@ -45,8 +46,11 @@ Game economies are large, volatile, real-time datasets — a realistic stand-in 
                               │                                   │ (IAM auth, in-VPC)
    API Gateway (REST + API key + usage plan)                      │
         ├─ itemRegistry Lambda ─► DynamoDB (item catalog, outside VPC)
-        ├─ marketQuery  Lambda ─► RDS (read-only, in-VPC)
+        ├─ marketQuery  Lambda ─► RDS (read-only, in-VPC; serves /v1/market + /v1/insights)
         └─ docs         Lambda ─► OpenAPI spec + Swagger UI (key-less routes)
+
+   EventBridge (daily 01:00 UTC)
+        └─ insights state machine [ computeDigest ─► storeSummary ] ─► RDS market_summary
 ```
 
 **Shared Lambda layer (`bdo-common`)** holds all reusable logic — the arsha.io client + normalizer, psycopg connection helper, Pydantic models, SQL repositories, the pricing models, and the analytics functions — so the individual handlers stay thin.
@@ -56,10 +60,10 @@ See [`docs/architecture.md`](docs/architecture.md) for the full breakdown and [`
 ## Tech stack
 
 - **Language:** Python 3.12, fully type-annotated (`mypy --strict`)
-- **Compute:** AWS Lambda (8 ETL/API handlers + an in-VPC migrator + a docs API — 10 total), Step Functions, EventBridge
+- **Compute:** AWS Lambda (8 ETL/API handlers + a 2-step daily insights pipeline + an in-VPC migrator + a docs API — 12 total), Step Functions, EventBridge
 - **Data:** Amazon RDS for PostgreSQL (time series), DynamoDB (item registry), Alembic (schema migrations)
 - **API:** API Gateway (REST) with API-key usage plans; OpenAPI 3.1 spec auto-generated from handlers and served via interactive Swagger UI
-- **IaC:** AWS SAM — one root `template.yaml` with nested stacks (`network`, `data`, `etl`, `api`, `observability`, `bastion`)
+- **IaC:** AWS SAM — one root `template.yaml` with nested stacks (`network`, `data`, `etl`, `api`, `insights`, `observability`, `bastion`)
 - **Libraries:** AWS Lambda Powertools (logging, tracing, metrics, validation), Pydantic v2, psycopg 3, PyYAML (spec parsing)
 - **Observability:** CloudWatch dashboard + SLO alarms, X-Ray tracing, EMF custom metrics (`BdoMarket/*`)
 - **Tooling:** `uv` (deps), `ruff` (lint/format), `pytest` + `moto` (tests), GitHub Actions (CI/CD), OpenAPI spec generation and drift detection
@@ -107,9 +111,14 @@ DELETE /v1/items/{id}                 # soft delete (tracked=false)
 GET    /v1/market/items/{id}/snapshots?region=&sid=&from=&to=&limit=
 GET    /v1/market/items/{id}/daily?region=&sid=&from=&to=
 GET    /v1/market/items/{id}/analysis?region=&sid=&window_days=14
+
+# Market insights (RDS-backed)
+GET    /v1/insights?region=&period=&date=&lang=
 ```
 
 The `analysis` response combines a per-tier `expected_enhance_cost`, rolling-window volatility (σ, CV), a liquidity measure, and an `is_anomalous` flag (|z-score| > 3 vs the trailing window).
+
+The `insights` endpoint returns a structured market digest and deterministic narrative summary for a given region and period. It is produced daily by a Step Functions pipeline that builds the digest from top movers and renders a human-readable narrative.
 
 #### Query parameters
 
@@ -125,6 +134,10 @@ spec at `/v1/openapi.json`) — try requests there directly.
 | `from` / `to` | `daily` | ISO-8601 **date** (`YYYY-MM-DD`) | unbounded | Inclusive range. |
 | `limit` | `snapshots` | integer | `1000` | Clamped to `1`–`1000` (out-of-range is clamped, not rejected). |
 | `window_days` | `analysis` | integer | `14` | Bounded `1`–`90` (matches snapshot retention); out-of-range is rejected with `400`. Needs ≥ 7 daily points to produce analytics. |
+| `region` | `insights` | enum (same as market routes) | `tw` | An unknown region is rejected with `400`. |
+| `period` | `insights` | `daily` or `weekly` | `daily` | Summary cadence; invalid values are rejected with `400`. |
+| `date` | `insights` | ISO-8601 **date** (`YYYY-MM-DD`) | latest available | Specific summary date; omit to return the most recent summary. |
+| `lang` | `insights` | string | `en` | Language code for the narrative text. |
 
 Invalid parameter values return `400` with a `detail` list describing the
 offending field.

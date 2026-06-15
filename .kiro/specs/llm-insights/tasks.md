@@ -33,16 +33,16 @@ The engine, fully unit/integration-tested before any Lambda or Bedrock wiring.
 
 Ships a queryable product: structured digest + deterministic prose, no LLM yet.
 
-- [ ] `src/functions/insights_compute/app.py` (in-VPC) — `build_digest`
-- [ ] `src/functions/insights_store/app.py` (in-VPC) — render the deterministic
+- [x] `src/functions/insights_compute/app.py` (in-VPC) — `build_digest`
+- [x] `src/functions/insights_store/app.py` (in-VPC) — render the deterministic
       narrative + upsert `market_summary`
-- [ ] `infra/insights.yaml` — state machine `ComputeDigest → StoreSummary`,
+- [x] `infra/insights.yaml` — state machine `ComputeDigest → StoreSummary`,
       EventBridge **daily** schedule, IAM (`rds-db:connect`); wire into
       `template.yaml`
-- [ ] `/v1/insights` routes in `src/functions/market_query/app.py` (typed Query:
+- [x] `/v1/insights` routes in `src/functions/market_query/app.py` (typed Query:
       region enum, `period`, `date`, `lang`); regenerate `infra/openapi.yaml`;
       handler tests
-- [ ] README: document the `/v1/insights` route + params
+- [x] README: document the `/v1/insights` route + params
 
 ## Phase 3 — LLM narrative (summarize Lambda, Bedrock Converse; daily)
 

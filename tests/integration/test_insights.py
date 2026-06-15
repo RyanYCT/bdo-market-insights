@@ -484,3 +484,64 @@ class TestSummaryRepoIntegration:
         assert result is not None
         assert result.summary_date == date(2026, 3, 15)
         assert result.narrative.headline == "New"
+
+
+class TestPhase2StoreAndServeIntegration:
+    """Phase 2: the generate -> store -> serve data path against real Postgres.
+
+    Mirrors what the insights_compute + insights_store Lambdas do (build_digest
+    -> render_narrative -> SummaryRepo.upsert) and the read the /v1/insights
+    route performs (SummaryRepo.get, latest), asserting a *populated* digest +
+    narrative survive the JSONB round-trip intact.
+    """
+
+    def test_build_render_store_get_roundtrip(
+        self, db_conn: psycopg.Connection[tuple[Any, ...]]
+    ) -> None:
+        # A buff item with 14 days of daily data (>= MIN_POINTS) plus a prior day
+        # so the digest entry carries a real pct_change, volatility and liquidity.
+        _seed_item(db_conn, item_id=1, name="Elixir of Strength", category="buff")
+        for i in range(14):
+            _seed_daily(
+                db_conn,
+                region="tw",
+                trade_date=date(2026, 3, 1) + timedelta(days=i),
+                item_id=1,
+                sid=0,
+                close_price=100 + i * 5,
+                total_trades_delta=50 + i * 2,
+            )
+        target = date(2026, 3, 14)
+
+        digest = build_digest(db_conn, region="tw", period="daily", target_date=target, top_n=5)
+        # Populated digest (not the empty-entries case Phase 1 covered).
+        assert len(digest.entries) >= 1
+        entry = digest.entries[0]
+        assert entry.item_name == "Elixir of Strength"
+        assert entry.volatility is not None
+        assert entry.liquidity is not None
+
+        narrative = render_narrative(digest)
+
+        SummaryRepo.upsert(
+            db_conn,
+            region="tw",
+            period="daily",
+            summary_date=target,
+            lang="en",
+            model_id="deterministic-v1",
+            digest=digest,
+            narrative=narrative,
+        )
+
+        # The /v1/insights default path is "latest for (region, period)".
+        got = SummaryRepo.get(db_conn, region="tw", period="daily", lang="en")
+        assert got is not None
+        assert isinstance(got, MarketSummary)
+        assert got.summary_date == target
+        assert got.model_id == "deterministic-v1"
+        # The populated digest and narrative survive the JSONB round-trip exactly.
+        assert got.digest == digest
+        assert got.narrative == narrative
+        assert isinstance(got.narrative, Narrative)
+        assert got.narrative.categories[0].bullets

@@ -30,6 +30,8 @@ from aws_lambda_powertools.metrics import MetricUnit
 from aws_lambda_powertools.utilities.typing import LambdaContext
 
 from bdo_common import analytics, db, pricing
+from bdo_common.insights.models import Period
+from bdo_common.insights.repositories import SummaryRepo
 from bdo_common.models import SnapshotRow
 from bdo_common.repositories import DailyRepo, SnapshotRepo
 
@@ -222,6 +224,44 @@ def get_analysis(
         "enhancement": enhancement,
         "analytics": market,
     }
+
+
+@app.get("/v1/insights")
+def get_insights(
+    region: Annotated[Region, Query(description="BDO server region.")] = DEFAULT_REGION,
+    period: Annotated[Period, Query(description="Summary period: 'daily' or 'weekly'.")] = "daily",
+    date_: Annotated[
+        date | None,
+        Query(alias="date", description="Summary date (YYYY-MM-DD); omit for latest."),
+    ] = None,
+    lang: Annotated[str, Query(description="Language code (default 'en').")] = "en",
+) -> Response[str]:
+    """Market insights summary (digest + narrative)."""
+    with _reading() as conn:
+        summary = SummaryRepo.get(
+            conn, region=region, period=period, summary_date=date_, lang=lang
+        )
+    if summary is None:
+        return Response(
+            status_code=404,
+            content_type=content_types.APPLICATION_JSON,
+            body=json.dumps({"statusCode": 404, "message": "No summary found"}),
+        )
+    return Response(
+        status_code=200,
+        content_type=content_types.APPLICATION_JSON,
+        body=json.dumps(
+            {
+                "region": summary.region,
+                "period": summary.period,
+                "summary_date": summary.summary_date.isoformat(),
+                "lang": summary.lang,
+                "model_id": summary.model_id,
+                "digest": summary.digest.model_dump(mode="json"),
+                "narrative": summary.narrative.model_dump(mode="json"),
+            }
+        ),
+    )
 
 
 @logger.inject_lambda_context
