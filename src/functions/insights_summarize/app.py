@@ -29,6 +29,21 @@ _BEDROCK_CONFIG = Config(retries={"max_attempts": 2, "mode": "standard"})
 bedrock_client = boto3.client("bedrock-runtime", config=_BEDROCK_CONFIG)
 
 
+def _extract_json(text: str) -> str:
+    """Extract the JSON object from model output that may include extras.
+
+    Despite the prompt, models sometimes wrap the JSON in ```json ... ``` fences
+    or add a sentence of preamble/trailing prose. Return the substring from the
+    first ``{`` to the last ``}`` (the Narrative response is a single object);
+    fall back to the stripped text if no braces are found.
+    """
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        return text[start : end + 1]
+    return text.strip()
+
+
 @logger.inject_lambda_context
 @tracer.capture_lambda_handler
 def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -46,8 +61,9 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         output_message = response["output"]["message"]
         text_content: str = output_message["content"][0]["text"]
 
-        # Parse and validate against Narrative schema
-        raw = json.loads(text_content)
+        # Parse and validate against Narrative schema (tolerating code fences /
+        # prose the model may add around the JSON object).
+        raw = json.loads(_extract_json(text_content))
         narrative = Narrative.model_validate(raw)
 
         logger.info(

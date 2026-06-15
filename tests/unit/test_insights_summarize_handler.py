@@ -131,6 +131,28 @@ def test_invalid_json_response_returns_fallback(
     assert result["model_id"] == "deterministic-v1"
 
 
+def test_strips_markdown_fences_and_prose(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A response wrapping the JSON in ```json fences (and prose) still parses."""
+    digest = _make_digest()
+    narrative = _make_narrative()
+    fenced = f"Here is the summary:\n\n```json\n{narrative.model_dump_json()}\n```\n"
+    mock_client = MagicMock()
+    mock_client.converse.return_value = {
+        "output": {"message": {"role": "assistant", "content": [{"text": fenced}]}},
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 100, "outputTokens": 50},
+    }
+    monkeypatch.setattr(mod, "bedrock_client", mock_client)
+
+    result = mod.handler(_make_event(digest), lambda_context)
+
+    assert result["narrative"] is not None
+    assert result["narrative"]["headline"] == "Market rallies on accessory demand"
+    assert result["model_id"] == "us.amazon.nova-lite-v1:0"
+
+
 def test_valid_json_but_invalid_schema_returns_fallback(
     mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:

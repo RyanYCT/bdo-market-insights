@@ -35,7 +35,18 @@ Parameters:
   BedrockModelId:
     Type: String
     Default: 'us.amazon.nova-lite-v1:0'
-    Description: Bedrock model ID for narrative summarisation (Converse API)
+    Description: >
+      Bedrock model/inference-profile ID used to invoke Converse. The default is
+      a cross-region (CRIS) inference profile; see BedrockFoundationModelId.
+  BedrockFoundationModelId:
+    Type: String
+    Default: 'amazon.nova-lite-v1:0'
+    Description: >
+      Underlying foundation-model ID that BedrockModelId routes to, used only to
+      scope IAM. When BedrockModelId is a cross-region inference profile (e.g.
+      us.amazon.nova-lite-v1:0), invoking it requires permission on both the
+      inference-profile ARN and the foundation-model ARN. Keep in sync with
+      BedrockModelId (strip the region prefix).
 
 Globals:
   Function:
@@ -127,11 +138,18 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # Invoking a cross-region inference profile requires permission on
+              # BOTH the inference-profile ARN (account-scoped, in the source
+              # region) AND the foundation-model ARN it routes to (service-owned,
+              # region wildcard covers the profile's destination regions). A
+              # foundation-model-only grant would be denied for a CRIS profile.
               - Effect: Allow
                 Action:
                   - bedrock:Converse
                   - bedrock:InvokeModel
-                Resource: !Sub 'arn:aws:bedrock:*::foundation-model/${BedrockModelId}'
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockModelId}'
+                  - !Sub 'arn:aws:bedrock:*::foundation-model/${BedrockFoundationModelId}'
 
   InsightsSummarizeFunction:
     Type: AWS::Serverless::Function
