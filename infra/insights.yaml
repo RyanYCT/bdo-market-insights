@@ -57,6 +57,7 @@ Resources:
       FunctionName: !Sub 'bdo-${Stage}-insights-compute'
       CodeUri: ../src/functions/insights_compute
       Handler: app.handler
+      Timeout: 60
       Role: !Ref LambdaRdsAuthRoleArn
       VpcConfig:
         SecurityGroupIds:
