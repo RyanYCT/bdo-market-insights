@@ -83,3 +83,47 @@ def test_rolls_back_after_read(
 
     mock_conn.rollback.assert_called_once()
     mock_conn.commit.assert_not_called()
+
+
+# ── Weekly period tests ──────────────────────────────────────────────────────
+
+
+def test_weekly_period_passes_through_to_build_digest(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify that period='weekly' flows from the event into build_digest."""
+    captured: dict[str, Any] = {}
+    digest = _make_digest(period="weekly")
+
+    def fake_build(conn: Any, **kwargs: Any) -> MarketDigest:
+        captured.update(kwargs)
+        return digest
+
+    monkeypatch.setattr(mod, "build_digest", fake_build)
+
+    result = mod.handler({"region": "tw", "period": "weekly"}, lambda_context)
+
+    assert captured["period"] == "weekly"
+    assert captured["region"] == "tw"
+    assert isinstance(captured["target_date"], date)
+    assert result["period"] == "weekly"
+    assert result["region"] == "tw"
+    assert result["digest"] == digest.model_dump(mode="json")
+
+
+def test_weekly_compute_summarize_store_flow(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end weekly flow: compute returns correct structure for downstream states."""
+    digest = _make_digest(period="weekly")
+    monkeypatch.setattr(mod, "build_digest", lambda conn, **kw: digest)
+
+    result = mod.handler({"region": "tw", "period": "weekly"}, lambda_context)
+
+    # The result must contain all keys needed by the Summarize and StoreSummary states
+    assert "region" in result
+    assert "period" in result
+    assert "target_date" in result
+    assert "digest" in result
+    assert result["period"] == "weekly"
+    assert result["digest"]["period"] == "weekly"
