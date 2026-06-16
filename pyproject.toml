@@ -25,6 +25,10 @@ dev = [
     # pip is pulled in transitively as the venv seed; pin past PYSEC-2026-196
     # (fixed in 26.1.2) so the CI audit job stays green.
     "pip>=26.1.2",
+    # cryptography is transitive via moto[all] -> joserfc; pin past
+    # GHSA-537c-gmf6-5ccf (fixed in 48.0.1) so the CI audit job stays green.
+    # Not a runtime dependency (absent from the bdo-common layer).
+    "cryptography>=48.0.1",
     "bandit",
     "alembic",
     "sqlalchemy",
