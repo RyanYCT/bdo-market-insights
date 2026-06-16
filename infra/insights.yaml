@@ -328,7 +328,24 @@ Resources:
               TopicArn: '${InsightsTopicArn}'
               Message.$: >-
                 States.JsonToString($)
+            Retry:
+              - ErrorEquals:
+                  - States.TaskFailed
+                  - States.Timeout
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+            Catch:
+              - ErrorEquals:
+                  - States.ALL
+                Next: NotificationSkipped
             End: true
+          NotificationSkipped:
+            Type: Succeed
+            Comment: >-
+              Best-effort notification failed after retries. The summary is
+              already stored and served via /v1/insights, so the run still
+              succeeds rather than reporting a false failure.
 
 Outputs:
   InsightsStateMachineArn:

@@ -5,12 +5,6 @@ Description: >
   and log-group retention for every Lambda. Targets match docs/slo.md and the
   Observability section of .kiro/specs/v3/design.md.
 
-Metadata:
-  cfn-lint:
-    config:
-      ignore_checks:
-        - W2001
-
 Parameters:
   Stage:
     Type: String
@@ -179,6 +173,9 @@ Resources:
             Stat: Sum
 
   # Insight failures: any InsightFailures metric emission in a 24h window.
+  # The metric is emitted by Powertools with the default `service` dimension
+  # (POWERTOOLS_SERVICE_NAME); the alarm MUST match that dimension set, or it
+  # watches a different, never-populated metric and never fires.
   InsightFailuresAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -186,6 +183,9 @@ Resources:
       AlarmDescription: 'One or more insight generation failures in 24h'
       Namespace: BdoMarket
       MetricName: InsightFailures
+      Dimensions:
+        - Name: service
+          Value: bdo-market-insights
       Statistic: Sum
       Period: 86400
       EvaluationPeriods: 1
@@ -194,6 +194,60 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlarmTopic]
       OKActions: [!Ref AlarmTopic]
+
+  # Insights pipeline: any non-success terminal execution in 24h. Complements
+  # InsightFailuresAlarm (emitted only by StoreSummary) by also catching
+  # ComputeDigest failures, which fail the execution but emit no custom metric.
+  # (Summarize has a Catch -> deterministic fallback, so it won't fail the run.)
+  InsightsExecutionFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-${Stage}-insights-execution-failure'
+      AlarmDescription: 'One or more insights executions failed/aborted/timed out in 24h'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 1
+      EvaluationPeriods: 1
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      Metrics:
+        - Id: e_bad
+          Label: Insights non-success executions
+          Expression: FILL(m_failed, 0) + FILL(m_aborted, 0) + FILL(m_timedout, 0)
+          ReturnData: true
+        - Id: m_failed
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/States
+              MetricName: ExecutionsFailed
+              Dimensions:
+                - Name: StateMachineArn
+                  Value: !Ref InsightsStateMachineArn
+            Period: 86400
+            Stat: Sum
+        - Id: m_aborted
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/States
+              MetricName: ExecutionsAborted
+              Dimensions:
+                - Name: StateMachineArn
+                  Value: !Ref InsightsStateMachineArn
+            Period: 86400
+            Stat: Sum
+        - Id: m_timedout
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/States
+              MetricName: ExecutionsTimedOut
+              Dimensions:
+                - Name: StateMachineArn
+                  Value: !Ref InsightsStateMachineArn
+            Period: 86400
+            Stat: Sum
 
   # ──────────────────────────────────────────────
   # Log-group retention (one per Lambda; names follow the FunctionName
