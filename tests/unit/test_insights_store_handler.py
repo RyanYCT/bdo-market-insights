@@ -116,6 +116,51 @@ def test_rolls_back_on_exception(
     mock_conn.commit.assert_not_called()
 
 
+def test_emits_summaries_generated_metric_on_success(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SummariesGenerated metric is emitted on successful upsert."""
+    monkeypatch.setattr(mod, "render_narrative", lambda d: _make_narrative())
+    monkeypatch.setattr(mod.SummaryRepo, "upsert", staticmethod(lambda conn, **kw: None))
+
+    metric_calls: list[dict[str, Any]] = []
+
+    def capture_metric(**kwargs: Any) -> None:
+        metric_calls.append(kwargs)
+
+    monkeypatch.setattr(mod.metrics, "add_metric", capture_metric)
+
+    mod.handler(_make_event(_make_digest()), lambda_context)
+
+    assert any(m["name"] == "SummariesGenerated" for m in metric_calls)
+    assert not any(m["name"] == "InsightFailures" for m in metric_calls)
+
+
+def test_emits_insight_failures_metric_on_exception(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """InsightFailures metric is emitted when upsert raises."""
+    monkeypatch.setattr(mod, "render_narrative", lambda d: _make_narrative())
+
+    def boom(conn: Any, **kwargs: Any) -> None:
+        raise RuntimeError("db error")
+
+    monkeypatch.setattr(mod.SummaryRepo, "upsert", staticmethod(boom))
+
+    metric_calls: list[dict[str, Any]] = []
+
+    def capture_metric(**kwargs: Any) -> None:
+        metric_calls.append(kwargs)
+
+    monkeypatch.setattr(mod.metrics, "add_metric", capture_metric)
+
+    with pytest.raises(RuntimeError, match="db error"):
+        mod.handler(_make_event(_make_digest()), lambda_context)
+
+    assert any(m["name"] == "InsightFailures" for m in metric_calls)
+    assert not any(m["name"] == "SummariesGenerated" for m in metric_calls)
+
+
 def test_uses_llm_narrative_when_present(
     mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -11,7 +11,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from aws_lambda_powertools import Logger, Tracer
+from aws_lambda_powertools import Logger, Metrics, Tracer
+from aws_lambda_powertools.metrics import MetricUnit
 
 from bdo_common import db
 from bdo_common.insights.models import MarketDigest, Narrative, Period
@@ -20,6 +21,7 @@ from bdo_common.insights.repositories import SummaryRepo
 
 logger = Logger()
 tracer = Tracer()
+metrics = Metrics(namespace="BdoMarket")
 
 
 def _resolve_narrative(event: dict[str, Any], digest: MarketDigest) -> tuple[Narrative, str]:
@@ -38,6 +40,7 @@ def _resolve_narrative(event: dict[str, Any], digest: MarketDigest) -> tuple[Nar
 
 @logger.inject_lambda_context
 @tracer.capture_lambda_handler
+@metrics.log_metrics
 def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Resolve narrative and upsert the full MarketSummary."""
     region: str = event["region"]
@@ -62,12 +65,14 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         conn.commit()
     except Exception:
         conn.rollback()
+        metrics.add_metric(name="InsightFailures", unit=MetricUnit.Count, value=1)
         logger.exception(
             "insightsStore failed; rolled back",
             extra={"region": region, "period": period, "target_date": target_date.isoformat()},
         )
         raise
 
+    metrics.add_metric(name="SummariesGenerated", unit=MetricUnit.Count, value=1)
     logger.info(
         "insightsStore complete",
         extra={

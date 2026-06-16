@@ -64,14 +64,14 @@ Ships a queryable product: structured digest + deterministic prose, no LLM yet.
 
 ## Phase 5 — Delivery (SNS + Discord) & observability
 
-- [ ] SNS topic `bdo-${Stage}-insights` + native `SNS:Publish` state (+ optional
+- [x] SNS topic `bdo-${Stage}-insights` + native `SNS:Publish` state (+ optional
       email sub) in `infra/insights.yaml`
-- [ ] `src/functions/insights_discord/app.py` (out-of-VPC, SNS-subscribed) —
+- [x] `src/functions/insights_discord/app.py` (out-of-VPC, SNS-subscribed) —
       webhook URL from SSM SecureString; POST; no-raise on failure
-- [ ] EMF metrics (`SummariesGenerated`, `InsightFailures`,
+- [x] EMF metrics (`SummariesGenerated`, `InsightFailures`,
       `DiscordDeliveryFailures`); dashboard widget + `InsightFailures` alarm
       in `infra/observability.yaml`
-- [ ] Tests: mocked HTTPS POST (no raise on failure)
+- [x] Tests: mocked HTTPS POST (no raise on failure)
 
 ## Phase 6 — Enablement & docs
 

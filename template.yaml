@@ -179,3 +179,4 @@ Resources:
       Parameters:
         Stage: !Ref Stage
         EtlStateMachineArn: !GetAtt EtlStack.Outputs.EtlStateMachineArn
+        InsightsStateMachineArn: !GetAtt InsightsStack.Outputs.InsightsStateMachineArn
