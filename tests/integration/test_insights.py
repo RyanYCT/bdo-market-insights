@@ -545,3 +545,61 @@ class TestPhase2StoreAndServeIntegration:
         assert got.narrative == narrative
         assert isinstance(got.narrative, Narrative)
         assert got.narrative.categories[0].bullets
+
+    def test_weekly_roundtrip_and_coexists_with_daily(
+        self, db_conn: psycopg.Connection[tuple[Any, ...]]
+    ) -> None:
+        """Weekly variant of the round-trip (Phase 4).
+
+        A weekly digest builds, stores and serves, and coexists with a
+        same-date daily summary because ``period`` is part of the primary key.
+        """
+        _seed_item(db_conn, item_id=1, name="Elixir of Strength", category="buff")
+        for i in range(14):
+            _seed_daily(
+                db_conn,
+                region="tw",
+                trade_date=date(2026, 3, 1) + timedelta(days=i),
+                item_id=1,
+                sid=0,
+                close_price=100 + i * 5,
+                total_trades_delta=50 + i * 2,
+            )
+        target = date(2026, 3, 14)
+
+        # Weekly compares the target close to the most recent row >= 7 days prior.
+        weekly = build_digest(db_conn, region="tw", period="weekly", target_date=target, top_n=5)
+        assert weekly.period == "weekly"
+        assert len(weekly.entries) >= 1
+        SummaryRepo.upsert(
+            db_conn,
+            region="tw",
+            period="weekly",
+            summary_date=target,
+            lang="en",
+            model_id="deterministic-v1",
+            digest=weekly,
+            narrative=render_narrative(weekly),
+        )
+
+        # A same-date daily summary must coexist (period is part of the PK).
+        daily = build_digest(db_conn, region="tw", period="daily", target_date=target, top_n=5)
+        SummaryRepo.upsert(
+            db_conn,
+            region="tw",
+            period="daily",
+            summary_date=target,
+            lang="en",
+            model_id="deterministic-v1",
+            digest=daily,
+            narrative=render_narrative(daily),
+        )
+
+        got_weekly = SummaryRepo.get(db_conn, region="tw", period="weekly", lang="en")
+        got_daily = SummaryRepo.get(db_conn, region="tw", period="daily", lang="en")
+        assert got_weekly is not None and got_weekly.period == "weekly"
+        assert got_daily is not None and got_daily.period == "daily"
+        assert got_weekly.digest == weekly
+        assert got_daily.digest == daily
+        # Same date, different period -> two distinct rows, no collision.
+        assert got_weekly.summary_date == target == got_daily.summary_date
