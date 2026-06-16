@@ -58,9 +58,9 @@ Ships a queryable product: structured digest + deterministic prose, no LLM yet.
 
 ## Phase 4 — Weekly cadence
 
-- [ ] Weekly EventBridge rule (`period=weekly`); confirm the period flows
+- [x] Weekly EventBridge rule (`period=weekly`); confirm the period flows
       end-to-end (weekly window selection in `build_digest`)
-- [ ] Tests for the weekly window
+- [x] Tests for the weekly window
 
 ## Phase 5 — Delivery (SNS + Discord) & observability
 

@@ -191,6 +191,12 @@ Resources:
             Schedule: cron(0 1 * * ? *)
             Input: !Sub '{"region": "${BdoRegion}", "period": "daily"}'
             Description: Daily market insights generation (~01:00 UTC)
+        WeeklyInsights:
+          Type: Schedule
+          Properties:
+            Schedule: cron(15 1 ? * MON *)
+            Input: !Sub '{"region": "${BdoRegion}", "period": "weekly"}'
+            Description: Weekly market insights generation (Monday ~01:15 UTC)
       Definition:
         Comment: BDO daily market insights (digest + narrative + store)
         StartAt: ComputeDigest
