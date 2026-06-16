@@ -46,15 +46,15 @@ Ships a queryable product: structured digest + deterministic prose, no LLM yet.
 
 ## Phase 3 — LLM narrative (summarize Lambda, Bedrock Converse; daily)
 
-- [ ] `bdo_common/insights/prompt.py` — Converse request from a `MarketDigest`
-- [ ] `src/functions/insights_summarize/app.py` (out-of-VPC) — Bedrock
+- [x] `bdo_common/insights/prompt.py` — Converse request from a `MarketDigest`
+- [x] `src/functions/insights_summarize/app.py` (out-of-VPC) — Bedrock
       **Converse** call + `Narrative` schema validation
-- [ ] Insert the `Summarize` state between `ComputeDigest` and `StoreSummary`;
+- [x] Insert the `Summarize` state between `ComputeDigest` and `StoreSummary`;
       `StoreSummary` prefers the LLM narrative, falls back to deterministic on
       failure
-- [ ] `BedrockModelId` param (Amazon Nova or Anthropic Claude) + least-privilege
+- [x] `BedrockModelId` param (Amazon Nova or Anthropic Claude) + least-privilege
       `bedrock:Converse` on the model ARN
-- [ ] Unit tests (stubbed Bedrock client; assert fallback path)
+- [x] Unit tests (stubbed Bedrock client; assert fallback path)
 
 ## Phase 4 — Weekly cadence
 
