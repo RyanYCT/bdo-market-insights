@@ -81,6 +81,7 @@ def test_renders_narrative_and_upserts(
     assert upsert_calls[0]["lang"] == "en"
     assert upsert_calls[0]["model_id"] == "deterministic-v1"
     assert result["status"] == "stored"
+    assert result["headline"] == "Market summary for tw (daily) - 2026-06-13"
 
 
 def test_commits_on_success(
@@ -185,6 +186,7 @@ def test_uses_llm_narrative_when_present(
     assert upsert_calls[0]["model_id"] == "us.amazon.nova-lite-v1:0"
     assert upsert_calls[0]["narrative"].headline == "LLM generated headline"
     assert result["model_id"] == "us.amazon.nova-lite-v1:0"
+    assert result["headline"] == "LLM generated headline"
     assert result["status"] == "stored"
 
 

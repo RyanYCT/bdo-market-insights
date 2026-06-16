@@ -6,8 +6,3 @@
 # does not try to lint it as CloudFormation.
 ignore_templates:
   - infra/openapi.yaml
-
-# InsightsStateMachineArn is passed from the parent stack for forward
-# compatibility (future alarm dimensions); suppress unused-parameter warning.
-ignore_checks:
-  - W2001

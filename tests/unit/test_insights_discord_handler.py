@@ -57,7 +57,7 @@ def mod(
 def test_successful_discord_post(
     mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Successful POST to Discord returns ok status."""
+    """Successful POST to Discord returns ok status and uses headline from message."""
     mock_urlopen = MagicMock()
     monkeypatch.setattr(mod.urllib.request, "urlopen", mock_urlopen)
     monkeypatch.setattr(
@@ -70,6 +70,40 @@ def test_successful_discord_post(
 
     assert result == {"status": "ok"}
     mock_urlopen.assert_called_once()
+    # Verify the request body contains the headline from the SNS message
+    call_args = mock_urlopen.call_args
+    request_obj = call_args[0][0]
+    body = json.loads(request_obj.data.decode("utf-8"))
+    assert body["embeds"][0]["title"] == "Market rallies on accessory demand"
+
+
+def test_fallback_headline_when_missing(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When headline is missing from message, falls back to generic title."""
+    mock_urlopen = MagicMock()
+    monkeypatch.setattr(mod.urllib.request, "urlopen", mock_urlopen)
+    monkeypatch.setattr(
+        mod.parameters,
+        "get_parameter",
+        lambda name, decrypt=False: "https://discord.com/api/webhooks/test/token",
+    )
+
+    message_no_headline = {
+        "region": "tw",
+        "period": "daily",
+        "target_date": "2026-06-14",
+        "model_id": "us.amazon.nova-lite-v1:0",
+        "status": "stored",
+    }
+    result = mod.handler(_make_sns_event(message_no_headline), lambda_context)
+
+    assert result == {"status": "ok"}
+    mock_urlopen.assert_called_once()
+    call_args = mock_urlopen.call_args
+    request_obj = call_args[0][0]
+    body = json.loads(request_obj.data.decode("utf-8"))
+    assert body["embeds"][0]["title"] == "New market insight available"
 
 
 def test_post_failure_does_not_raise(

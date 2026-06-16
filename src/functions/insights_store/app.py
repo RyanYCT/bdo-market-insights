@@ -87,5 +87,6 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         "period": period,
         "target_date": target_date.isoformat(),
         "model_id": model_id,
+        "headline": narrative.headline,
         "status": "stored",
     }

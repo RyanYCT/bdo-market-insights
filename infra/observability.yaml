@@ -5,6 +5,12 @@ Description: >
   and log-group retention for every Lambda. Targets match docs/slo.md and the
   Observability section of .kiro/specs/v3/design.md.
 
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - W2001
+
 Parameters:
   Stage:
     Type: String
@@ -187,6 +193,7 @@ Resources:
       ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
 
   # ──────────────────────────────────────────────
   # Log-group retention (one per Lambda; names follow the FunctionName
@@ -453,7 +460,8 @@ Resources:
                 "view": "timeSeries",
                 "metrics": [
                   [ "BdoMarket", "SummariesGenerated", "service", "bdo-market-insights", { "label": "SummariesGenerated" } ],
-                  [ "BdoMarket", "InsightFailures", "service", "bdo-market-insights", { "label": "InsightFailures" } ]
+                  [ "BdoMarket", "InsightFailures", "service", "bdo-market-insights", { "label": "InsightFailures" } ],
+                  [ "BdoMarket", "DiscordDeliveryFailures", "service", "bdo-market-insights", { "label": "DiscordDeliveryFailures" } ]
                 ]
               }
             }
