@@ -30,10 +30,17 @@ _SSM_PARAM_NAME = f"/bdo/{_STAGE}/discord-webhook"
 
 
 def _get_webhook_url() -> str:
-    """Retrieve Discord webhook URL from SSM SecureString (cached)."""
+    """Retrieve Discord webhook URL from SSM SecureString (cached).
+
+    Enforces an ``https://`` scheme so the downstream ``urlopen`` cannot be
+    pointed at ``file://`` or another scheme even if the SSM value is wrong
+    (this is what justifies the B310/S310 suppression in ``_post_to_discord``).
+    """
     value: str | None = parameters.get_parameter(_SSM_PARAM_NAME, decrypt=True)
     if not value:
         raise ValueError("Discord webhook URL is empty")
+    if not value.startswith("https://"):
+        raise ValueError("Discord webhook URL must use https")
     return value
 
 
@@ -64,7 +71,12 @@ def _build_discord_payload(message: dict[str, Any]) -> dict[str, Any]:
 
 
 def _post_to_discord(webhook_url: str, payload: dict[str, Any]) -> None:
-    """POST the JSON payload to the Discord webhook URL."""
+    """POST the JSON payload to the Discord webhook URL.
+
+    ``webhook_url`` is an operator-set HTTPS Discord webhook from SSM, scheme-
+    validated in ``_get_webhook_url`` (not attacker-controlled), so the urlopen
+    scheme warnings (ruff S310 / bandit B310) are suppressed deliberately.
+    """
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         webhook_url,
@@ -72,7 +84,7 @@ def _post_to_discord(webhook_url: str, payload: dict[str, Any]) -> None:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    urllib.request.urlopen(req, timeout=10)  # noqa: S310
+    urllib.request.urlopen(req, timeout=10)  # noqa: S310  # nosec B310
 
 
 @logger.inject_lambda_context

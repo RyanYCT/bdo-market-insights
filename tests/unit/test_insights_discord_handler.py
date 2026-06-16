@@ -157,6 +157,29 @@ def test_ssm_failure_does_not_raise(
     assert any(m["name"] == "DiscordDeliveryFailures" for m in metric_calls)
 
 
+def test_non_https_webhook_does_not_raise(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-https webhook URL is rejected before urlopen; no raise, metric emitted."""
+    monkeypatch.setattr(
+        mod.parameters,
+        "get_parameter",
+        lambda name, decrypt=False: "http://insecure.example/webhook",
+    )
+    mock_urlopen = MagicMock()
+    monkeypatch.setattr(mod.urllib.request, "urlopen", mock_urlopen)
+
+    metric_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(mod.metrics, "add_metric", lambda **kw: metric_calls.append(kw))
+
+    result = mod.handler(_make_sns_event(), lambda_context)
+
+    assert result == {"status": "ok"}
+    # The scheme guard fires before any network call.
+    mock_urlopen.assert_not_called()
+    assert any(m["name"] == "DiscordDeliveryFailures" for m in metric_calls)
+
+
 def test_malformed_sns_message_does_not_raise(
     mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
