@@ -63,7 +63,11 @@ Resources:
     Type: AWS::RDS::DBInstance
     Properties:
       Engine: postgres
-      EngineVersion: '16.8'
+      # Pin a currently-supported RDS minor (AWS removes old minors from new
+      # instance creation over time -- 16.8 was deprecated, which fails a fresh
+      # create with "Cannot find version 16.8 for postgres"). Bump as needed to
+      # the latest supported 16.x minor. Bare major "16" is not accepted here.
+      EngineVersion: '16.13'
       DBInstanceClass: db.t4g.micro
       DBName: bdo
       AllocatedStorage: 20
