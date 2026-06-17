@@ -47,6 +47,13 @@ Parameters:
       us.amazon.nova-lite-v1:0), invoking it requires permission on both the
       inference-profile ARN and the foundation-model ARN. Keep in sync with
       BedrockModelId (strip the region prefix).
+  InsightsAlarmEmail:
+    Type: String
+    Default: ''
+    Description: Optional email subscribed to the insights SNS topic (blank = no subscription)
+
+Conditions:
+  HasInsightsEmail: !Not [!Equals [!Ref InsightsAlarmEmail, '']]
 
 Globals:
   Function:
@@ -164,6 +171,72 @@ Resources:
           BEDROCK_MODEL_ID: !Ref BedrockModelId
 
   # ──────────────────────────────────────────────
+  # SNS topic for insights notifications
+  # ──────────────────────────────────────────────
+  InsightsNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'bdo-${Stage}-insights'
+      DisplayName: !Sub 'bdo-${Stage} insights notifications'
+
+  InsightsEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasInsightsEmail
+    Properties:
+      TopicArn: !Ref InsightsNotificationTopic
+      Protocol: email
+      Endpoint: !Ref InsightsAlarmEmail
+
+  # ──────────────────────────────────────────────
+  # Discord notifier — out of VPC, SNS-triggered
+  # ──────────────────────────────────────────────
+  InsightsDiscordRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'bdo-${Stage}-insights-discord-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: XRayWrite
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: '*'
+        - PolicyName: SsmDiscordWebhook
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/bdo/${Stage}/discord-webhook'
+
+  InsightsDiscordFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-insights-discord'
+      CodeUri: ../src/functions/insights_discord
+      Handler: app.handler
+      Timeout: 30
+      Role: !GetAtt InsightsDiscordRole.Arn
+      Events:
+        InsightsSns:
+          Type: SNS
+          Properties:
+            Topic: !Ref InsightsNotificationTopic
+
+  # ──────────────────────────────────────────────
   # Step Functions state machine (daily insights)
   # ──────────────────────────────────────────────
   InsightsStateMachine:
@@ -177,6 +250,7 @@ Resources:
         InsightsComputeArn: !GetAtt InsightsComputeFunction.Arn
         InsightsSummarizeArn: !GetAtt InsightsSummarizeFunction.Arn
         InsightsStoreArn: !GetAtt InsightsStoreFunction.Arn
+        InsightsTopicArn: !Ref InsightsNotificationTopic
       Policies:
         - LambdaInvokePolicy:
             FunctionName: !Ref InsightsComputeFunction
@@ -184,6 +258,8 @@ Resources:
             FunctionName: !Ref InsightsSummarizeFunction
         - LambdaInvokePolicy:
             FunctionName: !Ref InsightsStoreFunction
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt InsightsNotificationTopic.TopicName
       Events:
         DailyInsights:
           Type: Schedule
@@ -244,10 +320,40 @@ Resources:
                 IntervalSeconds: 2
                 MaxAttempts: 3
                 BackoffRate: 2
+            Next: PublishNotification
+          PublishNotification:
+            Type: Task
+            Resource: 'arn:aws:states:::sns:publish'
+            Parameters:
+              TopicArn: '${InsightsTopicArn}'
+              Message.$: >-
+                States.JsonToString($)
+            Retry:
+              - ErrorEquals:
+                  - States.TaskFailed
+                  - States.Timeout
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+            Catch:
+              - ErrorEquals:
+                  - States.ALL
+                Next: NotificationSkipped
             End: true
+          NotificationSkipped:
+            Type: Succeed
+            Comment: >-
+              Best-effort notification failed after retries. The summary is
+              already stored and served via /v1/insights, so the run still
+              succeeds rather than reporting a false failure.
 
 Outputs:
   InsightsStateMachineArn:
     Value: !Ref InsightsStateMachine
     Export:
       Name: !Sub '${AWS::StackName}-InsightsStateMachineArn'
+
+  InsightsNotificationTopicArn:
+    Value: !Ref InsightsNotificationTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-InsightsNotificationTopicArn'

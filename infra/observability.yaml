@@ -12,6 +12,9 @@ Parameters:
   EtlStateMachineArn:
     Type: String
     Description: ARN of the ETL state machine (from the ETL stack) for AWS/States alarms
+  InsightsStateMachineArn:
+    Type: String
+    Description: ARN of the Insights state machine (from the Insights stack) for alarms
   LogRetentionInDays:
     Type: Number
     Default: 30
@@ -169,6 +172,83 @@ Resources:
             Period: 86400
             Stat: Sum
 
+  # Insight failures: any InsightFailures metric emission in a 24h window.
+  # The metric is emitted by Powertools with the default `service` dimension
+  # (POWERTOOLS_SERVICE_NAME); the alarm MUST match that dimension set, or it
+  # watches a different, never-populated metric and never fires.
+  InsightFailuresAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-${Stage}-insight-failures'
+      AlarmDescription: 'One or more insight generation failures in 24h'
+      Namespace: BdoMarket
+      MetricName: InsightFailures
+      Dimensions:
+        - Name: service
+          Value: bdo-market-insights
+      Statistic: Sum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # Insights pipeline: any non-success terminal execution in 24h. Complements
+  # InsightFailuresAlarm (emitted only by StoreSummary) by also catching
+  # ComputeDigest failures, which fail the execution but emit no custom metric.
+  # (Summarize has a Catch -> deterministic fallback, so it won't fail the run.)
+  InsightsExecutionFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-${Stage}-insights-execution-failure'
+      AlarmDescription: 'One or more insights executions failed/aborted/timed out in 24h'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 1
+      EvaluationPeriods: 1
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      Metrics:
+        - Id: e_bad
+          Label: Insights non-success executions
+          Expression: FILL(m_failed, 0) + FILL(m_aborted, 0) + FILL(m_timedout, 0)
+          ReturnData: true
+        - Id: m_failed
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/States
+              MetricName: ExecutionsFailed
+              Dimensions:
+                - Name: StateMachineArn
+                  Value: !Ref InsightsStateMachineArn
+            Period: 86400
+            Stat: Sum
+        - Id: m_aborted
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/States
+              MetricName: ExecutionsAborted
+              Dimensions:
+                - Name: StateMachineArn
+                  Value: !Ref InsightsStateMachineArn
+            Period: 86400
+            Stat: Sum
+        - Id: m_timedout
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/States
+              MetricName: ExecutionsTimedOut
+              Dimensions:
+                - Name: StateMachineArn
+                  Value: !Ref InsightsStateMachineArn
+            Period: 86400
+            Stat: Sum
+
   # ──────────────────────────────────────────────
   # Log-group retention (one per Lambda; names follow the FunctionName
   # convention bdo-${Stage}-<name> from infra/etl.yaml and infra/api.yaml).
@@ -233,6 +313,30 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-docs'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  InsightsComputeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-compute'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  InsightsSummarizeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-summarize'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  InsightsStoreLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-store'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  InsightsDiscordLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-discord'
       RetentionInDays: !Ref LogRetentionInDays
 
   # ──────────────────────────────────────────────
@@ -397,6 +501,21 @@ Resources:
                 "metrics": [
                   [ "BdoMarket", "ApiKeyHits", "service", "bdo-market-insights", { "label": "ApiKeyHits" } ],
                   [ "BdoMarket", "AnomaliesDetected", "service", "bdo-market-insights", { "label": "AnomaliesDetected" } ]
+                ]
+              }
+            },
+            {
+              "type": "metric", "x": 0, "y": 27, "width": 12, "height": 6,
+              "properties": {
+                "title": "Insights: summaries generated vs failures",
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 86400,
+                "view": "timeSeries",
+                "metrics": [
+                  [ "BdoMarket", "SummariesGenerated", "service", "bdo-market-insights", { "label": "SummariesGenerated" } ],
+                  [ "BdoMarket", "InsightFailures", "service", "bdo-market-insights", { "label": "InsightFailures" } ],
+                  [ "BdoMarket", "DiscordDeliveryFailures", "service", "bdo-market-insights", { "label": "DiscordDeliveryFailures" } ]
                 ]
               }
             }
