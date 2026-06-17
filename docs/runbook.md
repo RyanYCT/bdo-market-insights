@@ -491,12 +491,31 @@ SM_ARN=$(aws cloudformation describe-stacks \
   --output text)
 
 # Trigger a daily run on demand (instead of waiting for 01:00 UTC):
-aws stepfunctions start-execution --state-machine-arn "$SM_ARN" \
-  --input '{"region":"tw","period":"daily"}'
+EXEC_ARN=$(aws stepfunctions start-execution --state-machine-arn "$SM_ARN" \
+  --input '{"region":"tw","period":"daily"}' --query executionArn --output text)
 
-# Once it succeeds, confirm an LLM (not fallback) summary was stored.
-# Via the API (needs the x-api-key; see "Updating a Deployment"):
-curl -H "x-api-key: <KEY>" "${API_URL}/v1/insights?region=tw&period=daily" | python -m json.tool
+# Poll until it leaves RUNNING, then print the terminal status:
+while [ "$(aws stepfunctions describe-execution --execution-arn "$EXEC_ARN" \
+  --query status --output text)" = "RUNNING" ]; do sleep 5; done
+aws stepfunctions describe-execution --execution-arn "$EXEC_ARN" --query status --output text
+
+# Resolve the API base URL + key (same cross-stack pattern as "Updating a
+# Deployment"; the key lives in API Gateway, not Secrets Manager):
+API_URL=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?OutputKey=='ApiUrl'].OutputValue | [0]" \
+  --output text)
+API_ID=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?OutputKey=='ApiId'].OutputValue | [0]" \
+  --output text)
+USAGE_PLAN_ID=$(aws apigateway get-usage-plans \
+  --query "items[?apiStages[?apiId=='${API_ID}']].id | [0]" --output text)
+API_KEY_ID=$(aws apigateway get-usage-plan-keys --usage-plan-id "${USAGE_PLAN_ID}" \
+  --query 'items[0].id' --output text)
+API_KEY=$(aws apigateway get-api-key --api-key "${API_KEY_ID}" --include-value \
+  --query 'value' --output text)
+
+# Confirm an LLM (not fallback) summary was stored:
+curl -H "x-api-key: ${API_KEY}" "${API_URL}/v1/insights?region=tw&period=daily" | python -m json.tool
 # model_id == us.amazon.nova-lite-v1:0  -> LLM path live
 # model_id == deterministic-v1          -> Bedrock denied/failed; check the
 #   bdo-<stage>-insights-summarize logs for AccessDenied (model not enabled or

@@ -25,5 +25,5 @@ dependency in `template.yaml`.
 - (+) Simpler dependency management with a single dependency manifest
   (`pyproject.toml`); the layer build exports it to a `requirements.txt`
   consumed by `sam build`.
-- (-) Any layer change triggers redeployment of all 8 functions.
+- (-) Any layer change triggers redeployment of all functions that use it.
 - (-) Layer size limit of 250 MB unzipped must be respected.
