@@ -4,7 +4,7 @@ A **serverless, event-driven market-data platform** for the *Black Desert Online
 
 The project is a study in building a **production-grade serverless data pipeline cheaply and safely**: IAM-authenticated database access (no passwords), a no-NAT VPC, single shared Lambda layer, infrastructure-as-code with nested stacks, and a full CI quality gate — all targeted at **under ~US$15/month** of incremental cost.
 
-> **Status:** Live (v3). 12 Lambdas, two Step Functions pipelines (hourly ETL + daily market-insights), and two REST APIs deployed across `dev` and `prod` via AWS SAM.
+> **Status:** Live (v3). 14 Lambdas, two Step Functions pipelines (hourly ETL + daily/weekly market-insights), and two REST APIs deployed across `dev` and `prod` via AWS SAM.
 
 ---
 
@@ -25,7 +25,7 @@ Game economies are large, volatile, real-time datasets — a realistic stand-in 
 | **Time-series storage** | Hourly `market_snapshot` rows, compacted daily into `market_daily` (OHLC-style), with 90-day retention. |
 | **Item Registry API** | `/v1/items` — CRUD over a DynamoDB-backed catalog; new items validated against the upstream API before being tracked. |
 | **Market Query API** | `/v1/market` — raw snapshots, daily rollups, and a combined **analysis** endpoint (enhancement cost + volatility + liquidity + anomaly flag). |
-| **Market Insights** | `/v1/insights` — daily market-wide digests: top-N movers per category (accessory, buff) with volatility/liquidity and a generated text summary, produced by a scheduled Step Functions pipeline and stored in Postgres. |
+| **Market Insights** | `/v1/insights` — daily and weekly market-wide digests: top-N movers per category (accessory, buff) with volatility/liquidity and an LLM-generated summary (Amazon Bedrock, with a deterministic fallback), produced by a scheduled Step Functions pipeline, stored in Postgres, and pushed to SNS/Discord. |
 | **Region-aware** | Defaults to the TW server; KR/NA/EU/… can be activated by adding one EventBridge rule — **no code or schema change**. |
 
 ## Architecture
@@ -49,8 +49,8 @@ Game economies are large, volatile, real-time datasets — a realistic stand-in 
         ├─ marketQuery  Lambda ─► RDS (read-only, in-VPC; serves /v1/market + /v1/insights)
         └─ docs         Lambda ─► OpenAPI spec + Swagger UI (key-less routes)
 
-   EventBridge (daily 01:00 UTC)
-        └─ insights state machine [ computeDigest ─► storeSummary ] ─► RDS market_summary
+   EventBridge (daily + weekly)
+        └─ insights SM [ computeDigest ─► summarize (Bedrock) ─► storeSummary ] ─► market_summary ─► SNS ─► Discord
 ```
 
 **Shared Lambda layer (`bdo-common`)** holds all reusable logic — the arsha.io client + normalizer, psycopg connection helper, Pydantic models, SQL repositories, the pricing models, and the analytics functions — so the individual handlers stay thin.
@@ -60,7 +60,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the full breakdown and [`
 ## Tech stack
 
 - **Language:** Python 3.12, fully type-annotated (`mypy --strict`)
-- **Compute:** AWS Lambda (8 ETL/API handlers + a 2-step daily insights pipeline + an in-VPC migrator + a docs API — 12 total), Step Functions, EventBridge
+- **Compute:** AWS Lambda (8 ETL/API handlers + a 4-step insights pipeline + an in-VPC migrator + a docs API — 14 total), Step Functions, EventBridge
 - **Data:** Amazon RDS for PostgreSQL (time series), DynamoDB (item registry), Alembic (schema migrations)
 - **API:** API Gateway (REST) with API-key usage plans; OpenAPI 3.1 spec auto-generated from handlers and served via interactive Swagger UI
 - **IaC:** AWS SAM — one root `template.yaml` with nested stacks (`network`, `data`, `etl`, `api`, `insights`, `observability`, `bastion`)

@@ -405,3 +405,112 @@ cert, domain, base-path mapping, and DNS record:
 ```sh
 sam deploy --config-env prod
 ```
+
+
+## LLM Market Insights
+
+A separate Step Functions pipeline (`bdo-<stage>-insights`) generates daily and
+weekly market summaries. Two EventBridge schedules trigger it:
+
+- **Daily** — `cron(0 1 * * ? *)` (~01:00 UTC), input `{"region":"tw","period":"daily"}`.
+- **Weekly** — `cron(15 1 ? * MON *)` (Mondays ~01:15 UTC), `period=weekly`.
+
+Flow: `ComputeDigest` (in-VPC, reads `market_daily`) → `Summarize` (out-of-VPC,
+Bedrock Converse; falls back deterministically on any error) → `StoreSummary`
+(in-VPC, upserts `market_summary`) → `SNS:Publish` → the `insights-discord`
+Lambda relays to Discord. Summaries are served at `GET /v1/insights`.
+
+Monitor from the CloudWatch dashboard / alarms:
+
+- **BdoMarket/SummariesGenerated** — summaries stored per run.
+- **BdoMarket/InsightFailures** — store failures (alarm `bdo-<stage>-insight-failures`).
+- **BdoMarket/DiscordDeliveryFailures** — webhook POST failures (best-effort; no alarm).
+- Alarm `bdo-<stage>-insights-execution-failure` — any failed/aborted/timed-out
+  insights execution in 24 h (catches `ComputeDigest` failures that emit no metric).
+
+### One-time prerequisites
+
+These must be in place (per account/region, us-east-1) **before** the first run
+produces LLM narratives; until then the pipeline still works but stores the
+deterministic fallback (`model_id = deterministic-v1`).
+
+**1. Enable the Bedrock model.** The summariser calls Bedrock via the Converse
+API using `BedrockModelId` (default `us.amazon.nova-lite-v1:0`, a cross-region
+inference profile over the foundation model `BedrockFoundationModelId`, default
+`amazon.nova-lite-v1:0`). Request model access once in the Bedrock console
+("Model access") for the account/region, or check it:
+
+```sh
+aws bedrock list-foundation-models --region us-east-1 \
+  --query "modelSummaries[?contains(modelId,'nova-lite')].modelId" --output text
+# Access is managed in the Bedrock console > Model access (one-time per account).
+```
+
+The summariser's IAM role grants `bedrock:Converse`/`InvokeModel` on **both** the
+inference-profile ARN and the foundation-model ARN — required for CRIS profiles
+(ADR-0015). If you change `BedrockModelId` to a different profile, set
+`BedrockFoundationModelId` to the model it routes to (strip the region prefix).
+
+**2. Create the Discord webhook secret.** The `insights-discord` Lambda reads the
+webhook URL from an SSM SecureString (must be `https://`):
+
+```sh
+STAGE=dev
+aws ssm put-parameter --region us-east-1 \
+  --name "/bdo/${STAGE}/discord-webhook" \
+  --type SecureString \
+  --value "https://discord.com/api/webhooks/XXXX/YYYY"
+```
+
+The role grants `ssm:GetParameter` on that exact path. The default `aws/ssm` KMS
+key needs no extra permission; only if you encrypt the parameter with a
+**customer-managed** KMS key must you add `kms:Decrypt` (on that key) to the
+`bdo-<stage>-insights-discord-role`. If the parameter is absent or not `https`,
+delivery is skipped (logged + `DiscordDeliveryFailures`), never failing the run.
+
+**3. (Optional) Email subscription.** Pass `InsightsAlarmEmail=you@example.com`
+at deploy time to subscribe an address to the `bdo-<stage>-insights` SNS topic
+(confirm via the email link). Blank (default) = no subscription.
+
+### Region activation
+
+The insights schedules use the stack's `BdoRegion` (default `tw`), matching the
+ETL. Insights are single-region today; activating another region means adding a
+schedule (or a second deployment) — the digest/query code is already
+region-aware, no schema change.
+
+### Post-deploy verification (smoke test)
+
+After deploying a stage, confirm the LLM path actually works (not just the
+fallback):
+
+```sh
+STAGE=dev
+SM_ARN=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?ends_with(OutputKey,'InsightsStateMachineArn')].OutputValue | [0]" \
+  --output text)
+
+# Trigger a daily run on demand (instead of waiting for 01:00 UTC):
+aws stepfunctions start-execution --state-machine-arn "$SM_ARN" \
+  --input '{"region":"tw","period":"daily"}'
+
+# Once it succeeds, confirm an LLM (not fallback) summary was stored.
+# Via the API (needs the x-api-key; see "Updating a Deployment"):
+curl -H "x-api-key: <KEY>" "${API_URL}/v1/insights?region=tw&period=daily" | python -m json.tool
+# model_id == us.amazon.nova-lite-v1:0  -> LLM path live
+# model_id == deterministic-v1          -> Bedrock denied/failed; check the
+#   bdo-<stage>-insights-summarize logs for AccessDenied (model not enabled or
+#   IAM/profile mismatch) and the prompt/parse path.
+
+# Weekly: repeat with period=weekly (a Monday-dated, week-ending summary).
+```
+
+### Insights failure scenarios
+
+| Symptom | Investigation |
+|---------|---------------|
+| Summaries always `model_id=deterministic-v1` | Bedrock not enabled, or IAM denies the model/profile. Check `bdo-<stage>-insights-summarize` logs for `AccessDeniedException`; verify model access + `BedrockModelId`/`BedrockFoundationModelId`. |
+| `bdo-<stage>-insight-failures` alarm | `StoreSummary` failed (RDS/IAM). Check its logs + the execution history. Writes are idempotent; re-run via `start-execution`. |
+| `bdo-<stage>-insights-execution-failure` alarm | A non-`StoreSummary` state failed (usually `ComputeDigest` — RDS unreachable, or `market_daily` empty for the date). Inspect the Step Functions execution. |
+| No Discord message | Check `DiscordDeliveryFailures`; verify the SSM param exists, is `https`, and the webhook is valid. Delivery is best-effort — the summary is still stored and served via the API. |
+| `/v1/insights?period=weekly` returns 404 | No weekly run has completed yet (first one lands the Monday after deploy), or the requested `date` predates the first weekly summary. |

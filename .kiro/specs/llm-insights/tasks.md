@@ -75,10 +75,12 @@ Ships a queryable product: structured digest + deterministic prose, no LLM yet.
 
 ## Phase 6 — Enablement & docs
 
-- [ ] Runbook: Bedrock model enablement (account/region), the
+- [x] Runbook: Bedrock model enablement (account/region), the
       `/bdo/${Stage}/discord-webhook` SSM param, region activation for insights
-- [ ] `docs/architecture.md` update (insights stack + data flow)
+- [x] `docs/architecture.md` update (insights stack + data flow)
 - [ ] Deploy `dev`, verify a daily + weekly run end-to-end; then `prod`
+      (operator action — procedure + smoke test in docs/runbook.md
+      "LLM Market Insights" > "Post-deploy verification")
 
 ## Reserved (out of scope; upgrade paths in requirements.md)
 
