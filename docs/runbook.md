@@ -412,3 +412,13 @@ cert, domain, base-path mapping, and DNS record:
 ```sh
 make domain-down STAGE=prod
 ```
+
+### Insights failure scenarios
+
+| Symptom | Investigation |
+|---------|---------------|
+| Summaries always `model_id=deterministic-v1` | Bedrock not enabled, or IAM denies the model/profile. Check `bdo-<stage>-insights-summarize` logs for `AccessDeniedException`; verify model access + `BedrockModelId`/`BedrockFoundationModelId`. |
+| `bdo-<stage>-insight-failures` alarm | `StoreSummary` failed (RDS/IAM). Check its logs + the execution history. Writes are idempotent; re-run via `start-execution`. |
+| `bdo-<stage>-insights-execution-failure` alarm | A non-`StoreSummary` state failed (usually `ComputeDigest` — RDS unreachable, or `market_daily` empty for the date). Inspect the Step Functions execution. |
+| No Discord message | Check `DiscordDeliveryFailures`; verify the SSM param exists, is `https`, and the webhook is valid. Delivery is best-effort — the summary is still stored and served via the API. |
+| `/v1/insights?period=weekly` returns 404 | No weekly run has completed yet (first one lands the Monday after deploy), or the requested `date` predates the first weekly summary. |
