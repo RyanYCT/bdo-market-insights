@@ -32,14 +32,12 @@ Instance Connect Endpoint (EICE), so you never SSH to it directly — the
    is purely additive (adds the bastion + EICE, touches nothing else):
 
    ```sh
-   # Build + verify the layer FIRST, then deploy. `make build` runs the
-   # verify-layer guard, so this additive deploy can never republish a
-   # source-only CommonLayer (which would break every function at init with
-   # "No module named 'aws_lambda_powertools'"). A bare `sam deploy` skips
-   # that guard entirely. Build on a native Linux filesystem, NOT a
+   # `make bastion-up` builds + verify-layer FIRST, then deploys, so this
+   # additive toggle can never republish a source-only CommonLayer (which
+   # would break every function at init with "No module named
+   # 'aws_lambda_powertools'"). Build on a native Linux filesystem, NOT a
    # Windows-mounted /mnt/* path (pip --target can silently vendor nothing).
-   make build && sam deploy --config-env dev \
-     --parameter-overrides "Stage=dev BdoRegion=tw UseRdsProxy=false EnableBastion=true"
+   make bastion-up STAGE=dev
    ```
 
 2. `make db-tunnel-up STAGE=<dev|prod>` — opens the EICE tunnel to RDS on
@@ -104,7 +102,7 @@ make db-tunnel-down
 
 After this one-time bootstrap, all later schema changes go through
 `make migrate-lambda` (or the CI deploy step) — no tunnel required. Drop the
-bastion again once you're done (`make build && sam deploy … EnableBastion=false`).
+bastion again once you're done (`make bastion-down STAGE=dev`).
 
 > **Why the bootstrap revokes the master's role membership.** On RDS the
 > master is not a superuser, and PostgreSQL 16 auto-grants the creating role
@@ -175,10 +173,9 @@ If your changes include schema migrations (`migrations/versions/*`):
 
 ```bash
 # One-time only: enable bastion for dev (if not already deployed).
-# `make build` runs verify-layer first so this can't republish a broken
+# `make bastion-up` runs verify-layer first so it can't republish a broken
 # (source-only) CommonLayer. Build on a native Linux FS, not /mnt/*.
-make build && sam deploy --config-env dev \
-  --parameter-overrides "EnableBastion=true" --no-confirm-changeset
+make bastion-up STAGE=dev
 
 # Open tunnel in one terminal
 make db-tunnel-up STAGE=dev
@@ -193,8 +190,7 @@ uv run alembic -c migrations/alembic.ini current
 make db-tunnel-down
 
 # Optional: disable bastion to save costs
-make build && sam deploy --config-env dev \
-  --parameter-overrides "EnableBastion=false" --no-confirm-changeset
+make bastion-down STAGE=dev
 ```
 
 #### Post-Deploy Verification (Dev)
@@ -364,9 +360,9 @@ If you make a breaking change (new required field, schema incompatibility, etc.)
 
 The API custom domain is opt-in and off by default. The hostname and hosted
 zone are **not** stored in committed config — they are passed at deploy time via
-`--parameter-overrides` (zone ID is account-specific). Use
-`{service}.{env}.example.com`: `api.example.com` for prod, `api.dev.example.com`
-for dev.
+the `make domain-up` variables `API_DOMAIN_NAME` / `HOSTED_ZONE_ID` (zone ID is
+account-specific). Use `{service}.{env}.example.com`: `api.example.com` for
+prod, `api.dev.example.com` for dev.
 
 ### Prerequisites
 
@@ -387,12 +383,11 @@ for dev.
 Pass both params; this is additive to the existing stack:
 
 ```sh
-make build && sam deploy --config-env prod \
-  --parameter-overrides "ApiDomainName=api.example.com HostedZoneId=ZXXXXXXXXXXXXX"
+make domain-up STAGE=prod API_DOMAIN_NAME=api.example.com HOSTED_ZONE_ID=ZXXXXXXXXXXXXX
 ```
 
-> `make build` runs the verify-layer guard before this additive deploy, so it
-> can never republish a source-only `CommonLayer`. Build on a native Linux
+> `make domain-up` runs the verify-layer guard before this additive deploy, so
+> it can never republish a source-only `CommonLayer`. Build on a native Linux
 > filesystem, not a Windows-mounted `/mnt/*` path.
 
 > The first deploy that sets a domain blocks for a few minutes while ACM
@@ -411,9 +406,9 @@ curl -H "x-api-key: <KEY>" https://api.example.com/v1/items
 
 ### Disable
 
-Redeploy without the overrides (params default to empty), which removes the
+Redeploy without the domain params (they revert to empty), which removes the
 cert, domain, base-path mapping, and DNS record:
 
 ```sh
-make build && sam deploy --config-env prod
+make domain-down STAGE=prod
 ```
