@@ -32,14 +32,12 @@ Instance Connect Endpoint (EICE), so you never SSH to it directly — the
    is purely additive (adds the bastion + EICE, touches nothing else):
 
    ```sh
-   # Build + verify the layer FIRST, then deploy. `make build` runs the
-   # verify-layer guard, so this additive deploy can never republish a
-   # source-only CommonLayer (which would break every function at init with
-   # "No module named 'aws_lambda_powertools'"). A bare `sam deploy` skips
-   # that guard entirely. Build on a native Linux filesystem, NOT a
+   # `make bastion-up` builds + verify-layer FIRST, then deploys, so this
+   # additive toggle can never republish a source-only CommonLayer (which
+   # would break every function at init with "No module named
+   # 'aws_lambda_powertools'"). Build on a native Linux filesystem, NOT a
    # Windows-mounted /mnt/* path (pip --target can silently vendor nothing).
-   make build && sam deploy --config-env dev \
-     --parameter-overrides "Stage=dev BdoRegion=tw UseRdsProxy=false EnableBastion=true"
+   make bastion-up STAGE=dev
    ```
 
 2. `make db-tunnel-up STAGE=<dev|prod>` — opens the EICE tunnel to RDS on
@@ -104,7 +102,7 @@ make db-tunnel-down
 
 After this one-time bootstrap, all later schema changes go through
 `make migrate-lambda` (or the CI deploy step) — no tunnel required. Drop the
-bastion again once you're done (`make build && sam deploy … EnableBastion=false`).
+bastion again once you're done (`make bastion-down STAGE=dev`).
 
 > **Why the bootstrap revokes the master's role membership.** On RDS the
 > master is not a superuser, and PostgreSQL 16 auto-grants the creating role
@@ -175,10 +173,9 @@ If your changes include schema migrations (`migrations/versions/*`):
 
 ```bash
 # One-time only: enable bastion for dev (if not already deployed).
-# `make build` runs verify-layer first so this can't republish a broken
+# `make bastion-up` runs verify-layer first so it can't republish a broken
 # (source-only) CommonLayer. Build on a native Linux FS, not /mnt/*.
-make build && sam deploy --config-env dev \
-  --parameter-overrides "EnableBastion=true" --no-confirm-changeset
+make bastion-up STAGE=dev
 
 # Open tunnel in one terminal
 make db-tunnel-up STAGE=dev
@@ -193,8 +190,7 @@ uv run alembic -c migrations/alembic.ini current
 make db-tunnel-down
 
 # Optional: disable bastion to save costs
-make build && sam deploy --config-env dev \
-  --parameter-overrides "EnableBastion=false" --no-confirm-changeset
+make bastion-down STAGE=dev
 ```
 
 #### Post-Deploy Verification (Dev)
@@ -364,9 +360,9 @@ If you make a breaking change (new required field, schema incompatibility, etc.)
 
 The API custom domain is opt-in and off by default. The hostname and hosted
 zone are **not** stored in committed config — they are passed at deploy time via
-`--parameter-overrides` (zone ID is account-specific). Use
-`{service}.{env}.example.com`: `api.example.com` for prod, `api.dev.example.com`
-for dev.
+the `make domain-up` variables `API_DOMAIN_NAME` / `HOSTED_ZONE_ID` (zone ID is
+account-specific). Use `{service}.{env}.example.com`: `api.example.com` for
+prod, `api.dev.example.com` for dev.
 
 ### Prerequisites
 
@@ -387,12 +383,11 @@ for dev.
 Pass both params; this is additive to the existing stack:
 
 ```sh
-make build && sam deploy --config-env prod \
-  --parameter-overrides "ApiDomainName=api.example.com HostedZoneId=ZXXXXXXXXXXXXX"
+make domain-up STAGE=prod API_DOMAIN_NAME=api.example.com HOSTED_ZONE_ID=ZXXXXXXXXXXXXX
 ```
 
-> `make build` runs the verify-layer guard before this additive deploy, so it
-> can never republish a source-only `CommonLayer`. Build on a native Linux
+> `make domain-up` runs the verify-layer guard before this additive deploy, so
+> it can never republish a source-only `CommonLayer`. Build on a native Linux
 > filesystem, not a Windows-mounted `/mnt/*` path.
 
 > The first deploy that sets a domain blocks for a few minutes while ACM
@@ -411,129 +406,11 @@ curl -H "x-api-key: <KEY>" https://api.example.com/v1/items
 
 ### Disable
 
-Redeploy without the overrides (params default to empty), which removes the
+Redeploy without the domain params (they revert to empty), which removes the
 cert, domain, base-path mapping, and DNS record:
 
 ```sh
-make build && sam deploy --config-env prod
-```
-
-
-## LLM Market Insights
-
-A separate Step Functions pipeline (`bdo-<stage>-insights`) generates daily and
-weekly market summaries. Two EventBridge schedules trigger it:
-
-- **Daily** — `cron(0 1 * * ? *)` (~01:00 UTC), input `{"region":"tw","period":"daily"}`.
-- **Weekly** — `cron(15 1 ? * MON *)` (Mondays ~01:15 UTC), `period=weekly`.
-
-Flow: `ComputeDigest` (in-VPC, reads `market_daily`) → `Summarize` (out-of-VPC,
-Bedrock Converse; falls back deterministically on any error) → `StoreSummary`
-(in-VPC, upserts `market_summary`) → `SNS:Publish` → the `insights-discord`
-Lambda relays to Discord. Summaries are served at `GET /v1/insights`.
-
-Monitor from the CloudWatch dashboard / alarms:
-
-- **BdoMarket/SummariesGenerated** — summaries stored per run.
-- **BdoMarket/InsightFailures** — store failures (alarm `bdo-<stage>-insight-failures`).
-- **BdoMarket/DiscordDeliveryFailures** — webhook POST failures (best-effort; no alarm).
-- Alarm `bdo-<stage>-insights-execution-failure` — any failed/aborted/timed-out
-  insights execution in 24 h (catches `ComputeDigest` failures that emit no metric).
-
-### One-time prerequisites
-
-These must be in place (per account/region, us-east-1) **before** the first run
-produces LLM narratives; until then the pipeline still works but stores the
-deterministic fallback (`model_id = deterministic-v1`).
-
-**1. Enable the Bedrock model.** The summariser calls Bedrock via the Converse
-API using `BedrockModelId` (default `us.amazon.nova-lite-v1:0`, a cross-region
-inference profile over the foundation model `BedrockFoundationModelId`, default
-`amazon.nova-lite-v1:0`). Request model access once in the Bedrock console
-("Model access") for the account/region, or check it:
-
-```sh
-aws bedrock list-foundation-models --region us-east-1 \
-  --query "modelSummaries[?contains(modelId,'nova-lite')].modelId" --output text
-# Access is managed in the Bedrock console > Model access (one-time per account).
-```
-
-The summariser's IAM role grants `bedrock:Converse`/`InvokeModel` on **both** the
-inference-profile ARN and the foundation-model ARN — required for CRIS profiles
-(ADR-0015). If you change `BedrockModelId` to a different profile, set
-`BedrockFoundationModelId` to the model it routes to (strip the region prefix).
-
-**2. Create the Discord webhook secret.** The `insights-discord` Lambda reads the
-webhook URL from an SSM SecureString (must be `https://`):
-
-```sh
-STAGE=dev
-aws ssm put-parameter --region us-east-1 \
-  --name "/bdo/${STAGE}/discord-webhook" \
-  --type SecureString \
-  --value "https://discord.com/api/webhooks/XXXX/YYYY"
-```
-
-The role grants `ssm:GetParameter` on that exact path. The default `aws/ssm` KMS
-key needs no extra permission; only if you encrypt the parameter with a
-**customer-managed** KMS key must you add `kms:Decrypt` (on that key) to the
-`bdo-<stage>-insights-discord-role`. If the parameter is absent or not `https`,
-delivery is skipped (logged + `DiscordDeliveryFailures`), never failing the run.
-
-**3. (Optional) Email subscription.** Pass `InsightsAlarmEmail=you@example.com`
-at deploy time to subscribe an address to the `bdo-<stage>-insights` SNS topic
-(confirm via the email link). Blank (default) = no subscription.
-
-### Region activation
-
-The insights schedules use the stack's `BdoRegion` (default `tw`), matching the
-ETL. Insights are single-region today; activating another region means adding a
-schedule (or a second deployment) — the digest/query code is already
-region-aware, no schema change.
-
-### Post-deploy verification (smoke test)
-
-After deploying a stage, confirm the LLM path actually works (not just the
-fallback):
-
-```sh
-STAGE=dev
-SM_ARN=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?ends_with(OutputKey,'InsightsStateMachineArn')].OutputValue | [0]" \
-  --output text)
-
-# Trigger a daily run on demand (instead of waiting for 01:00 UTC):
-EXEC_ARN=$(aws stepfunctions start-execution --state-machine-arn "$SM_ARN" \
-  --input '{"region":"tw","period":"daily"}' --query executionArn --output text)
-
-# Poll until it leaves RUNNING, then print the terminal status:
-while [ "$(aws stepfunctions describe-execution --execution-arn "$EXEC_ARN" \
-  --query status --output text)" = "RUNNING" ]; do sleep 5; done
-aws stepfunctions describe-execution --execution-arn "$EXEC_ARN" --query status --output text
-
-# Resolve the API base URL + key (same cross-stack pattern as "Updating a
-# Deployment"; the key lives in API Gateway, not Secrets Manager):
-API_URL=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?OutputKey=='ApiUrl'].OutputValue | [0]" \
-  --output text)
-API_ID=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?OutputKey=='ApiId'].OutputValue | [0]" \
-  --output text)
-USAGE_PLAN_ID=$(aws apigateway get-usage-plans \
-  --query "items[?apiStages[?apiId=='${API_ID}']].id | [0]" --output text)
-API_KEY_ID=$(aws apigateway get-usage-plan-keys --usage-plan-id "${USAGE_PLAN_ID}" \
-  --query 'items[0].id' --output text)
-API_KEY=$(aws apigateway get-api-key --api-key "${API_KEY_ID}" --include-value \
-  --query 'value' --output text)
-
-# Confirm an LLM (not fallback) summary was stored:
-curl -H "x-api-key: ${API_KEY}" "${API_URL}/v1/insights?region=tw&period=daily" | python -m json.tool
-# model_id == us.amazon.nova-lite-v1:0  -> LLM path live
-# model_id == deterministic-v1          -> Bedrock denied/failed; check the
-#   bdo-<stage>-insights-summarize logs for AccessDenied (model not enabled or
-#   IAM/profile mismatch) and the prompt/parse path.
-
-# Weekly: repeat with period=weekly (a Monday-dated, week-ending summary).
+make domain-down STAGE=prod
 ```
 
 ### Insights failure scenarios
