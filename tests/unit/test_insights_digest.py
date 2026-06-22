@@ -250,3 +250,51 @@ class TestBuildDigest:
         names = {e.item_name for e in result.entries}
         assert names == {"Mover", "EnhMover", "Spiker"}
         assert "Flat" not in names
+
+    @patch("bdo_common.insights.digest.get_handler")
+    @patch("bdo_common.insights.digest.available_categories")
+    @patch("bdo_common.insights.digest.InsightRepo")
+    def test_build_digest_collects_enhancement_cost_movers(
+        self,
+        mock_insight_repo: MagicMock,
+        mock_available: MagicMock,
+        mock_get_handler: MagicMock,
+    ) -> None:
+        """stats.enhancement_cost_movers lists every notable, correctly-labelled
+        enhancement move, sorted by |value| desc; nulls and sub-threshold moves
+        are excluded."""
+        mock_available.return_value = ["accessory"]
+        mock_insight_repo.top_movers.return_value = [(1, "X", 0, 100, 100, 0.0, 10)]
+
+        def _entry(sid: int, *, pct: float, enh: float | None) -> DigestEntry:
+            return DigestEntry(
+                item_id=4,
+                item_name="Ring of Cadry",
+                category="accessory",
+                sid=sid,
+                close_price=100,
+                prev_close_price=100,
+                pct_change=pct,
+                volume=10,
+                volatility=0.01,
+                liquidity=10.0,
+                enhancement_cost_change=enh,
+            )
+
+        mock_get_handler.return_value = MagicMock(
+            return_value=[
+                _entry(1, pct=0.0, enh=5.0),  # flat price, big enhancement move
+                _entry(2, pct=0.0, enh=1.43),
+                _entry(3, pct=-12.0, enh=0.71),
+                _entry(0, pct=5.0, enh=None),  # no enhancement move
+                _entry(4, pct=8.0, enh=0.2),  # sub-threshold enhancement move
+            ]
+        )
+
+        result = build_digest(
+            MagicMock(), region="tw", period="daily", target_date=date(2026, 3, 15)
+        )
+
+        assert result.stats is not None
+        movers = [(m.sid, round(m.value, 2)) for m in result.stats.enhancement_cost_movers]
+        assert movers == [(1, 5.0), (2, 1.43), (3, 0.71)]

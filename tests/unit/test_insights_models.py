@@ -245,6 +245,23 @@ class TestDigestStats:
         assert stats.total == 3
         assert stats.top_gainer is None
         assert stats.most_traded is None
+        assert stats.enhancement_cost_movers == []
+
+    def test_enhancement_cost_movers_roundtrip(self) -> None:
+        stats = DigestStats(
+            total=2,
+            gainers=1,
+            losers=1,
+            flat=0,
+            anomalies=0,
+            enhancement_cost_movers=[
+                MoverRef(item_name="Ring of Cadry", sid=1, value=5.0),
+                MoverRef(item_name="Ring of Cadry", sid=2, value=1.43),
+            ],
+        )
+        restored = DigestStats.model_validate_json(stats.model_dump_json())
+        assert restored == stats
+        assert [m.sid for m in restored.enhancement_cost_movers] == [1, 2]
 
 
 class TestNarrativeCategory:
