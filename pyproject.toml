@@ -29,6 +29,12 @@ dev = [
     # GHSA-537c-gmf6-5ccf (fixed in 48.0.1) so the CI audit job stays green.
     # Not a runtime dependency (absent from the bdo-common layer).
     "cryptography>=48.0.1",
+    # msgpack is transitive via pip-audit -> cachecontrol; pin past
+    # GHSA-6v7p-g79w-8964 (fixed in 1.2.1). Not a runtime dependency.
+    "msgpack>=1.2.1",
+    # pydantic-settings is transitive via moto[all] -> openapi-spec-validator;
+    # pin past GHSA-4xgf-cpjx-pc3j (fixed in 2.14.2). Not a runtime dependency.
+    "pydantic-settings>=2.14.2",
     "bandit",
     "alembic",
     "sqlalchemy",
