@@ -76,3 +76,17 @@ def test_system_prompt_directs_interpretation_of_signals() -> None:
         assert token in system_text
     # Must still forbid inventing values.
     assert "only" in system_text
+
+
+def test_system_prompt_polish_rules() -> None:
+    """The narration-polish rules: always surface enhancement cost, compact
+    silver, and never claim 'no volatility'."""
+    result = build_converse_request(_make_digest(), "us.amazon.nova-lite-v1:0")
+    system_text = result["system"][0]["text"].lower()
+
+    # Compact silver formatting is demonstrated (e.g. "675k").
+    assert "675k" in system_text
+    # Enhancement cost must always be stated when present.
+    assert "always" in system_text
+    # Guard against the "no volatility" misread observed in evaluation.
+    assert "no volatility" in system_text
