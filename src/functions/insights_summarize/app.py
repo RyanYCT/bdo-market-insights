@@ -53,6 +53,26 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     target_date: str = event["target_date"]
     digest = MarketDigest.model_validate(event["digest"])
 
+    # An empty digest carries no facts to narrate. Per ADR-0016 the model may
+    # only narrate the figures it is given and must invent nothing -- but with
+    # zero entries there is nothing to ground it, and models hallucinate items
+    # and prices to fill the void. Short-circuit to the deterministic fallback
+    # (narrative=None), which renders an honest "no movements" summary in
+    # insights_store. This also avoids a pointless Bedrock call/spend.
+    if not digest.entries:
+        logger.info(
+            "insightsSummarize skipped Bedrock: empty digest, using deterministic fallback",
+            extra={"region": region, "period": period},
+        )
+        return {
+            "region": region,
+            "period": period,
+            "target_date": target_date,
+            "digest": event["digest"],
+            "narrative": None,
+            "model_id": "deterministic-v1",
+        }
+
     try:
         request_kwargs = build_converse_request(digest, _MODEL_ID)
         response = bedrock_client.converse(**request_kwargs)
