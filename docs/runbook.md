@@ -475,3 +475,81 @@ make bastion-down STAGE=dev         # optional, saves the bastion cost
 > deterministic narrative instead (`model_id` = `deterministic-v1`) — still
 > populated, just not LLM-written. Check `model_id` in the response to tell
 > which path produced it.
+
+
+## Cleanup / Teardown
+
+Two levels: reverting a temporary test setup (non-destructive), and deleting a
+whole stack (destructive). The legacy pre-v3 decommission is a separate,
+one-time exercise -- see `docs/cleanup-tasks.md`.
+
+### Revert a test setup (non-destructive)
+
+After a dev evaluation, undo the opt-in pieces without touching the stack:
+
+```sh
+# Remove synthetic insights rows seeded into RDS (needs an open tunnel; see
+# "Market Insights - dev evaluation").
+uv run python scripts/seed_market_dev.py --clean
+
+make db-tunnel-down              # close the EICE tunnel
+make bastion-down STAGE=dev      # remove the bastion + EICE (saves cost)
+make domain-down STAGE=prod      # only if a custom domain was enabled
+make clean                       # local build artifacts (.aws-sam/, etc.)
+```
+
+### Delete a whole stack (DESTRUCTIVE)
+
+Deleting `bdo-market-<stage>` tears down the root stack and every nested stack
+(network, data, ETL, API, insights, observability). Know what goes with it:
+
+- **RDS is destroyed.** Nothing sets `DeletionPolicy: Retain`, so the Postgres
+  instance is deleted. CloudFormation takes a **final snapshot by default** (the
+  default deletion policy for a standalone RDS DB instance is `Snapshot`); that
+  snapshot persists and bills for storage until you delete it manually
+  (`aws rds delete-db-snapshot`).
+- **The `bdo-<stage>-items` DynamoDB table is deleted** -- the tracked-items
+  list is lost. Export it first if you need it.
+- The `bdo-<stage>-dba-credentials` secret is scheduled for deletion (default
+  recovery window); the RDS-managed master secret is removed with the DB.
+- Lambda-created CloudWatch log groups can remain orphaned -- delete separately
+  if desired. The shared SAM deploy bucket is not part of the stack and stays.
+
+#### Dev
+
+Dev RDS has no deletion protection (`DeletionProtection: !If [IsProd, true,
+false]` in `infra/data.yaml`), so the stack deletes directly:
+
+```sh
+sam delete --stack-name bdo-market-dev --region us-east-1
+# prompts for confirmation; add --no-prompts to skip
+```
+
+#### Prod
+
+Prod RDS sets `DeletionProtection: true`, so `sam delete` will FAIL (the DB
+lands in `DELETE_FAILED`) until you disable it. This is irreversible -- take a
+snapshot you control first.
+
+```sh
+# Resolve the (CFN-generated) DB instance id via its Name tag.
+RDS_ID=$(aws rds describe-db-instances --region us-east-1 \
+  --query "DBInstances[?TagList[?Key=='Name' && Value=='bdo-prod-postgres']].DBInstanceIdentifier | [0]" \
+  --output text)
+
+# 1. (Recommended) take a manual final snapshot you control:
+aws rds create-db-snapshot --region us-east-1 \
+  --db-instance-identifier "$RDS_ID" \
+  --db-snapshot-identifier "bdo-prod-final-$(date +%Y%m%d)"
+
+# 2. Disable deletion protection (required before the stack can delete the DB):
+aws rds modify-db-instance --region us-east-1 \
+  --db-instance-identifier "$RDS_ID" \
+  --no-deletion-protection --apply-immediately
+
+# 3. Delete the stack:
+sam delete --stack-name bdo-market-prod --region us-east-1
+```
+
+> Irreversible. If others may depend on the stack, prefer the staged
+> disable -> observe -> delete approach documented in `docs/cleanup-tasks.md`.
