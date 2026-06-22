@@ -202,3 +202,51 @@ class TestBuildDigest:
         assert result.generated_at >= before
         assert result.generated_at <= after
         assert result.generated_at.tzinfo is not None
+
+    @patch("bdo_common.insights.digest.get_handler")
+    @patch("bdo_common.insights.digest.available_categories")
+    @patch("bdo_common.insights.digest.InsightRepo")
+    def test_build_digest_drops_flat_filler(
+        self,
+        mock_insight_repo: MagicMock,
+        mock_available: MagicMock,
+        mock_get_handler: MagicMock,
+    ) -> None:
+        """Flat 0% rows with no other signal are dropped; flat rows carrying an
+        anomaly or a notable enhancement_cost_change are kept."""
+        mock_available.return_value = ["accessory"]
+        mock_insight_repo.top_movers.return_value = [(1, "X", 0, 100, 100, 0.0, 10)]
+
+        def _entry(
+            name: str, *, pct: float, anomaly: bool | None, enh: float | None
+        ) -> DigestEntry:
+            return DigestEntry(
+                item_id=1,
+                item_name=name,
+                category="accessory",
+                sid=0,
+                close_price=100,
+                prev_close_price=100,
+                pct_change=pct,
+                volume=10,
+                volatility=0.01,
+                liquidity=10.0,
+                enhancement_cost_change=enh,
+                anomaly=anomaly,
+            )
+
+        real = _entry("Mover", pct=20.0, anomaly=False, enh=None)
+        flat_noise = _entry("Flat", pct=0.0, anomaly=False, enh=None)
+        flat_enh = _entry("EnhMover", pct=0.0, anomaly=False, enh=5.0)
+        flat_anomaly = _entry("Spiker", pct=0.0, anomaly=True, enh=None)
+        mock_get_handler.return_value = MagicMock(
+            return_value=[real, flat_noise, flat_enh, flat_anomaly]
+        )
+
+        result = build_digest(
+            MagicMock(), region="tw", period="daily", target_date=date(2026, 3, 15)
+        )
+
+        names = {e.item_name for e in result.entries}
+        assert names == {"Mover", "EnhMover", "Spiker"}
+        assert "Flat" not in names

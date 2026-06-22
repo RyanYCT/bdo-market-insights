@@ -22,6 +22,26 @@ from bdo_common.insights.repositories import InsightRepo
 if TYPE_CHECKING:
     import psycopg
 
+#: A mover whose |pct_change| is below this is treated as flat. top_movers pads
+#: up to top_n even when there aren't that many real movers, so flat rows with
+#: no other signal would otherwise become "movers" filler in the digest.
+_FLAT_PCT_EPSILON = 0.5
+
+
+def _has_signal(entry: DigestEntry) -> bool:
+    """Whether an entry is worth keeping in the digest.
+
+    Keeps genuine price moves, anomalies, and notable accessory enhancement-cost
+    moves; drops flat padding (e.g. the 0% rows top_movers returns to fill
+    top_n when real movers are scarce).
+    """
+    if abs(entry.pct_change) >= _FLAT_PCT_EPSILON:
+        return True
+    if entry.anomaly:
+        return True
+    enh = entry.enhancement_cost_change
+    return enh is not None and abs(enh) >= _FLAT_PCT_EPSILON
+
 
 def _compute_stats(entries: list[DigestEntry]) -> DigestStats | None:
     """Summarise a set of entries: breadth counts + notable superlatives.
@@ -98,6 +118,10 @@ def build_digest(
         handler = get_handler(category)
         entries = handler(conn, region, period, target_date, movers)
         all_entries.extend(entries)
+
+    # Drop flat filler (top_movers pads to top_n); keep only entries carrying a
+    # real price move, an anomaly, or a notable enhancement-cost move.
+    all_entries = [e for e in all_entries if _has_signal(e)]
 
     return MarketDigest(
         region=region,
