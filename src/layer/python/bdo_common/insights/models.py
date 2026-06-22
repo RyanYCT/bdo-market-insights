@@ -49,9 +49,10 @@ class DigestEntry(BaseModel):
 class MoverRef(BaseModel):
     """A reference to one notable item within a digest, used by ``DigestStats``.
 
-    ``value`` is the metric that earned the superlative: ``pct_change`` for the
-    top gainer/loser, the coefficient of variation for ``most_volatile``, and the
-    daily trade count for ``most_traded``.
+    ``value`` is the metric that earned the reference: ``pct_change`` for the
+    top gainer/loser, the coefficient of variation for ``most_volatile``, the
+    daily trade count for ``most_traded``, and the percent enhancement-cost
+    change for each entry in ``enhancement_cost_movers``.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -80,6 +81,10 @@ class DigestStats(BaseModel):
     top_loser: MoverRef | None = None
     most_volatile: MoverRef | None = None
     most_traded: MoverRef | None = None
+    #: Accessory tiers whose enhancement cost moved notably, sorted by |value|
+    #: descending. The authoritative, correctly-labelled list the narrator must
+    #: state verbatim -- so a small model can't mis-map a tier to the wrong %.
+    enhancement_cost_movers: list[MoverRef] = []
 
 
 class MarketDigest(BaseModel):

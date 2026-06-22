@@ -27,6 +27,9 @@ if TYPE_CHECKING:
 #: no other signal would otherwise become "movers" filler in the digest.
 _FLAT_PCT_EPSILON = 0.5
 
+#: Minimum |enhancement_cost_change| (percent) to call out as a notable move.
+_ENH_COST_EPSILON = 0.5
+
 
 def _has_signal(entry: DigestEntry) -> bool:
     """Whether an entry is worth keeping in the digest.
@@ -74,6 +77,15 @@ def _compute_stats(entries: list[DigestEntry]) -> DigestStats | None:
         if mv_value is not None:
             most_volatile = _ref(mv, mv_value)
 
+    # The authoritative, correctly-labelled enhancement-cost moves the narrator
+    # must state verbatim (so a small model can't mis-map a tier to the wrong %).
+    enh_movers: list[MoverRef] = []
+    for e in entries:
+        enh = e.enhancement_cost_change
+        if enh is not None and abs(enh) >= _ENH_COST_EPSILON:
+            enh_movers.append(_ref(e, enh))
+    enh_movers.sort(key=lambda m: abs(m.value), reverse=True)
+
     return DigestStats(
         total=len(entries),
         gainers=sum(1 for e in entries if e.pct_change > 0),
@@ -84,6 +96,7 @@ def _compute_stats(entries: list[DigestEntry]) -> DigestStats | None:
         top_loser=top_loser,
         most_volatile=most_volatile,
         most_traded=_ref(most_traded_e, float(most_traded_e.volume)),
+        enhancement_cost_movers=enh_movers,
     )
 
 
