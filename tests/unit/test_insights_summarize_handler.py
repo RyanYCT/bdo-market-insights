@@ -12,10 +12,37 @@ from unittest.mock import MagicMock
 import pytest
 from botocore.exceptions import ClientError
 
-from bdo_common.insights.models import MarketDigest, Narrative, NarrativeCategory
+from bdo_common.insights.models import DigestEntry, MarketDigest, Narrative, NarrativeCategory
 
 
 def _make_digest() -> MarketDigest:
+    """A digest WITH entries, so insights_summarize actually calls Bedrock."""
+    return MarketDigest(
+        region="tw",
+        period="daily",
+        summary_date=date(2026, 6, 13),
+        top_n=5,
+        entries=[
+            DigestEntry(
+                item_id=1,
+                item_name="Ogre Ring",
+                category="accessory",
+                sid=0,
+                close_price=1_000_000_000,
+                prev_close_price=924_000_000,
+                pct_change=8.2,
+                volume=42,
+                volatility=0.05,
+                liquidity=42.0,
+                enhancement_cost_change=3.1,
+            )
+        ],
+        generated_at=datetime(2026, 6, 14, 1, 0, 0, tzinfo=UTC),
+    )
+
+
+def _make_empty_digest() -> MarketDigest:
+    """A digest with no entries (e.g. no tracked items / no movers)."""
     return MarketDigest(
         region="tw",
         period="daily",
@@ -129,6 +156,27 @@ def test_invalid_json_response_returns_fallback(
 
     assert result["narrative"] is None
     assert result["model_id"] == "deterministic-v1"
+
+
+def test_empty_digest_skips_bedrock(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty digest must NOT call Bedrock (no facts to narrate -> hallucination
+    risk). It returns narrative=null so insights_store renders the deterministic
+    'no movements' summary."""
+    digest = _make_empty_digest()
+    mock_client = MagicMock()
+    monkeypatch.setattr(mod, "bedrock_client", mock_client)
+
+    result = mod.handler(_make_event(digest), lambda_context)
+
+    mock_client.converse.assert_not_called()
+    assert result["narrative"] is None
+    assert result["model_id"] == "deterministic-v1"
+    assert result["region"] == "tw"
+    assert result["period"] == "daily"
+    assert result["target_date"] == "2026-06-13"
+    assert result["digest"] == digest.model_dump(mode="json")
 
 
 def test_strips_markdown_fences_and_prose(
