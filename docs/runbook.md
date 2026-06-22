@@ -422,3 +422,56 @@ make domain-down STAGE=prod
 | `bdo-<stage>-insights-execution-failure` alarm | A non-`StoreSummary` state failed (usually `ComputeDigest` — RDS unreachable, or `market_daily` empty for the date). Inspect the Step Functions execution. |
 | No Discord message | Check `DiscordDeliveryFailures`; verify the SSM param exists, is `https`, and the webhook is valid. Delivery is best-effort — the summary is still stored and served via the API. |
 | `/v1/insights?period=weekly` returns 404 | No weekly run has completed yet (first one lands the Monday after deploy), or the requested `date` predates the first weekly summary. |
+
+
+## Market Insights — dev evaluation
+
+The insights pipeline reads RDS `market_daily` and `insightsCompute` targets
+**yesterday**, with `top_movers` needing a prior day (and ~7–14 days for
+volatility/anomaly). A fresh dev stack with no history therefore produces an
+empty digest (the deterministic "No significant market movements detected."),
+so a live ETL cycle can't be evaluated for days. To exercise the narration now,
+backfill a small synthetic dataset and trigger the state machine by hand.
+
+> `scripts/seed_market_dev.py` is **dev-only**. It writes synthetic items
+> (IDs ≥ 90,000,000, so no collision with real arsha.io IDs) over a 14-day
+> window ending yesterday, shaped to produce a gainer, a loser, an anomalous
+> spike, and an accessory whose enhancement-cost ladder moves.
+
+```sh
+# 1. Backfill synthetic market data into dev RDS (over the bastion tunnel).
+make bastion-up STAGE=dev          # if the bastion isn't already deployed
+make db-tunnel-up STAGE=dev        # leave running; use a second terminal below
+
+# In the second terminal: a DB URL with write access over the tunnel. The RDS
+# master (see the bootstrap section) always works; dba works if it has been
+# granted table privileges. The script accepts the +psycopg form too.
+export DATABASE_URL="postgresql://postgres:<MASTER_PW>@localhost:5432/bdo"
+uv run python scripts/seed_market_dev.py --dry-run   # preview
+uv run python scripts/seed_market_dev.py             # seeds region tw, 14 days
+
+# 2. Trigger the insights state machine for daily and weekly.
+SM_ARN=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-dev')].Outputs[] | [?OutputKey=='InsightsStateMachineArn'].OutputValue | [0]" \
+  --output text)
+aws stepfunctions start-execution --state-machine-arn "$SM_ARN" \
+  --input '{"region":"tw","period":"daily"}'
+aws stepfunctions start-execution --state-machine-arn "$SM_ARN" \
+  --input '{"region":"tw","period":"weekly"}'
+
+# 3. Read the narration back (resolve API_URL + API_KEY as in
+#    "Post-Deploy Verification (Dev)" above).
+curl -s -H "x-api-key: ${API_KEY}" "${API_URL}/v1/insights?region=tw&period=daily"  | jq .
+curl -s -H "x-api-key: ${API_KEY}" "${API_URL}/v1/insights?region=tw&period=weekly" | jq .
+
+# 4. Clean up the synthetic rows when finished.
+uv run python scripts/seed_market_dev.py --clean
+make db-tunnel-down
+make bastion-down STAGE=dev         # optional, saves the bastion cost
+```
+
+> The `Summarize` step calls Bedrock. If the dev account/region has **no
+> Bedrock model access**, the step catches the error and stores the
+> deterministic narrative instead (`model_id` = `deterministic-v1`) — still
+> populated, just not LLM-written. Check `model_id` in the response to tell
+> which path produced it.
