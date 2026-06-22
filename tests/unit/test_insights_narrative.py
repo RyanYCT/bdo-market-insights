@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from bdo_common.insights.models import DigestEntry, MarketDigest, Narrative, NarrativeCategory
+from bdo_common.insights.models import (
+    DigestEntry,
+    DigestStats,
+    MarketDigest,
+    MoverRef,
+    Narrative,
+    NarrativeCategory,
+)
 from bdo_common.insights.narrative import render_narrative
 
 
@@ -18,6 +25,7 @@ def _make_entry(
     prev_close_price: int = 90,
     pct_change: float = 11.1,
     volume: int = 50,
+    anomaly: bool | None = None,
 ) -> DigestEntry:
     return DigestEntry(
         item_id=item_id,
@@ -31,16 +39,22 @@ def _make_entry(
         volatility=0.05,
         liquidity=50.0,
         enhancement_cost_change=None,
+        anomaly=anomaly,
     )
 
 
-def _make_digest(entries: list[DigestEntry] | None = None) -> MarketDigest:
+def _make_digest(
+    entries: list[DigestEntry] | None = None,
+    *,
+    stats: DigestStats | None = None,
+) -> MarketDigest:
     return MarketDigest(
         region="tw",
         period="daily",
         summary_date=date(2026, 3, 15),
         top_n=5,
         entries=entries or [],
+        stats=stats,
         generated_at=datetime(2026, 3, 15, 12, 0, tzinfo=UTC),
     )
 
@@ -101,21 +115,60 @@ class TestRenderNarrative:
         assert len(narrative.categories[0].bullets) == 2
 
     def test_overall_summary_counts(self) -> None:
-        """Overall summary correctly counts gainers and losers."""
+        """Overall summary correctly counts gainers, losers, and flat."""
         entries = [
             _make_entry(item_id=1, pct_change=10.0),
             _make_entry(item_id=2, pct_change=-5.0),
             _make_entry(item_id=3, pct_change=3.0),
             _make_entry(item_id=4, pct_change=-1.0),
-            _make_entry(item_id=5, pct_change=0.0),  # neither gainer nor loser
+            _make_entry(item_id=5, pct_change=0.0),  # flat
         ]
         digest = _make_digest(entries)
         narrative = render_narrative(digest)
 
-        assert "5 items tracked" in narrative.overall
+        assert "5 items across" in narrative.overall
         assert "1 categories" in narrative.overall
-        assert "2 gainers" in narrative.overall
-        assert "2 losers" in narrative.overall
+        assert "2 up" in narrative.overall
+        assert "2 down" in narrative.overall
+        assert "1 flat" in narrative.overall
+
+    def test_overall_uses_stats_superlatives(self) -> None:
+        """When digest.stats is present, overall surfaces the superlatives."""
+        entries = [
+            _make_entry(item_id=1, item_name="Rocket", pct_change=12.5, anomaly=True),
+            _make_entry(item_id=2, item_name="Dropper", pct_change=-8.0),
+        ]
+        stats = DigestStats(
+            total=2,
+            gainers=1,
+            losers=1,
+            flat=0,
+            anomalies=1,
+            top_gainer=MoverRef(item_name="Rocket", sid=0, value=12.5),
+            top_loser=MoverRef(item_name="Dropper", sid=0, value=-8.0),
+            most_volatile=None,
+            most_traded=MoverRef(item_name="Rocket", sid=0, value=50.0),
+        )
+        narrative = render_narrative(_make_digest(entries, stats=stats))
+
+        assert "Top gainer: Rocket +12.5%" in narrative.overall
+        assert "Top loser: Dropper -8.0%" in narrative.overall
+        assert "1 unusual move(s) flagged" in narrative.overall
+
+    def test_anomaly_marked_in_bullet(self) -> None:
+        """An entry flagged as an anomaly gets an 'unusual move' marker."""
+        entry = _make_entry(item_name="Spiker", pct_change=30.0, anomaly=True)
+        narrative = render_narrative(_make_digest([entry]))
+
+        bullet = narrative.categories[0].bullets[0]
+        assert "unusual move" in bullet
+
+    def test_no_anomaly_marker_when_not_flagged(self) -> None:
+        """A normal entry has no 'unusual move' marker."""
+        entry = _make_entry(anomaly=False)
+        narrative = render_narrative(_make_digest([entry]))
+
+        assert "unusual move" not in narrative.categories[0].bullets[0]
 
     def test_headline_format(self) -> None:
         """Headline includes region, period, and date."""

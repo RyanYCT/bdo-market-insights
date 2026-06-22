@@ -2,15 +2,36 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime
 
 from bdo_common.insights.models import (
     DigestEntry,
+    DigestStats,
     MarketDigest,
     MarketSummary,
+    MoverRef,
     Narrative,
     NarrativeCategory,
 )
+
+
+def _entry(*, pct_change: float = 11.1, anomaly: bool | None = None) -> DigestEntry:
+    """Minimal DigestEntry for trend/anomaly assertions."""
+    return DigestEntry(
+        item_id=1,
+        item_name="Item",
+        category="buff",
+        sid=0,
+        close_price=100,
+        prev_close_price=90,
+        pct_change=pct_change,
+        volume=50,
+        volatility=0.05,
+        liquidity=50.0,
+        enhancement_cost_change=None,
+        anomaly=anomaly,
+    )
 
 
 class TestDigestEntry:
@@ -59,6 +80,26 @@ class TestDigestEntry:
         assert entry.volatility is None
         assert entry.liquidity is None
         assert entry.enhancement_cost_change is None
+        # anomaly is optional and defaults to None when not supplied
+        assert entry.anomaly is None
+
+    def test_trend_is_computed_from_pct_change(self) -> None:
+        """``trend`` is derived from pct_change and serialised in the output."""
+        up = _entry(pct_change=5.0)
+        down = _entry(pct_change=-5.0)
+        flat = _entry(pct_change=0.0)
+        assert up.trend == "up"
+        assert down.trend == "down"
+        assert flat.trend == "flat"
+        # It appears in the serialised payload the LLM/API consume.
+        assert up.model_dump()["trend"] == "up"
+        assert json.loads(up.model_dump_json())["trend"] == "up"
+
+    def test_anomaly_roundtrips(self) -> None:
+        entry = _entry(pct_change=20.0, anomaly=True)
+        restored = DigestEntry.model_validate_json(entry.model_dump_json())
+        assert restored.anomaly is True
+        assert restored == entry
 
     def test_frozen(self) -> None:
         entry = DigestEntry(
@@ -154,6 +195,55 @@ class TestMarketDigest:
         json_str = digest.model_dump_json()
         restored = MarketDigest.model_validate_json(json_str)
         assert restored == digest
+
+    def test_stats_defaults_none_and_roundtrips(self) -> None:
+        """stats defaults to None (so pre-stats digests validate) and roundtrips."""
+        empty = MarketDigest(
+            region="tw",
+            period="daily",
+            summary_date=date(2026, 3, 15),
+            top_n=5,
+            entries=[],
+            generated_at=datetime(2026, 3, 15, 12, 0, tzinfo=UTC),
+        )
+        assert empty.stats is None
+        # A digest persisted before this field (no "stats" key) still validates.
+        legacy = empty.model_dump(mode="json")
+        legacy.pop("stats", None)
+        assert MarketDigest.model_validate(legacy).stats is None
+
+        stats = DigestStats(
+            total=1,
+            gainers=1,
+            losers=0,
+            flat=0,
+            anomalies=0,
+            top_gainer=MoverRef(item_name="Item", sid=0, value=11.1),
+        )
+        with_stats = MarketDigest(
+            region="tw",
+            period="daily",
+            summary_date=date(2026, 3, 15),
+            top_n=5,
+            entries=[],
+            stats=stats,
+            generated_at=datetime(2026, 3, 15, 12, 0, tzinfo=UTC),
+        )
+        restored = MarketDigest.model_validate_json(with_stats.model_dump_json())
+        assert restored == with_stats
+        assert restored.stats is not None
+        assert restored.stats.top_gainer == MoverRef(item_name="Item", sid=0, value=11.1)
+
+
+class TestDigestStats:
+    """DigestStats model tests."""
+
+    def test_instantiation_with_defaults(self) -> None:
+        """Superlative refs default to None so a digest with no clear mover validates."""
+        stats = DigestStats(total=3, gainers=2, losers=1, flat=0, anomalies=0)
+        assert stats.total == 3
+        assert stats.top_gainer is None
+        assert stats.most_traded is None
 
 
 class TestNarrativeCategory:
