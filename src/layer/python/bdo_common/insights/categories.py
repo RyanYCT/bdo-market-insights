@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
 
-from bdo_common.analytics import daily_liquidity, daily_volatility
+from bdo_common.analytics import MIN_POINTS, daily_liquidity, daily_volatility, detect_anomaly
 from bdo_common.insights.models import DigestEntry
 from bdo_common.pricing import enhancement_analysis
 
@@ -83,6 +83,18 @@ def _get_price_window(
     return close_prices, volumes
 
 
+def _anomaly_flag(close_prices: list[float]) -> bool | None:
+    """Whether the latest close is a statistical outlier over its window.
+
+    Mirrors the ``/v1/market`` analysis anomaly (ADR-0016): needs at least
+    ``MIN_POINTS`` daily closes to judge (else ``None``), then flags
+    ``|z-score| > ANOMALY_Z`` via ``analytics.detect_anomaly``.
+    """
+    if len(close_prices) < MIN_POINTS:
+        return None
+    return bool(detect_anomaly(close_prices)["is_anomalous"])
+
+
 def _handle_buff(
     conn: psycopg.Connection[tuple[Any, ...]],
     region: str,
@@ -102,6 +114,7 @@ def _handle_buff(
             volatility = vol_stats["cv"]
         if volumes:
             liquidity = daily_liquidity(volumes)
+        anomaly = _anomaly_flag(close_prices)
 
         entries.append(
             DigestEntry(
@@ -116,6 +129,7 @@ def _handle_buff(
                 volatility=volatility,
                 liquidity=liquidity,
                 enhancement_cost_change=None,
+                anomaly=anomaly,
             )
         )
     return entries
@@ -151,6 +165,7 @@ def _handle_accessory(
             volatility = vol_stats["cv"]
         if volumes:
             liquidity = daily_liquidity(volumes)
+        anomaly = _anomaly_flag(close_prices)
 
         # Expected enhancement cost as of the target date vs the prior reference.
         # Price ladders are taken as-of each date so re-runs/backfills don't leak
@@ -188,6 +203,7 @@ def _handle_accessory(
                 volatility=volatility,
                 liquidity=liquidity,
                 enhancement_cost_change=enhancement_cost_change,
+                anomaly=anomaly,
             )
         )
     return entries
