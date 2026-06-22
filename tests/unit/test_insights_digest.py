@@ -90,6 +90,20 @@ class TestBuildDigest:
         buff_handler.assert_called_once()
         acc_handler.assert_called_once()
 
+        # stats computed across the combined entries
+        assert result.stats is not None
+        assert result.stats.total == 2
+        assert result.stats.gainers == 2
+        assert result.stats.losers == 0
+        assert result.stats.flat == 0
+        assert result.stats.top_gainer is not None
+        assert result.stats.top_gainer.item_name == "Item A"  # +11.1 > +4.2
+        assert result.stats.top_loser is None  # no decliners
+        assert result.stats.most_traded is not None
+        assert result.stats.most_traded.item_name == "Item B"  # volume 120 > 50
+        assert result.stats.most_volatile is not None
+        assert result.stats.most_volatile.item_name == "Item A"  # cv 0.05 > 0.03
+
     @patch("bdo_common.insights.digest.get_handler")
     @patch("bdo_common.insights.digest.available_categories")
     @patch("bdo_common.insights.digest.InsightRepo")
@@ -160,6 +174,7 @@ class TestBuildDigest:
         assert result.entries == []
         assert result.period == "weekly"
         assert result.top_n == 3
+        assert result.stats is None  # no entries -> no stats
         mock_insight_repo.top_movers.assert_not_called()
 
     @patch("bdo_common.insights.digest.get_handler")

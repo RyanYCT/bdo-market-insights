@@ -146,6 +146,44 @@ class TestBuffHandler:
         assert entries[0].volatility is None
         # But liquidity should still work with 1 volume value
         assert entries[0].liquidity is not None
+        # Too few points to judge an anomaly -> None
+        assert entries[0].anomaly is None
+
+    @patch("bdo_common.repositories.DailyRepo")
+    def test_buff_handler_flags_anomaly(self, mock_daily_repo: MagicMock) -> None:
+        """A latest close that is a statistical outlier over the window sets anomaly=True."""
+        from bdo_common.models import DailyRow
+
+        def _row(i: int, close: int) -> DailyRow:
+            return DailyRow(
+                region="tw",
+                trade_date=date(2026, 3, 15) - timedelta(days=i),
+                item_id=1,
+                sid=0,
+                open_price=close,
+                high_price=close,
+                low_price=close,
+                close_price=close,
+                avg_price=close,
+                total_trades_delta=50,
+                avg_stock=100,
+                snapshot_count=24,
+            )
+
+        # 14 daily points (>= MIN_POINTS): the newest (i=0) is a large spike, the
+        # rest flat -> the latest close is well beyond |z| > ANOMALY_Z.
+        mock_daily_repo.get_daily_window.return_value = [_row(0, 100_000)] + [
+            _row(i, 100) for i in range(1, 14)
+        ]
+
+        mock_conn = MagicMock()
+        movers: list[tuple[int, str, int, int, int, float, int]] = [
+            (1, "Spiker", 0, 100_000, 100, 99900.0, 50),
+        ]
+        entries = _handle_buff(mock_conn, "tw", "daily", date(2026, 3, 15), movers)
+
+        assert len(entries) == 1
+        assert entries[0].anomaly is True
 
     @patch("bdo_common.repositories.DailyRepo")
     def test_buff_handler_multiple_movers(self, mock_daily_repo: MagicMock) -> None:

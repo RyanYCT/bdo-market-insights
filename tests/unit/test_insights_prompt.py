@@ -64,3 +64,15 @@ def test_inference_config_temperature_and_max_tokens() -> None:
     config = result["inferenceConfig"]
     assert config["temperature"] == 0.3
     assert config["maxTokens"] == 1024
+
+
+def test_system_prompt_directs_interpretation_of_signals() -> None:
+    """Option A: the prompt should reference the digest signals and stats so the
+    model interprets them rather than restating raw numbers."""
+    result = build_converse_request(_make_digest(), "us.amazon.nova-lite-v1:0")
+    system_text = result["system"][0]["text"].lower()
+
+    for token in ("anomaly", "stats", "volatility", "liquidity", "enhancement_cost_change"):
+        assert token in system_text
+    # Must still forbid inventing values.
+    assert "only" in system_text

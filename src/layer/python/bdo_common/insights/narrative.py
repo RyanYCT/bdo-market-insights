@@ -43,6 +43,8 @@ def render_narrative(digest: MarketDigest) -> Narrative:
                 bullet += f"; enhance cost {entry.enhancement_cost_change:+.1f}%"
             if entry.volatility is not None:
                 bullet += f"; volatility {entry.volatility:.2f}"
+            if entry.anomaly:
+                bullet += "; unusual move"
             bullets.append(bullet)
         categories.append(NarrativeCategory(category=cat_name, bullets=bullets))
 
@@ -51,18 +53,34 @@ def render_narrative(digest: MarketDigest) -> Narrative:
         f"Market summary for {digest.region} ({digest.period}) - {digest.summary_date.isoformat()}"
     )
 
-    # Overall summary
+    # Overall summary: breadth from the entries, plus the precomputed
+    # superlatives/anomaly count from digest.stats when available.
     total_entries = len(digest.entries)
     if total_entries == 0:
         overall = "No significant market movements detected."
     else:
         gainers = sum(1 for e in digest.entries if e.pct_change > 0)
         losers = sum(1 for e in digest.entries if e.pct_change < 0)
-        overall = (
-            f"{total_entries} items tracked across "
-            f"{len(by_category)} categories: "
-            f"{gainers} gainers, {losers} losers."
-        )
+        flat = sum(1 for e in digest.entries if e.pct_change == 0)
+        parts = [
+            f"{total_entries} items across {len(by_category)} categories: "
+            f"{gainers} up, {losers} down, {flat} flat."
+        ]
+        stats = digest.stats
+        if stats is not None:
+            if stats.top_gainer is not None:
+                parts.append(
+                    f"Top gainer: {stats.top_gainer.item_name} "
+                    f"{stats.top_gainer.value:+.1f}%."
+                )
+            if stats.top_loser is not None:
+                parts.append(
+                    f"Top loser: {stats.top_loser.item_name} "
+                    f"{stats.top_loser.value:+.1f}%."
+                )
+            if stats.anomalies:
+                parts.append(f"{stats.anomalies} unusual move(s) flagged.")
+        overall = " ".join(parts)
 
     return Narrative(
         headline=headline,
