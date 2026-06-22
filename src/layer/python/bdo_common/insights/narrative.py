@@ -70,13 +70,11 @@ def render_narrative(digest: MarketDigest) -> Narrative:
         if stats is not None:
             if stats.top_gainer is not None:
                 parts.append(
-                    f"Top gainer: {stats.top_gainer.item_name} "
-                    f"{stats.top_gainer.value:+.1f}%."
+                    f"Top gainer: {stats.top_gainer.item_name} {stats.top_gainer.value:+.1f}%."
                 )
             if stats.top_loser is not None:
                 parts.append(
-                    f"Top loser: {stats.top_loser.item_name} "
-                    f"{stats.top_loser.value:+.1f}%."
+                    f"Top loser: {stats.top_loser.item_name} {stats.top_loser.value:+.1f}%."
                 )
             if stats.anomalies:
                 parts.append(f"{stats.anomalies} unusual move(s) flagged.")
