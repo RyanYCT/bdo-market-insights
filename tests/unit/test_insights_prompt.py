@@ -63,32 +63,25 @@ def test_inference_config_temperature_and_max_tokens() -> None:
     assert "inferenceConfig" in result
     config = result["inferenceConfig"]
     assert config["temperature"] == 0.3
-    assert config["maxTokens"] == 1024
+    # headline + overall is short, so the cap is modest.
+    assert config["maxTokens"] == 512
 
 
-def test_system_prompt_directs_interpretation_of_signals() -> None:
-    """Option A: the prompt should reference the digest signals and stats so the
-    model interprets them rather than restating raw numbers."""
+def test_system_prompt_requests_headline_and_overall_only() -> None:
+    """Hybrid: the LLM is asked for ONLY the qualitative headline + overall
+    (anchored on stats); the per-item breakdown is rendered deterministically,
+    so the model must not produce one."""
     result = build_converse_request(_make_digest(), "us.amazon.nova-lite-v1:0")
-    system_text = result["system"][0]["text"].lower()
+    system_text = result["system"][0]["text"]
+    lower = system_text.lower()
 
-    for token in ("anomaly", "stats", "volatility", "liquidity", "enhancement_cost_change"):
-        assert token in system_text
-    # Must still forbid inventing values.
-    assert "only" in system_text
-
-
-def test_system_prompt_polish_rules() -> None:
-    """Narration-polish rules: compact silver, never claim 'no volatility', and
-    state enhancement-cost moves from the authoritative precomputed list."""
-    result = build_converse_request(_make_digest(), "us.amazon.nova-lite-v1:0")
-    system_text = result["system"][0]["text"].lower()
-
-    # Compact silver formatting is demonstrated (e.g. "675k").
-    assert "675k" in system_text
-    # Guard against the "no volatility" misread observed in evaluation.
-    assert "no volatility" in system_text
-    # Enhancement-cost moves are taken verbatim from the precomputed list, so a
-    # small model can't mis-map a tier to the wrong %.
-    assert "enhancement_cost_movers" in system_text
-    assert "exactly" in system_text
+    assert "headline" in lower
+    assert "overall" in lower
+    assert "stats" in lower
+    # Grounding preserved.
+    assert "only" in lower
+    assert "never" in lower
+    # The model must NOT be asked for the per-item breakdown (no categories).
+    assert "categories" not in lower
+    # The required output schema is exactly headline + overall.
+    assert '{"headline"' in system_text

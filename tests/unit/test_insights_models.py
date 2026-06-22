@@ -13,6 +13,7 @@ from bdo_common.insights.models import (
     MoverRef,
     Narrative,
     NarrativeCategory,
+    NarrativeSummary,
 )
 
 
@@ -360,3 +361,23 @@ class TestMarketSummary:
         json_str = summary.model_dump_json()
         restored = MarketSummary.model_validate_json(json_str)
         assert restored == summary
+
+
+class TestNarrativeSummary:
+    """NarrativeSummary model tests (the LLM's headline + overall only)."""
+
+    def test_instantiation_and_roundtrip(self) -> None:
+        summary = NarrativeSummary(
+            headline="Surge Powder soars 35%",
+            overall="Three gainers, two losers, two anomalies; a slight positive tilt.",
+        )
+        assert summary.headline == "Surge Powder soars 35%"
+        restored = NarrativeSummary.model_validate_json(summary.model_dump_json())
+        assert restored == summary
+
+    def test_requires_both_fields(self) -> None:
+        import pydantic
+        import pytest
+
+        with pytest.raises(pydantic.ValidationError):
+            NarrativeSummary.model_validate({"headline": "missing overall"})
