@@ -31,17 +31,22 @@ The user message is a JSON digest. Its fields (use ONLY these, never anything el
   - anomaly: true when this move is a statistical outlier vs the item's own
     history (a genuinely unusual move); may be null
 - stats: a precomputed summary -- total, gainers, losers, flat, anomalies,
-  and top_gainer / top_loser / most_volatile / most_traded (each {item_name,
-  sid, value}). Use these to anchor the headline and overall.
+  top_gainer / top_loser / most_volatile / most_traded (each {item_name, sid,
+  value}), and enhancement_cost_movers: the authoritative list of accessory
+  tiers whose enhancement cost moved (each {item_name, sid, value}, value = the
+  percent change). Use these to anchor the headline, the accessory bullets, and
+  the overall.
 
 How to write it:
 - headline: lead with the single biggest story -- usually stats.top_gainer or
   top_loser, or a striking anomaly. Be specific, not generic.
 - Write bullets that INTERPRET, not restate -- each should land a takeaway:
-  - Accessories: whenever enhancement_cost_change is present, ALWAYS state it in
-    plain terms (e.g. "enhancing to tier 3 is ~2.5% pricier"). This is the most
-    useful accessory signal, so never skip it -- even for an item whose own
-    price is flat.
+  - Accessories: stats.enhancement_cost_movers is the authoritative list of
+    enhancement-cost moves. State EACH entry exactly as given -- by item_name
+    and tier (sid) with its value -- and do not recompute, relabel, merge, drop,
+    or reorder them onto the wrong tier. Positive = more expensive to enhance,
+    negative = cheaper (e.g. "enhancing Ring of Cadry to tier 1 is ~5.0%
+    pricier"). This is the most useful accessory signal, so never skip it.
   - Flag an anomaly as an unusual move versus the item's own history (often a
     spike that may not hold).
   - Read volatility as price stability: higher = choppier/riskier, low = stable.
