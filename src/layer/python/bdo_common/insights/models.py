@@ -117,6 +117,22 @@ class Narrative(BaseModel):
     overall: str
 
 
+class NarrativeSummary(BaseModel):
+    """The LLM's qualitative contribution: headline + overall only.
+
+    Hybrid narration (ADR-0016): the LLM writes the headline and overall summary,
+    while the per-item ``categories`` bullets are rendered deterministically from
+    the digest -- so exact figures (prices, percentages, enhancement costs) never
+    depend on the model. ``insights_summarize`` merges this with the deterministic
+    bullets into a full :class:`Narrative`.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    headline: str
+    overall: str
+
+
 class MarketSummary(BaseModel):
     """Full market summary record as stored in the database."""
 

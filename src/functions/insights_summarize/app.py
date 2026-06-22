@@ -1,10 +1,12 @@
-"""insightsSummarize Lambda: Bedrock Converse call + Narrative validation.
+"""insightsSummarize Lambda: Bedrock Converse call (headline + overall only).
 
 Runs OUTSIDE the VPC (no VpcConfig). Receives the output of insights_compute
-(region, period, target_date, digest), calls Bedrock Converse to generate a
-narrative, validates the response against the Narrative Pydantic model, and
-passes the result to insights_store. On ANY failure (Bedrock, JSON parse,
-validation), returns narrative=null to signal fallback.
+(region, period, target_date, digest), calls Bedrock Converse for the
+qualitative headline + overall (a NarrativeSummary), and merges them with
+deterministically-rendered per-item bullets into a full Narrative -- so exact
+figures never depend on the model (ADR-0016). On an empty digest or ANY failure
+(Bedrock, JSON parse, validation), returns narrative=null so insights_store
+renders the full deterministic narrative.
 """
 
 from __future__ import annotations
@@ -17,7 +19,8 @@ import boto3
 from aws_lambda_powertools import Logger, Tracer
 from botocore.config import Config
 
-from bdo_common.insights.models import MarketDigest, Narrative
+from bdo_common.insights.models import MarketDigest, Narrative, NarrativeSummary
+from bdo_common.insights.narrative import render_narrative
 from bdo_common.insights.prompt import build_converse_request
 
 logger = Logger()
@@ -81,10 +84,19 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         output_message = response["output"]["message"]
         text_content: str = output_message["content"][0]["text"]
 
-        # Parse and validate against Narrative schema (tolerating code fences /
-        # prose the model may add around the JSON object).
+        # Parse and validate the qualitative headline + overall (tolerating code
+        # fences / prose the model may add around the JSON object).
         raw = json.loads(_extract_json(text_content))
-        narrative = Narrative.model_validate(raw)
+        summary = NarrativeSummary.model_validate(raw)
+
+        # Hybrid (ADR-0016): the LLM supplies only headline + overall; the
+        # per-item bullets are rendered deterministically, so exact figures
+        # never depend on the model.
+        narrative = Narrative(
+            headline=summary.headline,
+            categories=render_narrative(digest).categories,
+            overall=summary.overall,
+        )
 
         logger.info(
             "insightsSummarize succeeded",

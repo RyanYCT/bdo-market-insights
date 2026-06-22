@@ -26,6 +26,7 @@ def _make_entry(
     pct_change: float = 11.1,
     volume: int = 50,
     anomaly: bool | None = None,
+    enhancement_cost_change: float | None = None,
 ) -> DigestEntry:
     return DigestEntry(
         item_id=item_id,
@@ -38,7 +39,7 @@ def _make_entry(
         volume=volume,
         volatility=0.05,
         liquidity=50.0,
-        enhancement_cost_change=None,
+        enhancement_cost_change=enhancement_cost_change,
         anomaly=anomaly,
     )
 
@@ -85,7 +86,42 @@ class TestRenderNarrative:
         assert len(narrative.categories[0].bullets) == 1
         assert "Deboreka Necklace" in narrative.categories[0].bullets[0]
         assert "+11.1%" in narrative.categories[0].bullets[0]
-        assert "500,000,000" in narrative.categories[0].bullets[0]
+        # Silver is rendered compactly (500,000,000 -> 500.00m).
+        assert "500.00m" in narrative.categories[0].bullets[0]
+
+    def test_accessory_bullet_uses_tier_label_and_enhancement(self) -> None:
+        """Accessory bullets read as tiers, show compact silver, the anomaly
+        marker, and the exact enhancement-cost move."""
+        entry = _make_entry(
+            item_name="Ring of Cadry",
+            category="accessory",
+            sid=3,
+            pct_change=-12.0,
+            close_price=1_094_649_579,
+            anomaly=True,
+            enhancement_cost_change=0.7142857,
+        )
+        bullet = render_narrative(_make_digest([entry])).categories[0].bullets[0]
+
+        assert "Ring of Cadry (tier 3)" in bullet
+        assert "-12.0% to 1.09b" in bullet
+        assert "unusual move" in bullet
+        assert "enhancing to tier 3 +0.7%" in bullet
+
+    def test_flat_entry_renders_flat_with_enhancement(self) -> None:
+        """A flat-price tier still surfaces its enhancement-cost move exactly."""
+        entry = _make_entry(
+            item_name="Ring of Cadry",
+            category="accessory",
+            sid=1,
+            pct_change=0.0,
+            close_price=259_149_995,
+            enhancement_cost_change=5.0,
+        )
+        bullet = render_narrative(_make_digest([entry])).categories[0].bullets[0]
+
+        assert "flat at 259.15m" in bullet
+        assert "enhancing to tier 1 +5.0%" in bullet
 
     def test_multiple_categories(self) -> None:
         """Multiple categories are grouped correctly."""

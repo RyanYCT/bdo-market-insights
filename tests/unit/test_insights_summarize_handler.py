@@ -1,4 +1,4 @@
-"""Unit tests for the insightsSummarize Lambda handler."""
+"""Unit tests for the insightsSummarize Lambda handler (hybrid narration)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 from botocore.exceptions import ClientError
 
-from bdo_common.insights.models import DigestEntry, MarketDigest, Narrative, NarrativeCategory
+from bdo_common.insights.models import DigestEntry, MarketDigest
 
 
 def _make_digest() -> MarketDigest:
@@ -27,7 +27,7 @@ def _make_digest() -> MarketDigest:
                 item_id=1,
                 item_name="Ogre Ring",
                 category="accessory",
-                sid=0,
+                sid=3,
                 close_price=1_000_000_000,
                 prev_close_price=924_000_000,
                 pct_change=8.2,
@@ -53,12 +53,22 @@ def _make_empty_digest() -> MarketDigest:
     )
 
 
-def _make_narrative() -> Narrative:
-    return Narrative(
-        headline="Market rallies on accessory demand",
-        categories=[NarrativeCategory(category="accessory", bullets=["Ogre Ring +8.2%"])],
-        overall="Bullish day with accessory prices leading gains.",
-    )
+_HEADLINE = "Market rallies on accessory demand"
+_OVERALL = "Bullish day with accessory prices leading gains."
+
+
+def _summary_text(headline: str = _HEADLINE, overall: str = _OVERALL) -> str:
+    """The LLM now returns ONLY {headline, overall} (a NarrativeSummary)."""
+    return json.dumps({"headline": headline, "overall": overall})
+
+
+def _converse_response(text: str) -> dict[str, Any]:
+    """Build a mock Bedrock Converse response wrapping ``text``."""
+    return {
+        "output": {"message": {"role": "assistant", "content": [{"text": text}]}},
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 100, "outputTokens": 50},
+    }
 
 
 def _make_event(digest: MarketDigest) -> dict[str, Any]:
@@ -67,20 +77,6 @@ def _make_event(digest: MarketDigest) -> dict[str, Any]:
         "period": "daily",
         "target_date": "2026-06-13",
         "digest": digest.model_dump(mode="json"),
-    }
-
-
-def _converse_response(narrative: Narrative) -> dict[str, Any]:
-    """Build a mock Bedrock Converse response containing the narrative JSON."""
-    return {
-        "output": {
-            "message": {
-                "role": "assistant",
-                "content": [{"text": narrative.model_dump_json()}],
-            }
-        },
-        "stopReason": "end_turn",
-        "usage": {"inputTokens": 100, "outputTokens": 50},
     }
 
 
@@ -94,24 +90,30 @@ def mod(
     return module
 
 
-def test_successful_bedrock_response(
+def test_successful_response_uses_llm_header_and_deterministic_bullets(
     mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Valid Bedrock response returns parsed narrative and model_id."""
+    """The LLM headline + overall are used verbatim; the per-item bullets come
+    from the deterministic renderer (the digest), not the model."""
     digest = _make_digest()
-    narrative = _make_narrative()
     mock_client = MagicMock()
-    mock_client.converse.return_value = _converse_response(narrative)
+    mock_client.converse.return_value = _converse_response(_summary_text())
     monkeypatch.setattr(mod, "bedrock_client", mock_client)
 
     result = mod.handler(_make_event(digest), lambda_context)
 
-    assert result["narrative"] is not None
-    assert result["narrative"]["headline"] == "Market rallies on accessory demand"
+    narrative = result["narrative"]
+    assert narrative is not None
+    assert narrative["headline"] == _HEADLINE
+    assert narrative["overall"] == _OVERALL
     assert result["model_id"] == "us.amazon.nova-lite-v1:0"
+    # Bullets are deterministic: derived from the digest, exact figures.
+    assert narrative["categories"]
+    rendered = json.dumps(narrative["categories"])
+    assert "Ogre Ring" in rendered
+    assert "+8.2%" in rendered
+    # The LLM's response did not contain any bullets/categories.
     assert result["region"] == "tw"
-    assert result["period"] == "daily"
-    assert result["target_date"] == "2026-06-13"
     assert result["digest"] == digest.model_dump(mode="json")
 
 
@@ -140,16 +142,7 @@ def test_invalid_json_response_returns_fallback(
     """Invalid JSON from Bedrock returns narrative=null for fallback."""
     digest = _make_digest()
     mock_client = MagicMock()
-    mock_client.converse.return_value = {
-        "output": {
-            "message": {
-                "role": "assistant",
-                "content": [{"text": "This is not valid JSON at all"}],
-            }
-        },
-        "stopReason": "end_turn",
-        "usage": {"inputTokens": 100, "outputTokens": 50},
-    }
+    mock_client.converse.return_value = _converse_response("This is not valid JSON at all")
     monkeypatch.setattr(mod, "bedrock_client", mock_client)
 
     result = mod.handler(_make_event(digest), lambda_context)
@@ -184,40 +177,25 @@ def test_strips_markdown_fences_and_prose(
 ) -> None:
     """A response wrapping the JSON in ```json fences (and prose) still parses."""
     digest = _make_digest()
-    narrative = _make_narrative()
-    fenced = f"Here is the summary:\n\n```json\n{narrative.model_dump_json()}\n```\n"
+    fenced = f"Here is the summary:\n\n```json\n{_summary_text()}\n```\n"
     mock_client = MagicMock()
-    mock_client.converse.return_value = {
-        "output": {"message": {"role": "assistant", "content": [{"text": fenced}]}},
-        "stopReason": "end_turn",
-        "usage": {"inputTokens": 100, "outputTokens": 50},
-    }
+    mock_client.converse.return_value = _converse_response(fenced)
     monkeypatch.setattr(mod, "bedrock_client", mock_client)
 
     result = mod.handler(_make_event(digest), lambda_context)
 
     assert result["narrative"] is not None
-    assert result["narrative"]["headline"] == "Market rallies on accessory demand"
+    assert result["narrative"]["headline"] == _HEADLINE
     assert result["model_id"] == "us.amazon.nova-lite-v1:0"
 
 
 def test_valid_json_but_invalid_schema_returns_fallback(
     mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """JSON that doesn't match Narrative schema returns narrative=null."""
+    """JSON missing a required field (overall) returns narrative=null."""
     digest = _make_digest()
     mock_client = MagicMock()
-    # Valid JSON but missing required fields
-    mock_client.converse.return_value = {
-        "output": {
-            "message": {
-                "role": "assistant",
-                "content": [{"text": json.dumps({"headline": "ok"})}],
-            }
-        },
-        "stopReason": "end_turn",
-        "usage": {"inputTokens": 100, "outputTokens": 50},
-    }
+    mock_client.converse.return_value = _converse_response(json.dumps({"headline": "ok"}))
     monkeypatch.setattr(mod, "bedrock_client", mock_client)
 
     result = mod.handler(_make_event(digest), lambda_context)
