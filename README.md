@@ -12,7 +12,7 @@ The project is a study in building a **production-grade serverless data pipeline
 
 Game economies are large, volatile, real-time datasets — a realistic stand-in for any financial/IoT time-series problem. The interesting engineering isn't the game; it's the constraints:
 
-- **Time-series ingestion** from a third-party API with [five different polymorphic response shapes](docs/adr/0007-aws-lambda-powertools.md) that must be normalized into one schema.
+- **Time-series ingestion** from a third-party API with five different polymorphic response shapes that must be normalized into one schema.
 - **Cost discipline** — a serverless architecture that deliberately avoids the usual cost traps (NAT gateways, idle compute, RDS Proxy unless needed).
 - **Security by default** — Lambdas reach Postgres via **IAM database authentication**, so there are no database passwords anywhere in the system.
 - **Domain analytics** — turning raw prices into decisions (e.g. *what does it actually cost, on average, to enhance this accessory to PEN?*) using a probabilistic Markov model.
@@ -74,7 +74,7 @@ These are the decisions a reviewer might find most relevant:
 
 - **Passwordless database access.** Every Lambda connects to Postgres using **IAM database authentication** — short-lived tokens, no secrets to rotate or leak. A separate `dba` role (Secrets Manager) exists only for human access. *(ADR-0008)*
 - **No-NAT private networking.** DB-touching Lambdas run in a VPC; a DynamoDB **Gateway Endpoint** gives in-VPC access with zero NAT cost. Human DBA access goes through an **EC2 Instance Connect Endpoint** + a `t4g.nano` bastion with **no public IP**. *(ADR-0006, ADR-0009)*
-- **Resilient ingestion.** The arsha.io client normalizes five polymorphic JSON shapes, caps URL length, auto-splits oversized ID batches, and bounds concurrency/rate. Retries, tracing, and structured logging come from Powertools rather than hand-rolled code. *(ADR-0007)*
+- **Resilient ingestion.** The arsha.io client normalizes five polymorphic JSON shapes, caps URL length, auto-splits oversized ID batches, and bounds concurrency/rate; retries, tracing, and structured logging come from AWS Lambda Powertools rather than hand-rolled code *(ADR-0007)*.
 - **Idempotent, transactional writes.** `storeData` upserts `item`/`item_sid` and bulk-inserts snapshots in a single transaction, keyed on `(region, item_id, sid, snapshot_at)` — so a missed or re-run ETL execution is always safe. *(NFR-4)*
 - **Domain pricing model.** A pluggable model registry computes expected enhancement cost via a Markov chain over enhancement tiers (including the "cron stone" path), validated against worked examples on real in-game data. *(ADR-0012)*
 - **Cost-first design.** Single-AZ workload, opt-in RDS Proxy, no NAT, shared layer, 90-day snapshot retention — targeting **≤ US$15/month** incremental. *(ADR-0011)*
