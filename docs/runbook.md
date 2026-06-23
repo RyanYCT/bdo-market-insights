@@ -1,6 +1,28 @@
 # Runbook
 
-## Daily Operations
+Operational guide for the live v3 stacks (`bdo-market-dev` / `bdo-market-prod`):
+daily operations, deployment, database access, the custom domain, insights
+evaluation, cleanup/teardown, and troubleshooting.
+
+## Contents
+
+- [Daily operations](#daily-operations)
+- [Deployment](#deployment)
+  - [Quick reference](#quick-reference)
+  - [Dev deployment (manual)](#dev-deployment-manual)
+  - [CI/CD deploy role (GitHub OIDC) bootstrap](#cicd-deploy-role-github-oidc-bootstrap)
+  - [Prod deployment (CI/CD)](#prod-deployment-cicd)
+  - [Rollback](#rollback)
+  - [Breaking changes](#breaking-changes)
+- [Database access via bastion](#database-access-via-bastion)
+  - [Running migrations](#running-migrations)
+  - [First-time role bootstrap](#first-time-role-bootstrap)
+- [Custom API domain](#custom-api-domain)
+- [Market Insights: dev evaluation](#market-insights-dev-evaluation)
+- [Cleanup and teardown](#cleanup-and-teardown)
+- [Troubleshooting](#troubleshooting)
+
+## Daily operations
 
 ETL runs hourly via EventBridge (one execution per active region).
 Monitor health from the CloudWatch dashboard:
@@ -11,126 +33,9 @@ Monitor health from the CloudWatch dashboard:
 Step Functions console shows full execution history, per-state
 input/output, and retry behaviour.
 
-## Database Access via Bastion
+## Deployment
 
-### Prerequisites
-
-- AWS CLI v2 (with a local `ssh` binary on `PATH`)
-- IAM permissions for EICE: `ec2-instance-connect:OpenTunnel`,
-  `ec2-instance-connect:SendSSHPublicKey`, `ec2:DescribeInstances`,
-  `ec2:DescribeInstanceConnectEndpoints`
-- pgAdmin or `psql` (optional; `make migrate` uses the bundled `alembic`)
-
-### Flow
-
-The bastion has **no public IP** (ADR-0009). Access is brokered by the EC2
-Instance Connect Endpoint (EICE), so you never SSH to it directly — the
-`db-tunnel-up` target tunnels through the EICE with `--connection-type eice`.
-
-1. Ensure the bastion is deployed. If your stack was deployed with
-   `EnableBastion=false` (the samconfig default), redeploy with it on — this
-   is purely additive (adds the bastion + EICE, touches nothing else):
-
-   ```sh
-   # `make bastion-up` builds + verify-layer FIRST, then deploys, so this
-   # additive toggle can never republish a source-only CommonLayer (which
-   # would break every function at init with "No module named
-   # 'aws_lambda_powertools'"). Build on a native Linux filesystem, NOT a
-   # Windows-mounted /mnt/* path (pip --target can silently vendor nothing).
-   make bastion-up STAGE=dev
-   ```
-
-2. `make db-tunnel-up STAGE=<dev|prod>` — opens the EICE tunnel to RDS on
-   `localhost:5432`. Leave it running; open a second terminal for the next
-   steps. Ctrl-C (or `make db-tunnel-down`) closes it.
-3. Connect pgAdmin (or psql) to `localhost:5432` using the `dba` role.
-   Credentials are in the `bdo-<stage>-dba-credentials` Secrets Manager secret.
-
-### Running migrations
-
-Routine schema migrations run **from inside the VPC**. The CI deploy job
-invokes the migrator Lambda (`bdo-<stage>-migrator`) after `sam deploy`;
-the function connects to RDS as `lambda_migrator` via IAM auth and runs
-`alembic upgrade head`. A GitHub runner cannot reach the private RDS
-directly, so it drives the migration through this Lambda (control-plane
-invoke). Trigger it by hand for dev:
-
-```sh
-make migrate-lambda STAGE=dev
-```
-
-### First-time role bootstrap (via bastion)
-
-The Postgres roles themselves are cluster-level objects created by
-migrations `0002`/`0003` and need privileges the `lambda_migrator` role
-does not hold:
-
-- `0002_bootstrap_roles` — `lambda_rds_user` (runtime, IAM auth) and
-  `dba` (human login; created only when `DBA_PASSWORD` is set).
-- `0003_migrator_role` — `lambda_migrator` (IAM auth) used by the
-  migrator Lambda above; also grants it DML on `alembic_version`.
-
-Apply the full chain (`0001`–`0003`) **once** as the RDS master user
-through the bastion tunnel. With the tunnel open (step 2 above), in a second
-terminal:
-
-```sh
-STAGE=dev
-
-# dba password (so 0002 creates the dba login role):
-export DBA_PASSWORD="$(aws secretsmanager get-secret-value \
-  --secret-id bdo-${STAGE}-dba-credentials \
-  --query SecretString --output text \
-  | python -c 'import json,sys; print(json.load(sys.stdin)["password"])')"
-
-# master password from the RDS-managed master secret (NOT the dba secret):
-MASTER_SECRET_ARN=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] \
-           | [?OutputKey=='MasterSecretArn'].OutputValue | [0]" --output text)
-MASTER_PW=$(aws secretsmanager get-secret-value --secret-id "$MASTER_SECRET_ARN" \
-  --query SecretString --output text \
-  | python -c 'import json,sys; print(json.load(sys.stdin)["password"])')
-
-# Use the +psycopg driver -- this project ships psycopg v3 only, so a plain
-# postgresql:// URL fails:
-export DATABASE_URL="postgresql+psycopg://postgres:${MASTER_PW}@localhost:5432/bdo"
-
-make migrate
-uv run alembic -c migrations/alembic.ini current   # expect: 0003 (head)
-make db-tunnel-down
-```
-
-After this one-time bootstrap, all later schema changes go through
-`make migrate-lambda` (or the CI deploy step) — no tunnel required. Drop the
-bastion again once you're done (`make bastion-down STAGE=dev`).
-
-> **Why the bootstrap revokes the master's role membership.** On RDS the
-> master is not a superuser, and PostgreSQL 16 auto-grants the creating role
-> membership in every role it creates. Because `lambda_rds_user` and
-> `lambda_migrator` hold `rds_iam`, that auto-membership makes the master a
-> *transitive* member of `rds_iam` — which makes RDS route the master to PAM
-> (IAM) auth and **breaks master password login** (`FATAL: PAM authentication
-> failed for user "postgres"`). Migrations `0002`/`0003` therefore
-> `REVOKE … FROM CURRENT_USER` at the end so the master keeps password auth.
-> If you are ever locked out this way, connect once with an IAM token (the
-> master now has `rds_iam`, so IAM auth works) and run
-> `REVOKE lambda_rds_user FROM postgres; REVOKE lambda_migrator FROM postgres;`.
-
-## Common Failure Scenarios
-
-| Symptom | Investigation |
-|---------|---------------|
-| ETL timeout | Check arsha.io status page; verify Lambda timeout config in `template.yaml`. |
-| RDS connection failures | Check security group rules; verify IAM auth token generation; confirm RDS instance status. |
-| `make db-tunnel-up`: "Unable to connect to target" | EICE can't reach the bastion on :22. Confirm the bastion SG has a self-referencing port-22 egress rule (`BastionSshEgress`) and that the EICE is `available`. |
-| Master login: "PAM authentication failed for user postgres" | Master became a (transitive) member of `rds_iam`. See the bootstrap note above — IAM-auth in and `REVOKE` the role memberships. |
-| `make migrate-lambda`: "permission denied for table alembic_version" | `lambda_migrator` lacks DML on `alembic_version`. Re-run the `0003` grant, or one-off as master: `GRANT SELECT, INSERT, UPDATE, DELETE ON alembic_version TO lambda_migrator;`. |
-| API 5xx spike | Filter CloudWatch logs by `correlation_id`; look for connection pool exhaustion or query timeouts. |
-| Custom-domain deploy hangs at `CREATE_IN_PROGRESS` on the certificate | ACM is waiting for DNS validation. Confirm `HostedZoneId` is the correct zone for `ApiDomainName`, and that the zone is the authoritative one for the domain (NS records at the registrar point to it). Validation usually completes within minutes. |
-| Custom domain returns 403 "Forbidden" | Base-path mapping or DNS not resolved yet, or the request omits `x-api-key`. Confirm the A-alias resolves to the regional API domain and include the API key. |
-| Missed ETL runs | Safe to re-execute - writes are idempotent on `(region, item_id, sid, snapshot_at)`. |
-
-## Deployment Procedures
+### Quick reference
 
 | Environment | Method |
 |-------------|--------|
@@ -138,20 +43,18 @@ bastion again once you're done (`make bastion-down STAGE=dev`).
 | Prod | Push a `v*` tag to trigger CI deploy |
 | Rollback | Deploy the previous tag |
 
-## Updating a Deployment
-
-### Dev Deployment (Manual, for Testing)
+### Dev deployment (manual)
 
 **Use this workflow to test changes on the dev stack before promoting to prod.**
 
-#### Pre-Deploy Checklist
+#### Pre-deploy checklist
 
 - [ ] Code review complete (PR merged to `main`)
 - [ ] All CI checks passed (lint, typecheck, tests, audit, scan, OpenAPI drift)
 - [ ] Schema changes? Ensure migrations are in `migrations/versions/` with sequential numbers
 - [ ] Local `make test` passes (including integration if `TEST_DATABASE_URL` is set)
 
-#### Deploy Dev
+#### Deploy dev
 
 ```bash
 # Build and validate the SAM template
@@ -167,7 +70,7 @@ aws cloudformation describe-stacks --stack-name bdo-market-dev \
 # Once `CREATE_COMPLETE` or `UPDATE_COMPLETE`, verify...
 ```
 
-#### Apply Migrations (if applicable)
+#### Apply migrations (if applicable)
 
 If your changes include schema migrations (`migrations/versions/*`):
 
@@ -193,7 +96,7 @@ make db-tunnel-down
 make bastion-down STAGE=dev
 ```
 
-#### Post-Deploy Verification (Dev)
+#### Post-deploy verification (dev)
 
 ```bash
 # Resolve the API base URL from the nested API stack. The root stack
@@ -229,9 +132,7 @@ curl -s "${DOCS_URL}" | grep -q "swagger-ui" && echo "Swagger UI OK"
 aws logs tail /aws/lambda/bdo-dev-market-query --since 10m --follow
 ```
 
----
-
-### CI/CD deploy role (GitHub OIDC) — one-time bootstrap
+### CI/CD deploy role (GitHub OIDC) bootstrap
 
 Prod deploys assume an IAM role via GitHub OIDC (no long-lived keys in CI). The
 CI `deploy` job reads the role ARN from the `AWS_DEPLOY_ROLE_ARN` repo secret;
@@ -328,13 +229,11 @@ gh secret set AWS_DEPLOY_ROLE_ARN \
 > (migrations `0001`–`0003` as the master user via the bastion — see "First-time
 > role bootstrap") before the CI migrator step can run as `lambda_migrator`.
 
----
-
-### Prod Deployment (Automated via CI/CD)
+### Prod deployment (CI/CD)
 
 **Use this workflow to release changes to production. All CI checks run automatically before merge.**
 
-#### Pre-Release Checklist (Before Pushing Tag)
+#### Pre-release checklist (before pushing tag)
 
 - [ ] Changes are merged to `main` and all CI checks passed
 - [ ] Schema migrations are sequenced correctly and tested on dev
@@ -342,7 +241,7 @@ gh secret set AWS_DEPLOY_ROLE_ARN \
 - [ ] Updated ADRs or architecture docs if architectural changes were made
 - [ ] Reviewed the diff one final time: `git diff main~1 main`
 
-#### Release to Prod
+#### Release to prod
 
 ```bash
 # Create and push a version tag (semver format: v1.2.3)
@@ -362,7 +261,7 @@ gh run list --workflow ci.yml --branch main --limit 1
 gh run view <RUN_ID> --log
 ```
 
-#### Post-Deploy Verification (Prod)
+#### Post-deploy verification (prod)
 
 Once the workflow completes (indicated by a ✓ or ✗ badge):
 
@@ -406,7 +305,7 @@ aws stepfunctions list-executions --state-machine-arn "${ETL_ARN}" \
   --query 'executions[:3].[name, status, stopDate]' --output table
 ```
 
-#### Schema Migration Verification
+#### Schema migration verification
 
 After the CI deploy completes, verify migrations ran successfully:
 
@@ -420,9 +319,7 @@ aws lambda invoke --function-name bdo-prod-migrator \
 cat /tmp/migrate.json
 ```
 
----
-
-### Rollback Procedure
+### Rollback
 
 If the prod deploy introduces a critical issue:
 
@@ -438,14 +335,12 @@ git push origin v1.1.9
 gh run list --workflow ci.yml --branch main --limit 1
 
 # After the rollback completes, run post-deploy verification again
-# (see "Post-Deploy Verification (Prod)" section above)
+# (see "Post-deploy verification (prod)" section above)
 ```
 
-**Note:** Rollbacks are safe for data — ETL writes are idempotent on `(region, item_id, sid, snapshot_at)`. If you rolled back past a schema migration, you may need to manually run `REVOKE` commands on your RDS roles; see the bootstrap note in "Database Access via Bastion" for details.
+**Note:** Rollbacks are safe for data — ETL writes are idempotent on `(region, item_id, sid, snapshot_at)`. If you rolled back past a schema migration, you may need to manually run `REVOKE` commands on your RDS roles; see the bootstrap note in "Database access via bastion" for details.
 
----
-
-### Handling Breaking Changes or Major Versions
+### Breaking changes
 
 If you make a breaking change (new required field, schema incompatibility, etc.):
 
@@ -455,13 +350,118 @@ If you make a breaking change (new required field, schema incompatibility, etc.)
 4. **Update API consumers** before removing old behavior
 5. **Consider a canary approach** if possible — deploy to dev/staging first, then prod after a soak period
 
-## Custom API Domain (optional, ADR-0013)
+## Database access via bastion
 
-The API custom domain is opt-in and off by default. The hostname and hosted
-zone are **not** stored in committed config — they are passed at deploy time via
-the `make domain-up` variables `API_DOMAIN_NAME` / `HOSTED_ZONE_ID` (zone ID is
-account-specific). Use `{service}.{env}.example.com`: `api.example.com` for
-prod, `api.dev.example.com` for dev.
+### Prerequisites
+
+- AWS CLI v2 (with a local `ssh` binary on `PATH`)
+- IAM permissions for EICE: `ec2-instance-connect:OpenTunnel`,
+  `ec2-instance-connect:SendSSHPublicKey`, `ec2:DescribeInstances`,
+  `ec2:DescribeInstanceConnectEndpoints`
+- pgAdmin or `psql` (optional; `make migrate` uses the bundled `alembic`)
+
+### Flow
+
+The bastion has **no public IP** (ADR-0009). Access is brokered by the EC2
+Instance Connect Endpoint (EICE), so you never SSH to it directly — the
+`db-tunnel-up` target tunnels through the EICE with `--connection-type eice`.
+
+1. Ensure the bastion is deployed. If your stack was deployed with
+   `EnableBastion=false` (the samconfig default), redeploy with it on — this
+   is purely additive (adds the bastion + EICE, touches nothing else):
+
+   ```sh
+   # `make bastion-up` builds + verify-layer FIRST, then deploys, so this
+   # additive toggle can never republish a source-only CommonLayer (which
+   # would break every function at init with "No module named
+   # 'aws_lambda_powertools'"). Build on a native Linux filesystem, NOT a
+   # Windows-mounted /mnt/* path (pip --target can silently vendor nothing).
+   make bastion-up STAGE=dev
+   ```
+
+2. `make db-tunnel-up STAGE=<dev|prod>` — opens the EICE tunnel to RDS on
+   `localhost:5432`. Leave it running; open a second terminal for the next
+   steps. Ctrl-C (or `make db-tunnel-down`) closes it.
+3. Connect pgAdmin (or psql) to `localhost:5432` using the `dba` role.
+   Credentials are in the `bdo-<stage>-dba-credentials` Secrets Manager secret.
+
+### Running migrations
+
+Routine schema migrations run **from inside the VPC**. The CI deploy job
+invokes the migrator Lambda (`bdo-<stage>-migrator`) after `sam deploy`;
+the function connects to RDS as `lambda_migrator` via IAM auth and runs
+`alembic upgrade head`. A GitHub runner cannot reach the private RDS
+directly, so it drives the migration through this Lambda (control-plane
+invoke). Trigger it by hand for dev:
+
+```sh
+make migrate-lambda STAGE=dev
+```
+
+### First-time role bootstrap
+
+(Run once, via the bastion.) The Postgres roles themselves are cluster-level
+objects created by migrations `0002`/`0003` and need privileges the
+`lambda_migrator` role does not hold:
+
+- `0002_bootstrap_roles` — `lambda_rds_user` (runtime, IAM auth) and
+  `dba` (human login; created only when `DBA_PASSWORD` is set).
+- `0003_migrator_role` — `lambda_migrator` (IAM auth) used by the
+  migrator Lambda above; also grants it DML on `alembic_version`.
+
+Apply the full chain (`0001`–`0003`) **once** as the RDS master user
+through the bastion tunnel. With the tunnel open (step 2 above), in a second
+terminal:
+
+```sh
+STAGE=dev
+
+# dba password (so 0002 creates the dba login role):
+export DBA_PASSWORD="$(aws secretsmanager get-secret-value \
+  --secret-id bdo-${STAGE}-dba-credentials \
+  --query SecretString --output text \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["password"])')"
+
+# master password from the RDS-managed master secret (NOT the dba secret):
+MASTER_SECRET_ARN=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] \
+           | [?OutputKey=='MasterSecretArn'].OutputValue | [0]" --output text)
+MASTER_PW=$(aws secretsmanager get-secret-value --secret-id "$MASTER_SECRET_ARN" \
+  --query SecretString --output text \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["password"])')
+
+# Use the +psycopg driver -- this project ships psycopg v3 only, so a plain
+# postgresql:// URL fails:
+export DATABASE_URL="postgresql+psycopg://postgres:${MASTER_PW}@localhost:5432/bdo"
+
+make migrate
+uv run alembic -c migrations/alembic.ini current   # expect: 0003 (head)
+make db-tunnel-down
+```
+
+After this one-time bootstrap, all later schema changes go through
+`make migrate-lambda` (or the CI deploy step) — no tunnel required. Drop the
+bastion again once you're done (`make bastion-down STAGE=dev`).
+
+> **Why the bootstrap revokes the master's role membership.** On RDS the
+> master is not a superuser, and PostgreSQL 16 auto-grants the creating role
+> membership in every role it creates. Because `lambda_rds_user` and
+> `lambda_migrator` hold `rds_iam`, that auto-membership makes the master a
+> *transitive* member of `rds_iam` — which makes RDS route the master to PAM
+> (IAM) auth and **breaks master password login** (`FATAL: PAM authentication
+> failed for user "postgres"`). Migrations `0002`/`0003` therefore
+> `REVOKE … FROM CURRENT_USER` at the end so the master keeps password auth.
+> If you are ever locked out this way, connect once with an IAM token (the
+> master now has `rds_iam`, so IAM auth works) and run
+> `REVOKE lambda_rds_user FROM postgres; REVOKE lambda_migrator FROM postgres;`.
+
+## Custom API domain
+
+The API custom domain is opt-in and off by default (ADR-0013). The hostname and
+hosted zone are **not** stored in committed config — they are passed at deploy
+time via the `make domain-up` variables `API_DOMAIN_NAME` / `HOSTED_ZONE_ID`
+(zone ID is account-specific). Use `{service}.{env}.example.com`:
+`api.example.com` for prod, `api.dev.example.com` for dev.
 
 ### Prerequisites
 
@@ -512,18 +512,7 @@ cert, domain, base-path mapping, and DNS record:
 make domain-down STAGE=prod
 ```
 
-### Insights failure scenarios
-
-| Symptom | Investigation |
-|---------|---------------|
-| Summaries always `model_id=deterministic-v1` | Bedrock not enabled, or IAM denies the model/profile. Check `bdo-<stage>-insights-summarize` logs for `AccessDeniedException`; verify model access + `BedrockModelId`/`BedrockFoundationModelId`. |
-| `bdo-<stage>-insight-failures` alarm | `StoreSummary` failed (RDS/IAM). Check its logs + the execution history. Writes are idempotent; re-run via `start-execution`. |
-| `bdo-<stage>-insights-execution-failure` alarm | A non-`StoreSummary` state failed (usually `ComputeDigest` — RDS unreachable, or `market_daily` empty for the date). Inspect the Step Functions execution. |
-| No Discord message | Check `DiscordDeliveryFailures`; verify the SSM param exists, is `https`, and the webhook is valid. Delivery is best-effort — the summary is still stored and served via the API. |
-| `/v1/insights?period=weekly` returns 404 | No weekly run has completed yet (first one lands the Monday after deploy), or the requested `date` predates the first weekly summary. |
-
-
-## Market Insights — dev evaluation
+## Market Insights: dev evaluation
 
 The insights pipeline reads RDS `market_daily` and `insightsCompute` targets
 **yesterday**, with `top_movers` needing a prior day (and ~7–14 days for
@@ -575,8 +564,7 @@ make bastion-down STAGE=dev         # optional, saves the bastion cost
 > populated, just not LLM-written. Check `model_id` in the response to tell
 > which path produced it.
 
-
-## Cleanup / Teardown
+## Cleanup and teardown
 
 Two levels: reverting a temporary test setup (non-destructive), and deleting a
 whole stack (destructive). The legacy pre-v3 decommission is a separate,
@@ -597,10 +585,12 @@ make domain-down STAGE=prod      # only if a custom domain was enabled
 make clean                       # local build artifacts (.aws-sam/, etc.)
 ```
 
-### Delete a whole stack (DESTRUCTIVE)
+### Delete a whole stack (destructive)
 
-Deleting `bdo-market-<stage>` tears down the root stack and every nested stack
-(network, data, ETL, API, insights, observability). Know what goes with it:
+Deleting `bdo-market-<stage>` tears down the root stack and the nested stacks it
+still owns (network, data, ETL, API, insights, observability). Stacks orphaned by
+an earlier failed deploy are not removed, so verify afterwards (see "Verify, and
+remove any orphaned nested stacks" below). Know what goes with it:
 
 - **RDS is destroyed.** Nothing sets `DeletionPolicy: Retain`, so the Postgres
   instance is deleted. CloudFormation takes a **final snapshot by default** (the
@@ -650,5 +640,65 @@ aws rds modify-db-instance --region us-east-1 \
 sam delete --stack-name bdo-market-prod --region us-east-1
 ```
 
+#### Verify, and remove any orphaned nested stacks
+
+`sam delete` removes the root stack and cascades to the nested stacks it
+**currently owns**. Nested stacks detached by an earlier failed or rolled-back
+deploy are no longer linked to the root, so they survive its deletion. A parent
+can never reach `DELETE_COMPLETE` while it owns live children, so anything left
+behind is an orphan -- always verify, then delete the leftovers directly (a
+nested stack can be deleted on its own only once its root is gone):
+
+```sh
+# What's still around for this app?
+aws cloudformation list-stacks --region us-east-1 \
+  --query "StackSummaries[?contains(StackName,'bdo-market-dev') && StackStatus!='DELETE_COMPLETE'].[StackName,StackStatus,ParentId]" \
+  --output table
+
+# Delete leftovers in reverse-dependency order. Network LAST: its subnets and
+# security groups cannot delete while another stack's RDS or Lambda ENIs remain.
+for S in Observability Api Insights Etl Bastion Data Network; do
+  NAME=$(aws cloudformation list-stacks --region us-east-1 \
+    --query "StackSummaries[?contains(StackName,'bdo-market-dev-${S}Stack') && StackStatus!='DELETE_COMPLETE'].StackName | [0]" \
+    --output text)
+  if [ -n "$NAME" ] && [ "$NAME" != "None" ]; then
+    echo "Deleting $NAME ..."
+    aws cloudformation delete-stack --region us-east-1 --stack-name "$NAME"
+    aws cloudformation wait stack-delete-complete --region us-east-1 --stack-name "$NAME"
+  fi
+done
+```
+
+For prod, swap `dev` -> `prod` and disable RDS deletion protection first (above).
+A `DELETE_FAILED` is usually Network going before another stack released its
+ENIs -- delete the remaining compute/data stacks, then retry Network.
+
 > Irreversible. If others may depend on the stack, prefer the staged
 > disable -> observe -> delete approach documented in `docs/cleanup-tasks.md`.
+
+## Troubleshooting
+
+### General
+
+| Symptom | Investigation |
+|---------|---------------|
+| ETL timeout | Check arsha.io status page; verify Lambda timeout config in `template.yaml`. |
+| RDS connection failures | Check security group rules; verify IAM auth token generation; confirm RDS instance status. |
+| `make db-tunnel-up`: "Unable to connect to target" | EICE can't reach the bastion on :22. Confirm the bastion SG has a self-referencing port-22 egress rule (`BastionSshEgress`) and that the EICE is `available`. |
+| Master login: "PAM authentication failed for user postgres" | Master became a (transitive) member of `rds_iam`. See the bootstrap note above — IAM-auth in and `REVOKE` the role memberships. |
+| `make migrate-lambda`: "permission denied for table alembic_version" | `lambda_migrator` lacks DML on `alembic_version`. Re-run the `0003` grant, or one-off as master: `GRANT SELECT, INSERT, UPDATE, DELETE ON alembic_version TO lambda_migrator;`. |
+| API 5xx spike | Filter CloudWatch logs by `correlation_id`; look for connection pool exhaustion or query timeouts. |
+| Custom-domain deploy hangs at `CREATE_IN_PROGRESS` on the certificate | ACM is waiting for DNS validation. Confirm `HostedZoneId` is the correct zone for `ApiDomainName`, and that the zone is the authoritative one for the domain (NS records at the registrar point to it). Validation usually completes within minutes. |
+| Custom domain returns 403 "Forbidden" | Base-path mapping or DNS not resolved yet, or the request omits `x-api-key`. Confirm the A-alias resolves to the regional API domain and include the API key. |
+| Missed ETL runs | Safe to re-execute - writes are idempotent on `(region, item_id, sid, snapshot_at)`. |
+| CI deploy: "Could not load credentials from any providers" | The `AWS_DEPLOY_ROLE_ARN` secret (and its OIDC role) is not set up. See "CI/CD deploy role (GitHub OIDC) bootstrap". |
+
+### Insights
+
+| Symptom | Investigation |
+|---------|---------------|
+| Summaries always `model_id=deterministic-v1` | Bedrock not enabled, or IAM denies the model/profile. Check `bdo-<stage>-insights-summarize` logs for `AccessDeniedException`; verify model access + `BedrockModelId`/`BedrockFoundationModelId`. |
+| `bdo-<stage>-insight-failures` alarm | `StoreSummary` failed (RDS/IAM). Check its logs + the execution history. Writes are idempotent; re-run via `start-execution`. |
+| `bdo-<stage>-insights-execution-failure` alarm | A non-`StoreSummary` state failed (usually `ComputeDigest` — RDS unreachable, or `market_daily` empty for the date). Inspect the Step Functions execution. |
+| No Discord message | Check `DiscordDeliveryFailures`; verify the SSM param exists, is `https`, and the webhook is valid. Delivery is best-effort — the summary is still stored and served via the API. |
+| `/v1/insights?period=weekly` returns 404 | No weekly run has completed yet (first one lands the Monday after deploy), or the requested `date` predates the first weekly summary. |
