@@ -4,7 +4,7 @@ A **serverless, event-driven market-data platform** for the *Black Desert Online
 
 The project is a study in building a **production-grade serverless data pipeline cheaply and safely**: IAM-authenticated database access (no passwords), a no-NAT VPC, single shared Lambda layer, infrastructure-as-code with nested stacks, and a full CI quality gate — all targeted at **under ~US$15/month** of incremental cost.
 
-> **Status:** Live (v3). 14 Lambdas, two Step Functions pipelines (hourly ETL + daily/weekly market-insights), and two REST APIs deployed across `dev` and `prod` via AWS SAM.
+> **Status:** Live (v3). 14 Lambdas, two Step Functions pipelines (hourly ETL + daily/weekly market-insights), and a REST API deployed across `dev` and `prod` via AWS SAM.
 
 ---
 
@@ -25,32 +25,45 @@ Game economies are large, volatile, real-time datasets — a realistic stand-in 
 | **Time-series storage** | Hourly `market_snapshot` rows, compacted daily into `market_daily` (OHLC-style), with 90-day retention. |
 | **Item Registry API** | `/v1/items` — CRUD over a DynamoDB-backed catalog; new items validated against the upstream API before being tracked. |
 | **Market Query API** | `/v1/market` — raw snapshots, daily rollups, and a combined **analysis** endpoint (enhancement cost + volatility + liquidity + anomaly flag). |
-| **Market Insights** | `/v1/insights` — daily and weekly market-wide digests: top-N movers per category (accessory, buff) with volatility/liquidity and an LLM-generated summary (Amazon Bedrock, with a deterministic fallback), produced by a scheduled Step Functions pipeline, stored in Postgres, and pushed to SNS/Discord. |
+| **Market Insights** | `/v1/insights` — daily and weekly market-wide digests: top-N movers per category (accessory, buff) with volatility/liquidity. Per-item figures are rendered deterministically; an LLM (Amazon Bedrock) writes only the headline and overall, so no number passes through the model. Produced by a scheduled Step Functions pipeline, stored in Postgres, and pushed to SNS/Discord. |
 | **Region-aware** | Defaults to the TW server; KR/NA/EU/… can be activated by adding one EventBridge rule — **no code or schema change**. |
 
 ## Architecture
 
-```
-                    EventBridge (hourly cron, per region)
-                              │
-                              ▼
-                   Step Functions state machine
-                              │
-        retrieveItems ──► Map(≤5) [ fetchData ─► cleanData ─► storeData ] ──► rollupDaily
-        (DynamoDB scan)        (arsha.io)     (normalize)   (1 txn upsert)   (daily OHLC)
-                                                                  │
-                                                                  ▼
-                                                          RDS PostgreSQL
-                                                  item · item_sid · market_snapshot · market_daily
-                              ▲                                   ▲
-                              │                                   │ (IAM auth, in-VPC)
-   API Gateway (REST + API key + usage plan)                      │
-        ├─ itemRegistry Lambda ─► DynamoDB (item catalog, outside VPC)
-        ├─ marketQuery  Lambda ─► RDS (read-only, in-VPC; serves /v1/market + /v1/insights)
-        └─ docs         Lambda ─► OpenAPI spec + Swagger UI (key-less routes)
+```mermaid
+flowchart TD
+    EBhourly["EventBridge — hourly cron (per region)"] --> ETL
 
-   EventBridge (daily + weekly)
-        └─ insights SM [ computeDigest ─► summarize (Bedrock) ─► storeSummary ] ─► market_summary ─► SNS ─► Discord
+    subgraph ETL["ETL state machine — Step Functions"]
+        direction LR
+        RI["retrieveItems<br/>DynamoDB scan"] --> MAP
+        subgraph MAP["Map (≤5 concurrent)"]
+            direction LR
+            FD["fetchData<br/>arsha.io"] --> CD["cleanData<br/>normalize"] --> SD["storeData<br/>1 txn upsert"]
+        end
+        MAP --> RD["rollupDaily<br/>daily OHLC"]
+    end
+
+    SD --> RDS
+    RD --> RDS[("RDS PostgreSQL<br/>item · item_sid · market_snapshot · market_daily")]
+
+    subgraph API["API Gateway — REST + API key + usage plan"]
+        IR["itemRegistry Lambda"]
+        MQ["marketQuery Lambda<br/>serves /v1/market + /v1/insights"]
+        DOCS["docs Lambda<br/>OpenAPI + Swagger UI (key-less)"]
+    end
+
+    IR --> DDB[("DynamoDB<br/>item catalog — outside VPC")]
+    MQ -->|"IAM auth, in-VPC, read-only"| RDS
+
+    EBdaily["EventBridge — daily + weekly"] --> INS
+
+    subgraph INS["Insights state machine — Step Functions"]
+        direction LR
+        CDG["computeDigest"] --> SUM["summarize<br/>Bedrock"] --> SS["storeSummary"]
+    end
+
+    SS --> MS["market_summary"] --> SNS["SNS"] --> DISC["Discord"]
 ```
 
 **Shared Lambda layer (`bdo-common`)** holds all reusable logic — the arsha.io client + normalizer, psycopg connection helper, Pydantic models, SQL repositories, the pricing models, and the analytics functions — so the individual handlers stay thin.
@@ -118,7 +131,7 @@ GET    /v1/insights?region=&period=&date=&lang=
 
 The `analysis` response combines a per-tier `expected_enhance_cost`, rolling-window volatility (σ, CV), a liquidity measure, and an `is_anomalous` flag (|z-score| > 3 vs the trailing window).
 
-The `insights` endpoint returns a structured market digest and deterministic narrative summary for a given region and period. It is produced daily by a Step Functions pipeline that builds the digest from top movers and renders a human-readable narrative.
+The `insights` endpoint returns a structured market digest plus a narrative summary for a given region and period, produced daily/weekly by a Step Functions pipeline. The narrative's per-item figures are rendered deterministically from the digest; an LLM (Amazon Bedrock) writes only the headline and overall, so no number passes through the model, with a full deterministic fallback (ADR-0016/0017).
 
 #### Query parameters
 

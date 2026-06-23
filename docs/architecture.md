@@ -8,42 +8,73 @@ API exposes snapshots, daily rollups, and BDO-domain analytics.
 
 ## System Components
 
+```mermaid
+flowchart TB
+    EBhourly["EventBridge<br/>hourly cron"] --> ETLSM["ETL state machine<br/>(Step Functions)"]
+    EBins["EventBridge<br/>daily + weekly"] --> INSSM["Insights state machine<br/>(Step Functions)"]
+
+    subgraph APIGW["API Gateway — REST, API key (optional custom domain)"]
+        IR["itemRegistry Lambda"]
+        MQ["marketQuery Lambda<br/>/v1/market + /v1/insights"]
+        DOCS["docs Lambda<br/>OpenAPI + Swagger UI (key-less)"]
+    end
+
+    ETLSM --> RDS
+    INSSM --> RDS
+    INSSM --> SNS["SNS topic"] --> DN["discordNotifier Lambda<br/>(out-of-VPC, webhook relay)"]
+    MIG["migrator Lambda<br/>(in-VPC, alembic upgrade head)"] --> RDS
+    MQ --> RDS
+    IR --> DDB
+    PURGE["purgeOldSnapshots Lambda<br/>(daily schedule)"] --> RDS
+
+    RDS[("RDS Postgres<br/>market_snapshot · market_daily<br/>item · item_sid · market_summary")]
+    DDB[("DynamoDB<br/>bdo-&lt;stage&gt;-items (item registry)")]
 ```
-EventBridge (cron)
-  -> Step Functions state machine
-       -> retrieveItems (DynamoDB scan)
-       -> Map: fetchData -> cleanData -> storeData
-       -> rollupDaily (daily schedule)
-       -> purgeOldSnapshots (daily schedule)
 
-API Gateway (REST, API key)
-  [optional custom domain: api[.<env>].example.com -> ACM cert + Route 53 alias]
-  -> itemRegistry Lambda   (DynamoDB read/write)
-  -> marketQuery Lambda    (RDS read; /v1/market + /v1/insights)
-  -> docs Lambda           (OpenAPI spec + Swagger UI; key-less routes)
-
-Schema migrations
-  -> migrator Lambda       (in-VPC; alembic upgrade head via IAM auth)
-
-Insights pipeline (EventBridge daily + weekly)
-  -> Step Functions state machine
-       -> computeDigest    (in-VPC; build digest from market_daily)
-       -> summarize        (out-of-VPC; Bedrock Converse, deterministic fallback)
-       -> storeSummary     (in-VPC; upsert market_summary)
-       -> SNS:Publish      -> discordNotifier (out-of-VPC; webhook relay)
-
-Data Stores
-  - RDS Postgres   : market_snapshot, market_daily, item, item_sid, market_summary
-  - DynamoDB       : bdo-<stage>-items (item registry)
-
-Shared Layer (bdo-common)
-  arsha_client, db, models, repositories, pricing, analytics, insights
-```
+The shared Lambda layer (`bdo-common`) packages the reusable modules —
+`arsha_client`, `db`, `models`, `repositories`, `pricing`, `analytics`, and
+`insights` — so the individual handlers stay thin.
 
 The system runs 14 Lambdas: the 8 ETL/API handlers, the in-VPC `migrator`, the
 `docs` API, and the four insights functions (`computeDigest`, `summarize`,
 `storeSummary`, `discordNotifier`). SAM nests them as `network`, `data`, `etl`,
 `api`, `insights`, `observability`, and `bastion` stacks.
+
+### ETL state machine
+
+```mermaid
+flowchart LR
+    RI["retrieveItems<br/>DynamoDB scan"] --> MAP
+    subgraph MAP["Map — MaxConcurrency 5 (per batch)"]
+        direction LR
+        FD["fetchData<br/>arsha.io"] --> CD["cleanData<br/>normalize"] --> SD["storeData<br/>upsert (1 txn)"]
+    end
+    MAP --> CH{"is_day_first_run?"}
+    CH -->|true| RD["rollupDaily<br/>daily OHLC"]
+    CH -->|false| DONE(["Done"])
+    RD --> DONE
+```
+
+`purgeOldSnapshots` is **not** part of this state machine — it runs on its own
+daily schedule to remove snapshots older than 90 days.
+
+### Insights state machine
+
+```mermaid
+flowchart LR
+    CD["computeDigest<br/>(in-VPC)<br/>digest from market_daily"] --> SUM["summarize<br/>(out-of-VPC, Bedrock Converse)"]
+    SUM --> SS["storeSummary<br/>(in-VPC)<br/>upsert market_summary"]
+    SUM -.->|"Catch States.ALL<br/>deterministic fallback"| SS
+    SS --> PUB["PublishNotification<br/>SNS:Publish"]
+    PUB --> SNS["SNS topic"] --> DN["discordNotifier<br/>(out-of-VPC, webhook relay)"]
+    PUB -.->|"Catch States.ALL"| SKIP(["NotificationSkipped<br/>(Succeed)"])
+```
+
+The VPC boundary splits the pipeline: `computeDigest` and `storeSummary` run
+in-VPC (RDS via IAM auth), while `summarize` (Bedrock) and `discordNotifier`
+run out-of-VPC. A failed `summarize` is caught and falls back to deterministic
+narration; a failed notification ends in `NotificationSkipped` so the run still
+succeeds (the summary is already stored and served via `/v1/insights`).
 
 ## Key Design Decisions
 
@@ -118,10 +149,11 @@ A scheduled Step Functions pipeline (`infra/insights.yaml`, ADR-0015/0016)
 produces daily and weekly market summaries:
 
 - **Deterministic digest, LLM narration.** `bdo_common.insights` computes all
-  numbers (reusing `analytics`/`pricing`); the LLM only narrates that digest and
-  may not invent figures. Output is schema-validated with a deterministic
+  numbers (reusing `analytics`/`pricing`). Every per-item figure is rendered
+  deterministically and never passes through the model; the LLM writes only the
+  headline and overall. Output is schema-validated with a full deterministic
   fallback, and the API returns the structured digest beside the prose — so no
-  hallucinated number can reach a consumer (ADR-0016).
+  hallucinated number can reach a consumer (ADR-0016, ADR-0017).
 - **VPC split.** `computeDigest`/`storeSummary` run in-VPC (RDS via IAM auth);
   `summarize`/`discordNotifier` run out-of-VPC so Bedrock and the Discord webhook
   are reachable over AWS-managed egress with no NAT (ADR-0006/0015).
