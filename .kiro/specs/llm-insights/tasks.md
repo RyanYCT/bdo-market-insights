@@ -78,7 +78,7 @@ Ships a queryable product: structured digest + deterministic prose, no LLM yet.
 - [x] Runbook: Bedrock model enablement (account/region), the
       `/bdo/${Stage}/discord-webhook` SSM param, region activation for insights
 - [x] `docs/architecture.md` update (insights stack + data flow)
-- [ ] Deploy `dev`, verify a daily + weekly run end-to-end; then `prod`
+- [x] Deploy `dev`, verify a daily + weekly run end-to-end; then `prod`
       (operator action — procedure + smoke test in the "Market Insights"
       section of docs/runbook.md)
 
