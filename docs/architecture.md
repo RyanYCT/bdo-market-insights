@@ -134,5 +134,5 @@ produces daily and weekly market summaries:
   `DiscordDeliveryFailures`) feed a dashboard widget and failure alarms.
 
 Operational setup (Bedrock enablement, the Discord webhook parameter, region
-activation, and the post-deploy smoke test) is in
-[`docs/runbook.md`](runbook.md#llm-market-insights).
+activation, and the dev evaluation procedure) is in the "Market Insights"
+section of [`docs/runbook.md`](runbook.md).

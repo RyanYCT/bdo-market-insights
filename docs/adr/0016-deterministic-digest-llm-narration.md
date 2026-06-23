@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Accepted. The shape of the LLM's output is refined by
+[ADR-0017](0017-hybrid-narration.md): the model writes only the headline and
+overall; the per-category bullets are rendered deterministically.
 
 ## Context
 
