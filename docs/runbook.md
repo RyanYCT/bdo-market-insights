@@ -1,8 +1,8 @@
 # Runbook
 
-Operational guide for the live v3 stacks (`bdo-market-dev` / `bdo-market-prod`).
-The legacy pre-v3 decommission is a separate, one-time exercise tracked in
-`docs/cleanup-tasks.md`.
+Operational guide for the live v3 stacks (`bdo-market-dev` / `bdo-market-prod`):
+daily operations, deployment, database access, the custom domain, insights
+evaluation, cleanup/teardown, and troubleshooting.
 
 ## Contents
 
