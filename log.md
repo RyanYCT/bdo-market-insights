@@ -159,7 +159,7 @@ Each entry uses the template below; aim for ≤ 200 words.
 
 ---
 
-## 2025-07-14 -- Phase 3 shared layer: remaining modules
+## 2026-05-31 — Phase 3 shared layer: remaining modules
 
 **Agent:** Kiro
 **Mode:** Autonomous
@@ -874,3 +874,110 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 - `BedrockModelId` default (Nova Lite/Micro vs Claude Haiku-class) pinned at
   implementation; Bedrock model enablement is a one-time account/region step.
 - Implementation begins at Phase 1 once PR #15 is approved.
+
+
+
+## 2026-06-18 — LLM market-insights feature shipped (Phases 1–6) + deploy/build hardening
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/llm-insights-phase6` (+ follow-up fix branches)
+**Phase:** llm-insights Phases 1–6 (implementation)
+**Commits:** PRs #22–#26
+
+> Catch-up entry. The per-phase build sessions between the 2026-06-14 plan and
+> this point were not logged at the time; summarised from
+> `.kiro/specs/llm-insights/` and the merged PRs.
+
+### Done
+- Implemented the insights feature per the spec: `bdo_common.insights` (digest
+  builder, category registry, `InsightRepo`/`SummaryRepo`, deterministic
+  narrative renderer, Bedrock prompt/parse), Alembic `0004_market_summary`, the
+  four insights Lambdas (compute/summarize/store/discord), the daily + weekly
+  Step Functions pipeline (`infra/insights.yaml`), `/v1/insights` routes, and
+  observability (EMF metrics + alarms). Shipped via #22.
+- Same-day hardening: RDS engine 16.8→16.13 (16.8 deprecated, blocked fresh
+  creates) [#23]; gate additive `sam deploy` behind `make build`+verify-layer in
+  the runbook [#24]; guarded `bastion-up/down` & `domain-up/down` Make targets
+  [#25]; run SAM custom builds via `uv` (bare `python` missing on some hosts) [#26].
+
+### Decisions
+- No new ADRs — implementation of the ADR-0015/0016 plan.
+
+### Deferred / open questions
+- Narration quality unvalidated against real data (addressed below).
+
+## 2026-06-22 — Insights narration: empty-digest hallucination fix
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `fix/insights-skip-empty-digest-llm`
+**Phase:** llm-insights — hardening
+**Commits:** PR #27
+
+### Done
+- Dev testing showed `/v1/insights` returning fabricated items and prices when
+  the digest was empty (no seeded items): `insights_summarize` was calling
+  Bedrock with an empty fact set. Fixed by short-circuiting empty digests to the
+  deterministic "no movements" fallback — Bedrock is never handed nothing to
+  ground it.
+- Updated the summarize tests (the empty-digest case was the trap) and pinned
+  two transitive dev deps past CVEs flagged by `pip-audit`.
+
+### Decisions
+- Empty digest ⇒ deterministic fallback, never the LLM — local refinement of ADR-0016.
+
+## 2026-06-23 — Insights narration quality: grounded digest → hybrid
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** various (`feat/insights-*`)
+**Phase:** llm-insights — narration quality
+**Commits:** PRs #28–#33
+
+### Done
+- Iterated narration quality against seeded dev data over several evaluation rounds:
+  - #28 richer grounded digest signals (`trend`, z-score `anomaly`, `DigestStats`
+    breadth + superlatives); drop flat filler.
+  - #29 dev-only synthetic market backfill (`scripts/seed_market_dev.py`) so the
+    pipeline has history to narrate (`insightsCompute` targets yesterday).
+  - #30 sharper prompt (interpret signals; compact silver; ban "no volatility").
+  - #31 precompute a correctly-labelled enhancement-cost-movers list for verbatim use.
+  - #32 **hybrid**: render all figures deterministically (bullets); the LLM
+    returns only headline + overall.
+  - #33 make the `overall` an analyst-style take, not a stat recap.
+- Evaluation showed `nova-lite` mis-stating figures it was handed — wrong tier,
+  1000× magnitude slip, sign flip, fabricated "buff tiers" — even with a verbatim
+  list, which is what forced the hybrid.
+
+### Decisions
+- Hybrid narration (deterministic figures; LLM writes only headline/overall) → ADR-0017.
+
+## 2026-06-23 — Ops & docs hardening; first prod cutover attempt
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** various (`docs/*`)
+**Phase:** Operations / docs
+**Commits:** PRs #34–#37 (some in review)
+
+### Done
+- Runbook: added Cleanup/Teardown (revert test setup; full stack delete for
+  dev/prod incl. prod RDS deletion-protection unlock; orphaned-nested-stack
+  cleanup) [#34]; documented the CI/CD deploy role (GitHub OIDC) bootstrap [#35];
+  reorganized for navigability with a TOC + consolidated troubleshooting [#36].
+- Docs: ADR-0017 (hybrid narration) + fixed stale cross-references and a
+  misattributed ADR-0007 citation [#37].
+- First prod cutover (tag `v3.1.0`, against the stack live since 2026-06-09): the
+  CI deploy first failed at `configure-aws-credentials` (the `AWS_DEPLOY_ROLE_ARN`
+  secret + OIDC role had never been created), then on deploy-role IAM scoping
+  (`iam:GetRole` on `bdo-prod-*` is not granted by PowerUserAccess alone).
+
+### Decisions
+- Deploy-role permissions: PowerUserAccess + an inline IAM policy scoped to
+  `role/bdo-*` (the named roles are `bdo-<stage>-*`) — documented in the runbook.
+
+### Deferred / open questions
+- v3.1.0 prod cutover in progress: re-run the deploy after attaching the inline
+  IAM policy; bullets are deterministic, LLM headline/overall pending Bedrock-on-prod
+  verification.
