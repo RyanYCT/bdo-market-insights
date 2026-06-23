@@ -231,6 +231,105 @@ aws logs tail /aws/lambda/bdo-dev-market-query --since 10m --follow
 
 ---
 
+### CI/CD deploy role (GitHub OIDC) — one-time bootstrap
+
+Prod deploys assume an IAM role via GitHub OIDC (no long-lived keys in CI). The
+CI `deploy` job reads the role ARN from the `AWS_DEPLOY_ROLE_ARN` repo secret;
+until that role and secret exist, the job fails at `configure-aws-credentials`
+with *"Could not load credentials from any providers"*. Set it up once:
+
+```sh
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+# 1. GitHub OIDC identity provider (skip if it already exists in the account).
+aws iam create-open-id-connect-provider \
+  --url https://token.actions.githubusercontent.com \
+  --client-id-list sts.amazonaws.com \
+  --thumbprint-list 1b511abead59c6ce207077c0bf0e0043b1382612   # no longer validated, but the CLI requires a value
+
+# 2. Trust policy: only this repo's v* tags may assume the role
+#    (the deploy job runs only on tag pushes).
+cat > trust.json <<JSON
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {"Federated": "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"},
+    "Action": "sts:AssumeRoleWithWebIdentity",
+    "Condition": {
+      "StringEquals": {"token.actions.githubusercontent.com:aud": "sts.amazonaws.com"},
+      "StringLike":   {"token.actions.githubusercontent.com:sub": "repo:RyanYCT/bdo-market-insights:ref:refs/tags/v*"}
+    }
+  }]
+}
+JSON
+aws iam create-role --role-name bdo-github-deploy \
+  --assume-role-policy-document file://trust.json
+
+# 3. Permissions. `sam deploy` IS the CloudFormation actor (no separate service
+#    role), so this role provisions every resource the stacks manage. Pragmatic
+#    baseline: PowerUserAccess (covers CloudFormation, S3, Lambda, API Gateway,
+#    Step Functions, EventBridge, RDS, DynamoDB, EC2/VPC, Secrets Manager, KMS,
+#    SNS, Logs, CloudWatch, ACM, Route 53) + an inline policy for the IAM writes
+#    PowerUser omits, scoped to bdo-* so it can't mint arbitrary privileged roles.
+aws iam attach-role-policy --role-name bdo-github-deploy \
+  --policy-arn arn:aws:iam::aws:policy/PowerUserAccess
+
+cat > deploy-iam.json <<JSON
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageStackRoles",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:TagRole", "iam:UntagRole",
+        "iam:AttachRolePolicy", "iam:DetachRolePolicy",
+        "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy",
+        "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:UpdateAssumeRolePolicy",
+        "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile",
+        "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile"
+      ],
+      "Resource": [
+        "arn:aws:iam::${ACCOUNT_ID}:role/bdo-*",
+        "arn:aws:iam::${ACCOUNT_ID}:instance-profile/bdo-*"
+      ]
+    },
+    {
+      "Sid": "PassRoleToServices",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::${ACCOUNT_ID}:role/bdo-*",
+      "Condition": {"StringEquals": {"iam:PassedToService": [
+        "lambda.amazonaws.com", "states.amazonaws.com",
+        "events.amazonaws.com", "ec2.amazonaws.com"
+      ]}}
+    }
+  ]
+}
+JSON
+aws iam put-role-policy --role-name bdo-github-deploy \
+  --policy-name bdo-deploy-iam --policy-document file://deploy-iam.json
+
+# 4. Tell GitHub the role ARN (or set it in Settings -> Secrets and variables
+#    -> Actions -> New repository secret).
+gh secret set AWS_DEPLOY_ROLE_ARN \
+  --body "arn:aws:iam::${ACCOUNT_ID}:role/bdo-github-deploy"
+```
+
+> CloudFormation-generated resource roles are prefixed with the stack name
+> (`bdo-market-<stage>-…`), so they match the `bdo-*` scope above. If a deploy
+> ever hits `AccessDenied` on `iam:CreateRole` for a non-`bdo-*` name, widen that
+> one Resource rather than opening IAM up. PowerUser is a pragmatic start for a
+> single-account project; the OIDC trust already limits *who* can assume the
+> role, and you can tighten to least-privilege later by replaying CloudTrail.
+
+> First prod deploy only: the RDS Postgres roles must be bootstrapped
+> (migrations `0001`–`0003` as the master user via the bastion — see "First-time
+> role bootstrap") before the CI migrator step can run as `lambda_migrator`.
+
+---
+
 ### Prod Deployment (Automated via CI/CD)
 
 **Use this workflow to release changes to production. All CI checks run automatically before merge.**
