@@ -96,7 +96,7 @@ stateDiagram-v2
     NotificationSkipped --> [*]
 
     note right of ComputeDigest : in-VPC; builds digest from market_daily
-    note right of Summarize : out-of-VPC (Bedrock); on failure, deterministic fallback
+    note right of Summarize : out-of-VPC; narrates via Bedrock Converse
     note right of StoreSummary : in-VPC; upserts market_summary
     note right of PublishNotification : out-of-VPC; SNS:Publish to discordNotifier, best-effort (else NotificationSkipped)
 ```
