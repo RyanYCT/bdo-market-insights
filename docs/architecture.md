@@ -29,22 +29,22 @@ architecture-beta
         service purge(server)[purgeOldSnapshots] in vpc
         service rds(database)[RDS Postgres] in vpc
 
-    cron:L --> R:etl
-    cron:L --> R:insights
-    cron:L --> R:purge
-    arsha:T --> B:etl
-    etl:R --> L:rds
-    mq:R --> L:rds
-    migrator:R --> L:rds
-    purge:R --> L:rds
+    cron:R --> L:etl
+    cron:T --> L:insights
+    cron:B --> L:purge
+    arsha:B --> T:etl
+    etl:B --> T:rds
+    purge:B --> T:rds
     insights:R --> L:rds
+    migrator:L --> R:rds
+    mq:T --> B:rds
     insights:T --> B:bedrock
     insights:B --> T:sns
     sns:R --> L:discord
     discord:R --> L:dweb
     apigw:B --> T:itemreg
-    apigw:B --> T:mq
-    apigw:B --> T:docs
+    apigw:L --> R:mq
+    apigw:R --> T:docs
     itemreg:R --> L:dynamo
 ```
 

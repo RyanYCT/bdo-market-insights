@@ -48,18 +48,18 @@ architecture-beta
         service mq(server)[marketQuery] in vpc
         service rds(database)[RDS Postgres] in vpc
 
-    cron:L --> R:etl
-    cron:L --> R:insights
-    arsha:T --> B:etl
-    etl:R --> L:rds
-    mq:R --> L:rds
+    cron:R --> L:etl
+    cron:B --> L:insights
+    arsha:B --> T:etl
+    etl:B --> T:rds
     insights:R --> L:rds
+    mq:T --> B:rds
     insights:T --> B:bedrock
     insights:B --> T:sns
     sns:R --> L:discord
     apigw:B --> T:itemreg
-    apigw:B --> T:mq
-    apigw:B --> T:docs
+    apigw:L --> R:mq
+    apigw:R --> T:docs
     itemreg:R --> L:dynamo
 ```
 
