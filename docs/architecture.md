@@ -104,10 +104,10 @@ stateDiagram-v2
     PublishNotification --> NotificationSkipped : Catch (best-effort, still succeeds)
     NotificationSkipped --> [*]
 
-    note right of ComputeDigest : in-VPC; builds digest from market_daily
-    note right of Summarize : out-of-VPC; narrates via Bedrock Converse
-    note right of StoreSummary : in-VPC; upserts market_summary
-    note right of PublishNotification : out-of-VPC; SNS:Publish to discordNotifier
+    note right of ComputeDigest : in-VPC, builds digest from market_daily
+    note right of Summarize : out-of-VPC, narrates via Bedrock Converse
+    note right of StoreSummary : in-VPC, upserts market_summary
+    note right of PublishNotification : out-of-VPC, SNS publish to discordNotifier
 ```
 
 ## Key Design Decisions
