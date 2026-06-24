@@ -10,40 +10,49 @@ API exposes snapshots, daily rollups, and BDO-domain analytics.
 
 ```mermaid
 architecture-beta
-    service cron(cloud)[EventBridge]
-    service arsha(internet)[arsha api]
-    service apigw(internet)[API Gateway]
-    service itemreg(server)[itemRegistry]
-    service docs(server)[docs]
-    service dynamo(database)[DynamoDB]
-    service bedrock(cloud)[Bedrock]
-    service sns(cloud)[SNS]
-    service discord(server)[discordNotifier]
-    service dweb(internet)[Discord webhook]
+    group external(cloud)[External]
+        service arsha(internet)[arsha API] in external
+        service dweb(internet)[Discord Webhook] in external
 
-    group vpc(cloud)[VPC]
-        service etl(server)[ETL state machine] in vpc
-        service insights(server)[Insights state machine] in vpc
+    group aws(cloud)[AWS Cloud]
+        service cron1(cloud)[EventBridge Hourly] in aws
+        service cron2(cloud)[EventBridge Daily] in aws
+        service cron3(cloud)[EventBridge Daily + Weekly] in aws
+        service apigw(internet)[API Gateway] in aws
+        service itemreg(server)[itemRegistry] in aws
+        service dynamo(database)[DynamoDB] in aws
+        service sns(cloud)[SNS] in aws
+        service discord(server)[discordNotifier] in aws
+        service bedrock(cloud)[Bedrock] in aws
+
+    group vpc(cloud)[VPC] in aws
+        service etl(server)[ETL State Machine] in vpc
+        service insights(server)[Insights State Machine] in vpc
         service mq(server)[marketQuery] in vpc
         service migrator(server)[migrator] in vpc
         service purge(server)[purgeOldSnapshots] in vpc
         service rds(database)[RDS Postgres] in vpc
+        junction dbhub in vpc
+        junction dbhub1 in vpc
 
-    cron:R --> L:etl
-    cron:B --> L:insights
-    cron:T --> L:purge
-    apigw:R --> L:mq
-    apigw:B --> T:itemreg
-    apigw:T --> B:docs
-    itemreg:B --> T:dynamo
+    cron1:B --> T:etl
+    cron2:B --> T:purge
+    cron3:T --> B:insights
     arsha:L --> R:etl
-    etl:B --> T:rds
-    purge:R --> T:rds
-    insights:T --> B:rds
-    migrator:R --> B:rds
-    mq:R --> L:rds
-    insights:R --> L:bedrock
-    insights:L --> R:sns
+    apigw:T --> B:mq
+    apigw:L --> T:itemreg
+    itemreg:T --> B:dynamo
+
+    etl:B -- T:dbhub
+    insights:T -- B:dbhub
+    migrator:B -- T:rds
+    mq:T -- B:dbhub1
+    purge:B -- T:dbhub1
+    dbhub1:R -- L:rds
+    dbhub:L -- R:rds
+
+    insights:R --> T:bedrock
+    insights:R --> B:sns
     sns:B --> T:discord
     discord:R --> L:dweb
 ```
