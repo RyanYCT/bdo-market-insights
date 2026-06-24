@@ -17,7 +17,7 @@ architecture-beta
     group aws(cloud)[AWS Cloud]
         service cron1(cloud)[EventBridge Hourly] in aws
         service cron2(cloud)[EventBridge Daily] in aws
-        service cron3(cloud)[EventBridge Daily + Weekly] in aws
+        service cron3(cloud)[EventBridge Daily and Weekly] in aws
         service apigw(internet)[API Gateway] in aws
         service itemreg(server)[itemRegistry] in aws
         service dynamo(database)[DynamoDB] in aws
