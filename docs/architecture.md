@@ -77,8 +77,7 @@ stateDiagram-v2
     Done --> [*]
 
     note right of ProcessBatches
-        Map state, MaxConcurrency 5
-        fetchData -> cleanData -> storeData per batch
+        Map state, MaxConcurrency 5 (one iteration per batch)
     end note
 ```
 
