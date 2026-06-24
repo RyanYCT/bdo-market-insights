@@ -95,16 +95,10 @@ stateDiagram-v2
     PublishNotification --> NotificationSkipped : Catch
     NotificationSkipped --> [*]
 
-    note right of ComputeDigest : in-VPC, builds digest from market_daily
-    note right of Summarize
-        out-of-VPC (Bedrock Converse)
-        failure is caught -> deterministic narration
-    end note
-    note right of StoreSummary : in-VPC, upserts market_summary
-    note right of PublishNotification
-        SNS:Publish -> discordNotifier (out-of-VPC)
-        best-effort; failure -> NotificationSkipped (Succeed)
-    end note
+    note right of ComputeDigest : in-VPC; builds digest from market_daily
+    note right of Summarize : out-of-VPC (Bedrock); on failure, deterministic fallback
+    note right of StoreSummary : in-VPC; upserts market_summary
+    note right of PublishNotification : SNS:Publish to discordNotifier (out-of-VPC); best-effort, else NotificationSkipped
 ```
 
 The VPC boundary splits the pipeline: `computeDigest` and `storeSummary` run
