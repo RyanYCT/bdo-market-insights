@@ -92,7 +92,7 @@ stateDiagram-v2
     Summarize --> StoreSummary : Catch (deterministic fallback)
     StoreSummary --> PublishNotification
     PublishNotification --> [*]
-    PublishNotification --> NotificationSkipped : Catch
+    PublishNotification --> NotificationSkipped : Catch (best-effort, still succeeds)
     NotificationSkipped --> [*]
 
     note right of ComputeDigest : in-VPC; builds digest from market_daily
@@ -100,12 +100,6 @@ stateDiagram-v2
     note right of StoreSummary : in-VPC; upserts market_summary
     note right of PublishNotification : out-of-VPC; SNS:Publish to discordNotifier
 ```
-
-The VPC boundary splits the pipeline: `computeDigest` and `storeSummary` run
-in-VPC (RDS via IAM auth), while `summarize` (Bedrock) and `discordNotifier`
-run out-of-VPC. A failed `summarize` is caught and falls back to deterministic
-narration; a failed notification ends in `NotificationSkipped` so the run still
-succeeds (the summary is already stored and served via `/v1/insights`).
 
 ## Key Design Decisions
 
