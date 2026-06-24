@@ -30,22 +30,22 @@ architecture-beta
         service rds(database)[RDS Postgres] in vpc
 
     cron:R --> L:etl
-    cron:T --> L:insights
-    cron:B --> L:purge
-    arsha:B --> T:etl
-    etl:B --> T:rds
-    purge:B --> T:rds
-    insights:R --> L:rds
-    migrator:L --> R:rds
-    mq:T --> B:rds
-    insights:T --> B:bedrock
-    insights:B --> T:sns
-    sns:R --> L:discord
-    discord:R --> L:dweb
+    cron:B --> L:insights
+    cron:T --> L:purge
+    apigw:R --> L:mq
     apigw:B --> T:itemreg
-    apigw:L --> R:mq
-    apigw:R --> T:docs
-    itemreg:R --> L:dynamo
+    apigw:T --> B:docs
+    itemreg:B --> T:dynamo
+    arsha:L --> R:etl
+    etl:B --> T:rds
+    purge:R --> T:rds
+    insights:T --> B:rds
+    migrator:R --> B:rds
+    mq:R --> L:rds
+    insights:R --> L:bedrock
+    insights:L --> R:sns
+    sns:B --> T:discord
+    discord:R --> L:dweb
 ```
 
 The shared Lambda layer (`bdo-common`) packages the reusable modules —

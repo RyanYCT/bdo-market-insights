@@ -50,17 +50,17 @@ architecture-beta
 
     cron:R --> L:etl
     cron:B --> L:insights
-    arsha:B --> T:etl
-    etl:B --> T:rds
-    insights:R --> L:rds
-    mq:T --> B:rds
-    insights:T --> B:bedrock
-    insights:B --> T:sns
-    sns:R --> L:discord
+    apigw:R --> L:mq
     apigw:B --> T:itemreg
-    apigw:L --> R:mq
-    apigw:R --> T:docs
-    itemreg:R --> L:dynamo
+    apigw:T --> B:docs
+    itemreg:B --> T:dynamo
+    arsha:L --> R:etl
+    etl:B --> T:rds
+    insights:T --> B:rds
+    mq:R --> L:rds
+    insights:R --> L:bedrock
+    insights:L --> R:sns
+    sns:R --> L:discord
 ```
 
 The ETL and insights pipelines, `marketQuery`, and the database run inside the
