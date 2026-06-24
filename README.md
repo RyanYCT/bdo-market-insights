@@ -31,40 +31,42 @@ Game economies are large, volatile, real-time datasets — a realistic stand-in 
 ## Architecture
 
 ```mermaid
-flowchart TD
-    EBhourly["EventBridge — hourly cron (per region)"] --> ETL
+architecture-beta
+    service cron(cloud)[EventBridge]
+    service arsha(internet)[arsha api]
+    service apigw(internet)[API Gateway]
+    service itemreg(server)[itemRegistry]
+    service docs(server)[docs]
+    service dynamo(database)[DynamoDB]
+    service bedrock(cloud)[Bedrock]
+    service sns(cloud)[SNS]
+    service discord(internet)[Discord]
 
-    subgraph ETL["ETL state machine — Step Functions"]
-        direction LR
-        RI["retrieveItems<br/>DynamoDB scan"] --> MAP
-        subgraph MAP["Map (≤5 concurrent)"]
-            direction LR
-            FD["fetchData<br/>arsha.io"] --> CD["cleanData<br/>normalize"] --> SD["storeData<br/>1 txn upsert"]
-        end
-        MAP --> RD["rollupDaily<br/>daily OHLC"]
-    end
+    group vpc(cloud)[VPC]
+        service etl(server)[ETL pipeline] in vpc
+        service insights(server)[Insights pipeline] in vpc
+        service mq(server)[marketQuery] in vpc
+        service rds(database)[RDS Postgres] in vpc
 
-    SD --> RDS
-    RD --> RDS[("RDS PostgreSQL<br/>item · item_sid · market_snapshot · market_daily")]
-
-    subgraph API["API Gateway — REST + API key + usage plan"]
-        IR["itemRegistry Lambda"]
-        MQ["marketQuery Lambda<br/>serves /v1/market + /v1/insights"]
-        DOCS["docs Lambda<br/>OpenAPI + Swagger UI (key-less)"]
-    end
-
-    IR --> DDB[("DynamoDB<br/>item catalog — outside VPC")]
-    MQ -->|"IAM auth, in-VPC, read-only"| RDS
-
-    EBdaily["EventBridge — daily + weekly"] --> INS
-
-    subgraph INS["Insights state machine — Step Functions"]
-        direction LR
-        CDG["computeDigest"] --> SUM["summarize<br/>Bedrock"] --> SS["storeSummary"]
-    end
-
-    SS --> MS["market_summary"] --> SNS["SNS"] --> DISC["Discord"]
+    cron:L --> R:etl
+    cron:L --> R:insights
+    arsha:T --> B:etl
+    etl:R --> L:rds
+    mq:R --> L:rds
+    insights:R --> L:rds
+    insights:T --> B:bedrock
+    insights:B --> T:sns
+    sns:R --> L:discord
+    apigw:B --> T:itemreg
+    apigw:B --> T:mq
+    apigw:B --> T:docs
+    itemreg:R --> L:dynamo
 ```
+
+The ETL and insights pipelines, `marketQuery`, and the database run inside the
+VPC (DB access via IAM auth); `itemRegistry`, `docs`, the Bedrock summariser,
+and the Discord relay run outside it. See [`docs/architecture.md`](docs/architecture.md)
+for the per-state breakdown.
 
 **Shared Lambda layer (`bdo-common`)** holds all reusable logic — the arsha.io client + normalizer, psycopg connection helper, Pydantic models, SQL repositories, the pricing models, and the analytics functions — so the individual handlers stay thin.
 

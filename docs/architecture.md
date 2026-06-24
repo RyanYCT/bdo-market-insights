@@ -9,26 +9,43 @@ API exposes snapshots, daily rollups, and BDO-domain analytics.
 ## System Components
 
 ```mermaid
-flowchart TB
-    EBhourly["EventBridge<br/>hourly cron"] --> ETLSM["ETL state machine<br/>(Step Functions)"]
-    EBins["EventBridge<br/>daily + weekly"] --> INSSM["Insights state machine<br/>(Step Functions)"]
+architecture-beta
+    service cron(cloud)[EventBridge]
+    service arsha(internet)[arsha api]
+    service apigw(internet)[API Gateway]
+    service itemreg(server)[itemRegistry]
+    service docs(server)[docs]
+    service dynamo(database)[DynamoDB]
+    service bedrock(cloud)[Bedrock]
+    service sns(cloud)[SNS]
+    service discord(server)[discordNotifier]
+    service dweb(internet)[Discord webhook]
 
-    subgraph APIGW["API Gateway — REST, API key (optional custom domain)"]
-        IR["itemRegistry Lambda"]
-        MQ["marketQuery Lambda<br/>/v1/market + /v1/insights"]
-        DOCS["docs Lambda<br/>OpenAPI + Swagger UI (key-less)"]
-    end
+    group vpc(cloud)[VPC]
+        service etl(server)[ETL state machine] in vpc
+        service insights(server)[Insights state machine] in vpc
+        service mq(server)[marketQuery] in vpc
+        service migrator(server)[migrator] in vpc
+        service purge(server)[purgeOldSnapshots] in vpc
+        service rds(database)[RDS Postgres] in vpc
 
-    ETLSM --> RDS
-    INSSM --> RDS
-    INSSM --> SNS["SNS topic"] --> DN["discordNotifier Lambda<br/>(out-of-VPC, webhook relay)"]
-    MIG["migrator Lambda<br/>(in-VPC, alembic upgrade head)"] --> RDS
-    MQ --> RDS
-    IR --> DDB
-    PURGE["purgeOldSnapshots Lambda<br/>(daily schedule)"] --> RDS
-
-    RDS[("RDS Postgres<br/>market_snapshot · market_daily<br/>item · item_sid · market_summary")]
-    DDB[("DynamoDB<br/>bdo-&lt;stage&gt;-items (item registry)")]
+    cron:L --> R:etl
+    cron:L --> R:insights
+    cron:L --> R:purge
+    arsha:T --> B:etl
+    etl:R --> L:rds
+    mq:R --> L:rds
+    migrator:R --> L:rds
+    purge:R --> L:rds
+    insights:R --> L:rds
+    insights:T --> B:bedrock
+    insights:B --> T:sns
+    sns:R --> L:discord
+    discord:R --> L:dweb
+    apigw:B --> T:itemreg
+    apigw:B --> T:mq
+    apigw:B --> T:docs
+    itemreg:R --> L:dynamo
 ```
 
 The shared Lambda layer (`bdo-common`) packages the reusable modules —
@@ -43,16 +60,26 @@ The system runs 14 Lambdas: the 8 ETL/API handlers, the in-VPC `migrator`, the
 ### ETL state machine
 
 ```mermaid
-flowchart LR
-    RI["retrieveItems<br/>DynamoDB scan"] --> MAP
-    subgraph MAP["Map — MaxConcurrency 5 (per batch)"]
-        direction LR
-        FD["fetchData<br/>arsha.io"] --> CD["cleanData<br/>normalize"] --> SD["storeData<br/>upsert (1 txn)"]
-    end
-    MAP --> CH{"is_day_first_run?"}
-    CH -->|true| RD["rollupDaily<br/>daily OHLC"]
-    CH -->|false| DONE(["Done"])
-    RD --> DONE
+stateDiagram-v2
+    [*] --> RetrieveItems
+    RetrieveItems --> ProcessBatches
+    state ProcessBatches {
+        [*] --> FetchData
+        FetchData --> CleanData
+        CleanData --> StoreData
+        StoreData --> [*]
+    }
+    ProcessBatches --> IsDayFirstRun
+    state IsDayFirstRun <<choice>>
+    IsDayFirstRun --> RollupDaily : is_day_first_run = true
+    IsDayFirstRun --> Done : else
+    RollupDaily --> Done
+    Done --> [*]
+
+    note right of ProcessBatches
+        Map state, MaxConcurrency 5
+        fetchData -> cleanData -> storeData per batch
+    end note
 ```
 
 `purgeOldSnapshots` is **not** part of this state machine — it runs on its own
@@ -61,13 +88,26 @@ daily schedule to remove snapshots older than 90 days.
 ### Insights state machine
 
 ```mermaid
-flowchart LR
-    CD["computeDigest<br/>(in-VPC)<br/>digest from market_daily"] --> SUM["summarize<br/>(out-of-VPC, Bedrock Converse)"]
-    SUM --> SS["storeSummary<br/>(in-VPC)<br/>upsert market_summary"]
-    SUM -.->|"Catch States.ALL<br/>deterministic fallback"| SS
-    SS --> PUB["PublishNotification<br/>SNS:Publish"]
-    PUB --> SNS["SNS topic"] --> DN["discordNotifier<br/>(out-of-VPC, webhook relay)"]
-    PUB -.->|"Catch States.ALL"| SKIP(["NotificationSkipped<br/>(Succeed)"])
+stateDiagram-v2
+    [*] --> ComputeDigest
+    ComputeDigest --> Summarize
+    Summarize --> StoreSummary
+    Summarize --> StoreSummary : Catch (deterministic fallback)
+    StoreSummary --> PublishNotification
+    PublishNotification --> [*]
+    PublishNotification --> NotificationSkipped : Catch
+    NotificationSkipped --> [*]
+
+    note right of ComputeDigest : in-VPC, builds digest from market_daily
+    note right of Summarize
+        out-of-VPC (Bedrock Converse)
+        failure is caught -> deterministic narration
+    end note
+    note right of StoreSummary : in-VPC, upserts market_summary
+    note right of PublishNotification
+        SNS:Publish -> discordNotifier (out-of-VPC)
+        best-effort; failure -> NotificationSkipped (Succeed)
+    end note
 ```
 
 The VPC boundary splits the pipeline: `computeDigest` and `storeSummary` run
