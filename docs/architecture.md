@@ -76,9 +76,7 @@ stateDiagram-v2
     RollupDaily --> Done
     Done --> [*]
 
-    note right of ProcessBatches
-        Map state, MaxConcurrency 5 (one iteration per batch)
-    end note
+    note right of ProcessBatches : Map, MaxConcurrency 5
 ```
 
 `purgeOldSnapshots` is **not** part of this state machine — it runs on its own
