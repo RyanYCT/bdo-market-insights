@@ -55,7 +55,7 @@ architecture-beta
 
     cron1:B --> T:etl
     cron2:T --> B:insights
-    arsha:L --> R:etl
+    etl:R --> L:arsha
     apigw:T --> B:mq
     apigw:L --> R:itemreg
     itemreg:T --> B:dynamo
