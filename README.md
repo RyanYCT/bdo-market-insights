@@ -32,41 +32,50 @@ Game economies are large, volatile, real-time datasets — a realistic stand-in 
 
 ```mermaid
 architecture-beta
-    service cron(cloud)[EventBridge]
-    service arsha(internet)[arsha api]
-    service apigw(internet)[API Gateway]
-    service itemreg(server)[itemRegistry]
-    service docs(server)[docs]
-    service dynamo(database)[DynamoDB]
-    service bedrock(cloud)[Bedrock]
-    service sns(cloud)[SNS]
-    service discord(internet)[Discord]
+    group external(cloud)[External]
+        service arsha(internet)[arsha API] in external
+        service dweb(internet)[Discord Webhook] in external
 
-    group vpc(cloud)[VPC]
-        service etl(server)[ETL pipeline] in vpc
-        service insights(server)[Insights pipeline] in vpc
+    group aws(cloud)[AWS Cloud]
+        service cron1(cloud)[EventBridge Hourly] in aws
+        service cron2(cloud)[EventBridge Daily and Weekly] in aws
+        service apigw(internet)[API Gateway] in aws
+        service itemreg(server)[itemRegistry] in aws
+        service dynamo(database)[DynamoDB] in aws
+        service sns(cloud)[SNS] in aws
+        service discord(server)[discordNotifier] in aws
+        service bedrock(cloud)[Bedrock] in aws
+
+    group vpc(cloud)[VPC] in aws
+        service etl(server)[ETL State Machine] in vpc
+        service insights(server)[Insights State Machine] in vpc
         service mq(server)[marketQuery] in vpc
         service rds(database)[RDS Postgres] in vpc
+        junction dbhub in vpc
 
-    cron:R --> L:etl
-    cron:B --> L:insights
-    apigw:R --> L:mq
-    apigw:B --> T:itemreg
-    apigw:T --> B:docs
-    itemreg:B --> T:dynamo
+    cron1:B --> T:etl
+    cron2:T --> B:insights
     arsha:L --> R:etl
-    etl:B --> T:rds
-    insights:T --> B:rds
-    mq:R --> L:rds
-    insights:R --> L:bedrock
-    insights:L --> R:sns
-    sns:R --> L:discord
+    apigw:T --> B:mq
+    apigw:L --> R:itemreg
+    itemreg:T --> B:dynamo
+
+    etl:B -- T:dbhub
+    insights:T -- B:dbhub
+    mq:R -- L:rds
+    dbhub:L -- R:rds
+
+    insights:R --> T:bedrock
+    insights:R --> B:sns
+    sns:B --> T:discord
+    discord:R --> L:dweb
 ```
 
-The ETL and insights pipelines, `marketQuery`, and the database run inside the
-VPC (DB access via IAM auth); `itemRegistry`, `docs`, the Bedrock summariser,
-and the Discord relay run outside it. See [`docs/architecture.md`](docs/architecture.md)
-for the per-state breakdown.
+The database and the Lambdas that touch it (`etl`, `insights`, `marketQuery`)
+run inside a VPC and authenticate to Postgres via IAM; arsha.io and the Discord
+webhook are the only external dependencies. See [`docs/architecture.md`](docs/architecture.md)
+for the full topology — including the `migrator` and `purgeOldSnapshots` Lambdas —
+and the ETL/insights state-machine breakdowns.
 
 **Shared Lambda layer (`bdo-common`)** holds all reusable logic — the arsha.io client + normalizer, psycopg connection helper, Pydantic models, SQL repositories, the pricing models, and the analytics functions — so the individual handlers stay thin.
 
