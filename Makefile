@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test test-integration openapi build verify-layer deploy deploy-dev deploy-prod bastion-up bastion-down domain-up domain-down db-tunnel-up db-tunnel-down migrate migrate-lambda seed clean
+.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy deploy-dev deploy-prod bastion-up bastion-down domain-up domain-down db-tunnel-up db-tunnel-down migrate migrate-lambda seed clean
 
 STAGE ?= dev
 AWS_REGION ?= us-east-1
@@ -37,6 +37,12 @@ test-integration:
 # same export and fails if the committed spec is out of date.
 openapi:
 	uv run python scripts/export_openapi.py
+
+# Regenerate the Postman collection from the same OpenAPI document. Publish the
+# result to a public workspace for "try the API" links; the demo key value goes
+# in the Postman environment, never in this file or the repo.
+postman:
+	uv run python scripts/export_postman.py
 
 build:
 	sam build

@@ -1,0 +1,448 @@
+{
+  "info": {
+    "name": "BDO Market Insights API",
+    "description": "Auto-generated from the OpenAPI spec (scripts/export_postman.py). Set the `baseUrl` and `apiKey` collection variables (or a Postman environment) before sending. The public demo key is read-only: write requests to /v1/items return 403.",
+    "version": "1.0.0",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "key",
+        "value": "x-api-key",
+        "type": "string"
+      },
+      {
+        "key": "value",
+        "value": "{{apiKey}}",
+        "type": "string"
+      },
+      {
+        "key": "in",
+        "value": "header",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "apiKey",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Insights",
+      "item": [
+        {
+          "name": "GET /v1/insights",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/insights?region=&period=&date=&lang=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "insights"
+              ],
+              "query": [
+                {
+                  "key": "region",
+                  "value": "",
+                  "description": "BDO server region.",
+                  "disabled": true
+                },
+                {
+                  "key": "period",
+                  "value": "",
+                  "description": "Summary period: 'daily' or 'weekly'.",
+                  "disabled": true
+                },
+                {
+                  "key": "date",
+                  "value": "",
+                  "description": "Summary date (YYYY-MM-DD); omit for latest.",
+                  "disabled": true
+                },
+                {
+                  "key": "lang",
+                  "value": "",
+                  "description": "Language code (default 'en').",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "GET /v1/insights"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Items",
+      "item": [
+        {
+          "name": "GET /v1/items",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/items",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "items"
+              ]
+            },
+            "description": "GET /v1/items"
+          }
+        },
+        {
+          "name": "POST /v1/items",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/items",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "items"
+              ]
+            },
+            "description": "POST /v1/items",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": 0,\n  \"category\": \"\",\n  \"main_category\": \"\",\n  \"sub_category\": \"\",\n  \"model_id\": \"accessory_v1\",\n  \"cron_table\": \"a\",\n  \"tracked\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /v1/items/{item_id}",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/items/:item_id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "items",
+                ":item_id"
+              ],
+              "variable": [
+                {
+                  "key": "item_id",
+                  "value": "",
+                  "description": "Path parameter (e.g. a tracked item id; see GET /v1/items)."
+                }
+              ]
+            },
+            "description": "GET /v1/items/{item_id}"
+          }
+        },
+        {
+          "name": "PATCH /v1/items/{item_id}",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/items/:item_id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "items",
+                ":item_id"
+              ],
+              "variable": [
+                {
+                  "key": "item_id",
+                  "value": "",
+                  "description": "Path parameter (e.g. a tracked item id; see GET /v1/items)."
+                }
+              ]
+            },
+            "description": "PATCH /v1/items/{item_id}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"\",\n  \"category\": \"\",\n  \"main_category\": \"\",\n  \"sub_category\": \"\",\n  \"model_id\": \"\",\n  \"cron_table\": \"\",\n  \"tracked\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "DELETE /v1/items/{item_id}",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/items/:item_id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "items",
+                ":item_id"
+              ],
+              "variable": [
+                {
+                  "key": "item_id",
+                  "value": "",
+                  "description": "Path parameter (e.g. a tracked item id; see GET /v1/items)."
+                }
+              ]
+            },
+            "description": "DELETE /v1/items/{item_id}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Market",
+      "item": [
+        {
+          "name": "GET /v1/market/items/{item_id}/analysis",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/market/items/:item_id/analysis?region=&sid=&window_days=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "market",
+                "items",
+                ":item_id",
+                "analysis"
+              ],
+              "variable": [
+                {
+                  "key": "item_id",
+                  "value": "",
+                  "description": "Path parameter (e.g. a tracked item id; see GET /v1/items)."
+                }
+              ],
+              "query": [
+                {
+                  "key": "region",
+                  "value": "",
+                  "description": "BDO server region.",
+                  "disabled": true
+                },
+                {
+                  "key": "sid",
+                  "value": "",
+                  "description": "Enhancement sub-id (default 0, the base item).",
+                  "disabled": true
+                },
+                {
+                  "key": "window_days",
+                  "value": "",
+                  "description": "Trailing analytics window in days, 1-90 (default 14).",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "GET /v1/market/items/{item_id}/analysis"
+          }
+        },
+        {
+          "name": "GET /v1/market/items/{item_id}/daily",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/market/items/:item_id/daily?region=&sid=&from=&to=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "market",
+                "items",
+                ":item_id",
+                "daily"
+              ],
+              "variable": [
+                {
+                  "key": "item_id",
+                  "value": "",
+                  "description": "Path parameter (e.g. a tracked item id; see GET /v1/items)."
+                }
+              ],
+              "query": [
+                {
+                  "key": "region",
+                  "value": "",
+                  "description": "BDO server region.",
+                  "disabled": true
+                },
+                {
+                  "key": "sid",
+                  "value": "",
+                  "description": "Enhancement sub-id; omit for all sids.",
+                  "disabled": true
+                },
+                {
+                  "key": "from",
+                  "value": "",
+                  "description": "ISO-8601 date lower bound, YYYY-MM-DD (inclusive).",
+                  "disabled": true
+                },
+                {
+                  "key": "to",
+                  "value": "",
+                  "description": "ISO-8601 date upper bound, YYYY-MM-DD (inclusive).",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "GET /v1/market/items/{item_id}/daily"
+          }
+        },
+        {
+          "name": "GET /v1/market/items/{item_id}/snapshots",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/market/items/:item_id/snapshots?region=&sid=&from=&to=&limit=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "market",
+                "items",
+                ":item_id",
+                "snapshots"
+              ],
+              "variable": [
+                {
+                  "key": "item_id",
+                  "value": "",
+                  "description": "Path parameter (e.g. a tracked item id; see GET /v1/items)."
+                }
+              ],
+              "query": [
+                {
+                  "key": "region",
+                  "value": "",
+                  "description": "BDO server region.",
+                  "disabled": true
+                },
+                {
+                  "key": "sid",
+                  "value": "",
+                  "description": "Enhancement sub-id; omit for all sids.",
+                  "disabled": true
+                },
+                {
+                  "key": "from",
+                  "value": "",
+                  "description": "ISO-8601 datetime lower bound (inclusive).",
+                  "disabled": true
+                },
+                {
+                  "key": "to",
+                  "value": "",
+                  "description": "ISO-8601 datetime upper bound (inclusive).",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "description": "Max rows, 1-1000 (default 1000). Out-of-range values are clamped.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "GET /v1/market/items/{item_id}/snapshots"
+          }
+        }
+      ]
+    }
+  ]
+}

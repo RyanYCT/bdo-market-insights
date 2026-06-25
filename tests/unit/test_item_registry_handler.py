@@ -160,3 +160,105 @@ def test_delete_item_soft_deletes(
     assert resp["statusCode"] == 200
     assert updates == {"id": 12094, "tracked": "false"}
     assert json.loads(resp["body"])["tracked"] is False
+
+
+def _event_with_api_key(
+    method: str,
+    path: str,
+    api_key_id: str,
+    *,
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """API Gateway event carrying a caller ``apiKeyId`` (for the read-only demo guard)."""
+    event = _event(method, path, body=body)
+    event["requestContext"]["identity"] = {"apiKeyId": api_key_id}
+    return event
+
+
+def test_demo_key_blocks_create(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DEMO_API_KEY_ID", "demo-key-123")
+    monkeypatch.setattr(
+        mod.ArshaClient, "fetch_sub_list", lambda self, ids: [_record(ids[0], "Deboreka Ring")]
+    )
+    created: list[Item] = []
+    monkeypatch.setattr(mod.dynamo, "put_item", lambda item: created.append(item))
+
+    resp = mod.handler(
+        _event_with_api_key("POST", "/v1/items", "demo-key-123", body={"id": 12094}),
+        lambda_context,
+    )
+    assert resp["statusCode"] == 403
+    assert not created  # never written
+
+
+def test_demo_key_blocks_update_and_delete(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DEMO_API_KEY_ID", "demo-key-123")
+    monkeypatch.setattr(mod.dynamo, "get_item", lambda item_id: Item(id=item_id, name="x"))
+    mutations: list[Any] = []
+    monkeypatch.setattr(
+        mod.dynamo, "update_item", lambda item_id, u: mutations.append((item_id, u))
+    )
+
+    patch = mod.handler(
+        _event_with_api_key("PATCH", "/v1/items/12094", "demo-key-123", body={"tracked": False}),
+        lambda_context,
+    )
+    delete = mod.handler(
+        _event_with_api_key("DELETE", "/v1/items/12094", "demo-key-123"), lambda_context
+    )
+    assert patch["statusCode"] == 403
+    assert delete["statusCode"] == 403
+    assert not mutations  # nothing mutated
+
+
+def test_demo_key_allows_reads(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DEMO_API_KEY_ID", "demo-key-123")
+    monkeypatch.setattr(
+        mod.dynamo, "get_item", lambda item_id: Item(id=item_id, name="Deboreka Ring")
+    )
+    resp = mod.handler(
+        _event_with_api_key("GET", "/v1/items/12094", "demo-key-123"), lambda_context
+    )
+    assert resp["statusCode"] == 200  # reads are not guarded
+
+
+def test_non_demo_key_allows_write(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DEMO_API_KEY_ID", "demo-key-123")
+    monkeypatch.setattr(
+        mod.ArshaClient, "fetch_sub_list", lambda self, ids: [_record(ids[0], "Deboreka Ring")]
+    )
+    created: list[Item] = []
+    monkeypatch.setattr(mod.dynamo, "put_item", lambda item: created.append(item))
+
+    resp = mod.handler(
+        _event_with_api_key("POST", "/v1/items", "real-key-999", body={"id": 12094}),
+        lambda_context,
+    )
+    assert resp["statusCode"] == 201
+    assert created[0].id == 12094
+
+
+def test_write_guard_noop_when_unset(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("DEMO_API_KEY_ID", raising=False)
+    monkeypatch.setattr(
+        mod.ArshaClient, "fetch_sub_list", lambda self, ids: [_record(ids[0], "Deboreka Ring")]
+    )
+    created: list[Item] = []
+    monkeypatch.setattr(mod.dynamo, "put_item", lambda item: created.append(item))
+
+    # Even a request that looks like the demo key is allowed when the guard is off.
+    resp = mod.handler(
+        _event_with_api_key("POST", "/v1/items", "demo-key-123", body={"id": 12094}),
+        lambda_context,
+    )
+    assert resp["statusCode"] == 201
