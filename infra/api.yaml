@@ -131,6 +131,11 @@ Resources:
   DemoUsagePlan:
     Type: AWS::ApiGateway::UsagePlan
     Condition: HasDemoKey
+    # Wait for the SAM-generated stage (BdoApiStage) before associating the plan
+    # with it. Without this, on a fresh create the usage plan can be created
+    # before the stage exists -> "API Stage not found" (the ApiStages reference
+    # only creates an implicit dependency on the RestApi, not the stage).
+    DependsOn: BdoApiStage
     Properties:
       UsagePlanName: !Sub 'bdo-${Stage}-demo-plan'
       Description: !Sub 'bdo-${Stage} public demo plan: 5 RPS burst / 2 sustained, 500/day'
