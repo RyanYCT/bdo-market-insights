@@ -4,18 +4,25 @@ A **serverless, event-driven market-data platform** for the *Black Desert Online
 
 The project is a study in building a **production-grade serverless data pipeline cheaply and safely**: IAM-authenticated database access (no passwords), a no-NAT VPC, single shared Lambda layer, infrastructure-as-code with nested stacks, and a full CI quality gate — all targeted at **under ~US$15/month** of incremental cost.
 
-> **Status:** Live (v3). 14 Lambdas, two Step Functions pipelines (hourly ETL + daily/weekly market-insights), and a REST API deployed across `dev` and `prod` via AWS SAM.
+> **Status:** Live in prod (v3.2.0). 14 Lambdas, two Step Functions pipelines (hourly ETL + daily/weekly market-insights), and a REST API — deployable to `dev`/`prod` via AWS SAM.
 
 ---
 
 ## Why this project
 
-Game economies are large, volatile, real-time datasets — a realistic stand-in for any financial/IoT time-series problem. The interesting engineering isn't the game; it's the constraints:
+The data answers real trading questions for players:
 
-- **Time-series ingestion** from a third-party API with five different polymorphic response shapes that must be normalized into one schema.
-- **Cost discipline** — a serverless architecture that deliberately avoids the usual cost traps (NAT gateways, idle compute, RDS Proxy unless needed).
-- **Security by default** — Lambdas reach Postgres via **IAM database authentication**, so there are no database passwords anywhere in the system.
-- **Domain analytics** — turning raw prices into decisions (e.g. *what does it actually cost, on average, to enhance this accessory to PEN?*) using a probabilistic Markov model.
+- **Buy-vs-enhance** — is it cheaper to buy the PEN item, or enhance one yourself? `analysis` compares market price against expected enhancement cost.
+- **Item sniping** — surface mispriced or anomalous listings via the `is_anomalous` flag (z-score) and volatility. (It flags opportunities — it doesn't push real-time alerts.)
+- **Timing trades** — read price volatility (σ, CV) and liquidity to decide when to buy or sell.
+- **What moved this week** — daily/weekly market-wide digests of the top movers per category.
+
+Underneath, the game economy is a stand-in for any volatile financial/IoT time-series problem, and the engineering is shaped by four constraints:
+
+- **Time-series ingestion** from a third-party API with five polymorphic response shapes normalized into one schema.
+- **Cost discipline** — serverless that avoids the usual traps (NAT gateways, idle compute, RDS Proxy unless needed).
+- **Security by default** — Lambdas reach Postgres via **IAM database authentication**; no database passwords anywhere.
+- **Domain analytics** — turning raw prices into decisions via a probabilistic Markov model over enhancement tiers.
 
 ## What it does
 
@@ -25,8 +32,8 @@ Game economies are large, volatile, real-time datasets — a realistic stand-in 
 | **Time-series storage** | Hourly `market_snapshot` rows, compacted daily into `market_daily` (OHLC-style), with 90-day retention. |
 | **Item Registry API** | `/v1/items` — CRUD over a DynamoDB-backed catalog; new items validated against the upstream API before being tracked. |
 | **Market Query API** | `/v1/market` — raw snapshots, daily rollups, and a combined **analysis** endpoint (enhancement cost + volatility + liquidity + anomaly flag). |
-| **Market Insights** | `/v1/insights` — daily and weekly market-wide digests: top-N movers per category (accessory, buff) with volatility/liquidity. Per-item figures are rendered deterministically; an LLM (Amazon Bedrock) writes only the headline and overall, so no number passes through the model. Produced by a scheduled Step Functions pipeline, stored in Postgres, and pushed to SNS/Discord. |
-| **Region-aware** | Defaults to the TW server; KR/NA/EU/… can be activated by adding one EventBridge rule — **no code or schema change**. |
+| **Market Insights** | `/v1/insights` — daily/weekly market-wide digests (top movers per category, with volatility/liquidity). Figures are deterministic; an LLM writes only the headline/overall. |
+| **Region-aware** | Defaults to the TW server; KR/NA/EU/… activate by adding one EventBridge rule — **no code or schema change**. |
 
 ## Architecture
 
@@ -72,29 +79,31 @@ architecture-beta
 ```
 
 The database and the Lambdas that touch it (`etl`, `insights`, `marketQuery`)
-run inside a VPC and authenticate to Postgres via IAM; arsha.io and the Discord
-webhook are the only external dependencies. See [`docs/architecture.md`](docs/architecture.md)
-for the full topology — including the `migrator` and `purgeOldSnapshots` Lambdas —
-and the ETL/insights state-machine breakdowns.
+run inside a VPC and authenticate to Postgres via IAM; the **arsha API** (an
+external third-party service) and the Discord webhook are the only external
+dependencies.
 
-**Shared Lambda layer (`bdo-common`)** holds all reusable logic — the arsha.io client + normalizer, psycopg connection helper, Pydantic models, SQL repositories, the pricing models, and the analytics functions — so the individual handlers stay thin.
+**Shared Lambda layer (`bdo-common`)** holds all reusable logic — the arsha API client + normalizer, psycopg connection helper, Pydantic models, SQL repositories, the pricing models, and the analytics functions — so the individual handlers stay thin.
 
-See [`docs/architecture.md`](docs/architecture.md) for the full breakdown and [`docs/adr/`](docs/adr/) for the 16 Architecture Decision Records explaining the *why* behind each major choice.
+See [`docs/architecture.md`](docs/architecture.md) for the full topology — including the `migrator` and `purgeOldSnapshots` Lambdas and the ETL/insights state-machine breakdowns — and [`docs/adr/`](docs/adr/) for the 17 Architecture Decision Records explaining the *why* behind each major choice.
 
 ## Tech stack
 
 - **Language:** Python 3.12, fully type-annotated (`mypy --strict`)
-- **Compute:** AWS Lambda (8 ETL/API handlers + a 4-step insights pipeline + an in-VPC migrator + a docs API — 14 total), Step Functions, EventBridge
+- **Compute:** AWS Lambda · Step Functions · EventBridge
+  - 8 ETL/API handlers, a 4-step insights pipeline, an in-VPC migrator, and a docs API — **14** Lambdas total
 - **Data:** Amazon RDS for PostgreSQL (time series), DynamoDB (item registry), Alembic (schema migrations)
-- **API:** API Gateway (REST) with API-key usage plans; OpenAPI 3.1 spec auto-generated from handlers and served via interactive Swagger UI
+- **API:** API Gateway (REST) with API-key usage plans
+  - OpenAPI 3.1 spec auto-generated from the handlers and served via interactive Swagger UI
 - **IaC:** AWS SAM — one root `template.yaml` with nested stacks (`network`, `data`, `etl`, `api`, `insights`, `observability`, `bastion`)
 - **Libraries:** AWS Lambda Powertools (logging, tracing, metrics, validation), Pydantic v2, psycopg 3, PyYAML (spec parsing)
 - **Observability:** CloudWatch dashboard + SLO alarms, X-Ray tracing, EMF custom metrics (`BdoMarket/*`)
-- **Tooling:** `uv` (deps), `ruff` (lint/format), `pytest` + `moto` (tests), GitHub Actions (CI/CD), OpenAPI spec generation and drift detection
+- **Tooling:** `uv` (deps), `ruff` (lint/format), `pytest` + `moto` (tests)
+  - GitHub Actions CI/CD, plus OpenAPI spec generation and drift detection
 
 ## Engineering highlights
 
-These are the decisions a reviewer might find most relevant:
+Notable design decisions:
 
 - **Passwordless database access.** Every Lambda connects to Postgres using **IAM database authentication** — short-lived tokens, no secrets to rotate or leak. A separate `dba` role (Secrets Manager) exists only for human access. *(ADR-0008)*
 - **No-NAT private networking.** DB-touching Lambdas run in a VPC; a DynamoDB **Gateway Endpoint** gives in-VPC access with zero NAT cost. Human DBA access goes through an **EC2 Instance Connect Endpoint** + a `t4g.nano` bastion with **no public IP**. *(ADR-0006, ADR-0009)*
@@ -106,7 +115,7 @@ These are the decisions a reviewer might find most relevant:
 
 ## API overview
 
-All `/v1/*` endpoints require an API key (usage plan: 10 RPS burst / 5 sustained, 1000 req/day). The API is served from the generated API Gateway URL, with an optional branded custom domain (`api[.<env>].example.com`) via ACM + Route 53 (ADR-0013).
+All `/v1/*` endpoints require an API key. The default usage plan allows 10 RPS burst / 5 sustained, 1000 req/day; a separate **read-only demo key** runs on a tighter plan (see [Try the API](#try-the-api)). The API is served from the generated API Gateway URL, with an optional branded custom domain (`api[.<env>].example.com`) via ACM + Route 53 (ADR-0013).
 
 ### Interactive API Documentation
 
@@ -121,10 +130,11 @@ The specification is rebuilt on each code change, validated in CI, and serves as
 
 The read-only endpoints are open to explore with live data:
 
-- **Run requests** — open the [Postman workspace](https://www.postman.com/ryanyip-2272909/bdo-market-insights), or import [`postman/bdo-market-insights.postman_collection.json`](postman/bdo-market-insights.postman_collection.json) (or `/v1/openapi.json`) into your own Postman and add the demo key.
+- **Run requests (zero setup)** — open the [Postman workspace](https://www.postman.com/ryanyip-2272909/bdo-market-insights); the read-only demo key is already set in its environment, so you can send the `GET` requests immediately.
+- **Use your own Postman** — import [`postman/bdo-market-insights.postman_collection.json`](postman/bdo-market-insights.postman_collection.json) (or `/v1/openapi.json`) and supply an API key of your own.
 - **Browse the contract** — Swagger UI at `/v1/docs`.
 
-The demo key is **read-only** (item writes are blocked) and lightly rate-limited, so explore freely.
+The demo key is **read-only** (item writes return `403`) and lightly rate-limited, so explore freely.
 
 *(Operator setup — enabling the key, fetching its value, regenerating the collection — is in [`docs/runbook.md`](docs/runbook.md).)*
 
@@ -191,16 +201,19 @@ make test        # pytest (unit; integration auto-skips without TEST_DATABASE_UR
 ```
 
 ### Deployment
+
+Deployment is for the project owner (or your own fork + AWS account): the dev deploy is manual, and the prod deploy is tag-gated CI that runs against the AWS account wired up via OIDC + repo secrets — so a clone without those can't deploy here.
+
 ```bash
 make deploy STAGE=dev    # deploy the dev stack (full-state deploy)
-git tag v1.x.x && git push origin v1.x.x   # tag-gated CI deploy to prod
+git tag v3.x.x && git push origin v3.x.x   # tag-gated CI deploy to prod
 ```
 Database schema is managed by Alembic and applied via an in-VPC migrator Lambda. See the [runbook](docs/runbook.md) for the one-time role bootstrap and bastion/tunnel workflow.
 
 ## Documentation
 
 - **[Architecture](docs/architecture.md)** — components, data flow, networking
-- **[ADRs](docs/adr/)** — 16 architecture decision records
+- **[ADRs](docs/adr/)** — 17 architecture decision records
 - **[Runbook](docs/runbook.md)** — operations, DB access, migrations, failure scenarios
 - **[SLOs](docs/slo.md)** — availability and latency targets
 
