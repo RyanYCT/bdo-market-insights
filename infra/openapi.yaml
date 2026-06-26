@@ -134,13 +134,15 @@ paths:
     get:
       operationId: get_insights_v1_insights_get
       parameters:
-      - description: BDO server region.
+      - description: 'BDO server region. Accepted: na, eu, sea, mena, kr, ru, jp,
+          th, tw, sa, console_eu, console_na, console_asia. Default: tw.'
         in: query
         name: region
         required: false
         schema:
           default: tw
-          description: BDO server region.
+          description: 'BDO server region. Accepted: na, eu, sea, mena, kr, ru, jp,
+            th, tw, sa, console_eu, console_na, console_asia. Default: tw.'
           enum:
           - na
           - eu
@@ -157,19 +159,19 @@ paths:
           - console_asia
           title: Region
           type: string
-      - description: 'Summary period: ''daily'' or ''weekly''.'
+      - description: 'Summary cadence. Accepted: daily, weekly. Default: daily.'
         in: query
         name: period
         required: false
         schema:
           default: daily
-          description: 'Summary period: ''daily'' or ''weekly''.'
+          description: 'Summary cadence. Accepted: daily, weekly. Default: daily.'
           enum:
           - daily
           - weekly
           title: Period
           type: string
-      - description: Summary date (YYYY-MM-DD); omit for latest.
+      - description: 'Summary date, ISO-8601 (YYYY-MM-DD). Default: latest available.'
         in: query
         name: date
         required: false
@@ -178,15 +180,15 @@ paths:
           - format: date
             type: string
           - type: 'null'
-          description: Summary date (YYYY-MM-DD); omit for latest.
+          description: 'Summary date, ISO-8601 (YYYY-MM-DD). Default: latest available.'
           title: Date
-      - description: Language code (default 'en').
+      - description: 'Narrative language code. Default: en.'
         in: query
         name: lang
         required: false
         schema:
           default: en
-          description: Language code (default 'en').
+          description: 'Narrative language code. Default: en.'
           title: Lang
           type: string
       responses:
@@ -339,13 +341,15 @@ paths:
         schema:
           title: Item Id
           type: integer
-      - description: BDO server region.
+      - description: 'BDO server region. Accepted: na, eu, sea, mena, kr, ru, jp,
+          th, tw, sa, console_eu, console_na, console_asia. Default: tw.'
         in: query
         name: region
         required: false
         schema:
           default: tw
-          description: BDO server region.
+          description: 'BDO server region. Accepted: na, eu, sea, mena, kr, ru, jp,
+            th, tw, sa, console_eu, console_na, console_asia. Default: tw.'
           enum:
           - na
           - eu
@@ -362,7 +366,7 @@ paths:
           - console_asia
           title: Region
           type: string
-      - description: Enhancement sub-id (default 0, the base item).
+      - description: 'Enhancement sub-id. Default: 0 (the base item).'
         in: query
         name: sid
         required: false
@@ -370,15 +374,17 @@ paths:
           anyOf:
           - type: integer
           - type: 'null'
-          description: Enhancement sub-id (default 0, the base item).
+          description: 'Enhancement sub-id. Default: 0 (the base item).'
           title: Sid
-      - description: Trailing analytics window in days, 1-90 (default 14).
+      - description: 'Trailing analytics window in days. Range: 1-90. Default: 14.
+          Needs at least 7 daily points.'
         in: query
         name: window_days
         required: false
         schema:
           default: 14
-          description: Trailing analytics window in days, 1-90 (default 14).
+          description: 'Trailing analytics window in days. Range: 1-90. Default: 14.
+            Needs at least 7 daily points.'
           maximum: 90.0
           minimum: 1.0
           title: Window Days
@@ -409,13 +415,15 @@ paths:
         schema:
           title: Item Id
           type: integer
-      - description: BDO server region.
+      - description: 'BDO server region. Accepted: na, eu, sea, mena, kr, ru, jp,
+          th, tw, sa, console_eu, console_na, console_asia. Default: tw.'
         in: query
         name: region
         required: false
         schema:
           default: tw
-          description: BDO server region.
+          description: 'BDO server region. Accepted: na, eu, sea, mena, kr, ru, jp,
+            th, tw, sa, console_eu, console_na, console_asia. Default: tw.'
           enum:
           - na
           - eu
@@ -432,7 +440,7 @@ paths:
           - console_asia
           title: Region
           type: string
-      - description: Enhancement sub-id; omit for all sids.
+      - description: 'Enhancement sub-id. Default: all sids.'
         in: query
         name: sid
         required: false
@@ -440,9 +448,10 @@ paths:
           anyOf:
           - type: integer
           - type: 'null'
-          description: Enhancement sub-id; omit for all sids.
+          description: 'Enhancement sub-id. Default: all sids.'
           title: Sid
-      - description: ISO-8601 date lower bound, YYYY-MM-DD (inclusive).
+      - description: 'Lower bound, inclusive, ISO-8601 date (YYYY-MM-DD). Default:
+          unbounded.'
         in: query
         name: from
         required: false
@@ -451,9 +460,11 @@ paths:
           - format: date
             type: string
           - type: 'null'
-          description: ISO-8601 date lower bound, YYYY-MM-DD (inclusive).
+          description: 'Lower bound, inclusive, ISO-8601 date (YYYY-MM-DD). Default:
+            unbounded.'
           title: From
-      - description: ISO-8601 date upper bound, YYYY-MM-DD (inclusive).
+      - description: 'Upper bound, inclusive, ISO-8601 date (YYYY-MM-DD). Default:
+          unbounded.'
         in: query
         name: to
         required: false
@@ -462,7 +473,8 @@ paths:
           - format: date
             type: string
           - type: 'null'
-          description: ISO-8601 date upper bound, YYYY-MM-DD (inclusive).
+          description: 'Upper bound, inclusive, ISO-8601 date (YYYY-MM-DD). Default:
+            unbounded.'
           title: To
       responses:
         '200':
@@ -490,13 +502,15 @@ paths:
         schema:
           title: Item Id
           type: integer
-      - description: BDO server region.
+      - description: 'BDO server region. Accepted: na, eu, sea, mena, kr, ru, jp,
+          th, tw, sa, console_eu, console_na, console_asia. Default: tw.'
         in: query
         name: region
         required: false
         schema:
           default: tw
-          description: BDO server region.
+          description: 'BDO server region. Accepted: na, eu, sea, mena, kr, ru, jp,
+            th, tw, sa, console_eu, console_na, console_asia. Default: tw.'
           enum:
           - na
           - eu
@@ -513,7 +527,7 @@ paths:
           - console_asia
           title: Region
           type: string
-      - description: Enhancement sub-id; omit for all sids.
+      - description: 'Enhancement sub-id. Default: all sids.'
         in: query
         name: sid
         required: false
@@ -521,9 +535,9 @@ paths:
           anyOf:
           - type: integer
           - type: 'null'
-          description: Enhancement sub-id; omit for all sids.
+          description: 'Enhancement sub-id. Default: all sids.'
           title: Sid
-      - description: ISO-8601 datetime lower bound (inclusive).
+      - description: 'Lower bound, inclusive, ISO-8601 datetime. Default: unbounded.'
         in: query
         name: from
         required: false
@@ -532,9 +546,9 @@ paths:
           - format: date-time
             type: string
           - type: 'null'
-          description: ISO-8601 datetime lower bound (inclusive).
+          description: 'Lower bound, inclusive, ISO-8601 datetime. Default: unbounded.'
           title: From
-      - description: ISO-8601 datetime upper bound (inclusive).
+      - description: 'Upper bound, inclusive, ISO-8601 datetime. Default: unbounded.'
         in: query
         name: to
         required: false
@@ -543,15 +557,17 @@ paths:
           - format: date-time
             type: string
           - type: 'null'
-          description: ISO-8601 datetime upper bound (inclusive).
+          description: 'Upper bound, inclusive, ISO-8601 datetime. Default: unbounded.'
           title: To
-      - description: Max rows, 1-1000 (default 1000). Out-of-range values are clamped.
+      - description: 'Max snapshots returned. Range: 1-1000. Default: 1000. Out-of-range
+          is clamped.'
         in: query
         name: limit
         required: false
         schema:
           default: 1000
-          description: Max rows, 1-1000 (default 1000). Out-of-range values are clamped.
+          description: 'Max snapshots returned. Range: 1-1000. Default: 1000. Out-of-range
+            is clamped.'
           title: Limit
           type: integer
       responses:

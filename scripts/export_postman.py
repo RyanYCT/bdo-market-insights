@@ -27,6 +27,40 @@ _SCHEMA = "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 _FOLDERS = {"items": "Items", "market": "Market", "insights": "Insights"}
 _HTTP_METHODS = ("get", "post", "put", "patch", "delete")
 
+# Per-folder overview text (Postman renders a folder's `description`).
+_FOLDER_DESCRIPTIONS = {
+    "Items": (
+        "Item registry (DynamoDB-backed catalog). Reads are open to the demo key; "
+        "writes (`POST`/`PATCH`/`DELETE`) are blocked for it and return `403`."
+    ),
+    "Market": (
+        "Market data (RDS-backed): raw hourly snapshots, daily rollups, and a combined "
+        "analysis (enhancement cost + volatility + liquidity + anomaly flag)."
+    ),
+    "Insights": (
+        "Market-wide daily/weekly insights digests (top movers per category, with a "
+        "narrative summary)."
+    ),
+}
+
+# Collection overview (Postman renders the collection's `info.description`).
+_COLLECTION_OVERVIEW = (
+    "**BDO Market Insights API** — read-only market data for the *Black Desert Online* "
+    "economy: hourly snapshots, daily rollups, enhancement-cost / volatility / liquidity "
+    "analysis, and daily/weekly insights digests.\n\n"
+    "**Setup**\n"
+    "- `baseUrl` — API base, e.g. `https://api.example.com` (no trailing `/v1`).\n"
+    "- `apiKey` — sent as the `x-api-key` header. This workspace's environment has the "
+    "public **read-only demo key** preset; in your own copy, supply your own key.\n\n"
+    "**Auth** — every request inherits the collection's API-key auth (`x-api-key: "
+    "{{apiKey}}`); the per-request *“authorization helper from collection”* note just "
+    "reflects that inheritance, nothing to configure.\n\n"
+    "**Limits** — the demo key is read-only (writes to `/v1/items` return `403`) and "
+    "lightly rate-limited (~2 req/s, 500/day).\n\n"
+    "Generated from the OpenAPI spec (`scripts/export_postman.py`); the contract is also "
+    "served as Swagger UI at `/v1/docs`."
+)
+
 
 def _resolve_ref(ref: str, spec: dict[str, Any]) -> dict[str, Any]:
     """Resolve a local ``#/components/...`` JSON reference to its schema dict."""
@@ -94,15 +128,20 @@ def _to_postman_url(path: str) -> dict[str, Any]:
 
 
 def _query_params(parameters: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Map OpenAPI query parameters to Postman query entries (disabled by default)."""
+    """Map OpenAPI query parameters to Postman query entries (disabled by default).
+
+    Pre-fills the value with the schema default (so the param is self-documenting)
+    and carries the param description through verbatim from the spec.
+    """
     query: list[dict[str, Any]] = []
     for param in parameters:
         if param.get("in") != "query":
             continue
+        default = param.get("schema", {}).get("default")
         query.append(
             {
                 "key": param["name"],
-                "value": "",
+                "value": "" if default is None else str(default),
                 "description": param.get("description", ""),
                 "disabled": True,
             }
@@ -131,7 +170,7 @@ def _build_item(
     query = _query_params(operation.get("parameters", []))
     if query:
         url["query"] = query
-        url["raw"] += "?" + "&".join(f"{q['key']}=" for q in query)
+        url["raw"] += "?" + "&".join(f"{q['key']}={q['value']}" for q in query)
 
     request: dict[str, Any] = {
         "method": method.upper(),
@@ -157,19 +196,21 @@ def build_collection(spec: dict[str, Any]) -> dict[str, Any]:
             if not operation:
                 continue
             folder_name = _folder_key(path)
-            folder = folders.setdefault(folder_name, {"name": folder_name, "item": []})
+            folder = folders.setdefault(
+                folder_name,
+                {
+                    "name": folder_name,
+                    "description": _FOLDER_DESCRIPTIONS.get(folder_name, ""),
+                    "item": [],
+                },
+            )
             folder["item"].append(_build_item(method, path, operation, spec))
 
     info = spec.get("info", {})
     return {
         "info": {
             "name": _NAME,
-            "description": (
-                "Auto-generated from the OpenAPI spec (scripts/export_postman.py). "
-                "Set the `baseUrl` and `apiKey` collection variables (or a Postman "
-                "environment) before sending. The public demo key is read-only: "
-                "write requests to /v1/items return 403."
-            ),
+            "description": _COLLECTION_OVERVIEW,
             "version": info.get("version", "1.0.0"),
             "schema": _SCHEMA,
         },
