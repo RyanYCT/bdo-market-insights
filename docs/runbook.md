@@ -217,12 +217,13 @@ aws iam put-role-policy --role-name bdo-github-deploy \
 gh secret set AWS_DEPLOY_ROLE_ARN \
   --body "arn:aws:iam::${ACCOUNT_ID}:role/bdo-github-deploy"
 
-# 5. Optional: if prod serves a custom domain, set its repository *variables*
-#    (config, not secrets -- kept out of git). The CI deploy passes them so
-#    every tagged release preserves the domain. Skip if not using a domain;
-#    leaving them unset deploys prod with the domain disabled.
-gh variable set PROD_API_DOMAIN_NAME --body "api.example.com"
-gh variable set PROD_HOSTED_ZONE_ID --body "ZXXXXXXXXXXXXX"
+# 5. Optional: if prod serves a custom domain, set its repository *secrets*
+#    (kept out of git, and masked in the public Actions logs the rendered
+#    deploy command would otherwise expose). The CI deploy passes them so every
+#    tagged release preserves the domain. Skip if not using a domain; leaving
+#    them unset deploys prod with the domain disabled.
+gh secret set PROD_API_DOMAIN_NAME --body "api.example.com"
+gh secret set PROD_HOSTED_ZONE_ID --body "ZXXXXXXXXXXXXX"
 ```
 
 > CloudFormation-generated resource roles are prefixed with the stack name
@@ -470,9 +471,10 @@ The API custom domain is opt-in and off by default (ADR-0013). The hostname and
 hosted zone are **not** stored in committed config (account-specific). They are
 supplied two ways:
 
-- **CI (prod):** repository **variables** `PROD_API_DOMAIN_NAME` /
+- **CI (prod):** repository **secrets** `PROD_API_DOMAIN_NAME` /
   `PROD_HOSTED_ZONE_ID` (Settings → Secrets and variables → Actions →
-  Variables). The tag-gated deploy passes them, so every release keeps the
+  Secrets — secrets, not variables, so the values are masked in the public
+  workflow logs). The tag-gated deploy passes them, so every release keeps the
   domain; if unset, CI deploys with the domain disabled.
 - **Manual:** the `make deploy` variables `API_DOMAIN_NAME` / `HOSTED_ZONE_ID`.
 
@@ -495,11 +497,11 @@ Use `{service}.{env}.example.com`: `api.example.com` for prod,
 
 ### Enable (prod example)
 
-Set the CI variables once so every tagged release preserves the domain:
+Set the CI secrets once so every tagged release preserves the domain:
 
 ```sh
-gh variable set PROD_API_DOMAIN_NAME --body "api.example.com"
-gh variable set PROD_HOSTED_ZONE_ID --body "ZXXXXXXXXXXXXX"
+gh secret set PROD_API_DOMAIN_NAME --body "api.example.com"
+gh secret set PROD_HOSTED_ZONE_ID --body "ZXXXXXXXXXXXXX"
 ```
 
 To apply it now without waiting for a tag, run a full-state deploy — include the
@@ -530,13 +532,13 @@ curl -H "x-api-key: <KEY>" https://api.example.com/v1/items
 
 ### Disable
 
-Unset the CI variables (so releases stop re-adding it), then redeploy the full
+Unset the CI secrets (so releases stop re-adding it), then redeploy the full
 state without the domain vars — the domain reverts to empty, removing the cert,
 domain, base-path mapping, and DNS record:
 
 ```sh
-gh variable delete PROD_API_DOMAIN_NAME
-gh variable delete PROD_HOSTED_ZONE_ID
+gh secret delete PROD_API_DOMAIN_NAME
+gh secret delete PROD_HOSTED_ZONE_ID
 make deploy STAGE=prod ENABLE_DEMO_KEY=true   # no domain vars -> domain removed
 ```
 
@@ -695,7 +697,7 @@ uv run python scripts/seed_market_dev.py --clean
 
 make db-tunnel-down              # close the EICE tunnel
 make deploy STAGE=dev ENABLE_BASTION=false   # remove the bastion + EICE (saves cost)
-# Custom domain: see "Custom API domain → Disable" (unset the CI variables, then
+# Custom domain: see "Custom API domain → Disable" (unset the CI secrets, then
 # redeploy the full state without the domain vars). Only if one was enabled.
 make clean                       # local build artifacts (.aws-sam/, etc.)
 ```
