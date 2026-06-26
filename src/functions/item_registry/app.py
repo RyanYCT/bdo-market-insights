@@ -9,6 +9,7 @@ arsha.io).
 
 from __future__ import annotations
 
+import os
 from typing import Any, Literal
 
 from aws_lambda_powertools import Logger, Metrics, Tracer
@@ -17,7 +18,11 @@ from aws_lambda_powertools.event_handler import (
     Response,
     content_types,
 )
-from aws_lambda_powertools.event_handler.exceptions import BadRequestError, NotFoundError
+from aws_lambda_powertools.event_handler.exceptions import (
+    BadRequestError,
+    ForbiddenError,
+    NotFoundError,
+)
 from aws_lambda_powertools.metrics import MetricUnit
 from aws_lambda_powertools.utilities.typing import LambdaContext
 from pydantic import BaseModel
@@ -72,6 +77,22 @@ def _dynamo_updates(body: ItemUpdate) -> dict[str, Any]:
     return updates
 
 
+def _reject_demo_writes() -> None:
+    """Block writes from the public read-only demo key.
+
+    API Gateway keys can't be scoped to specific methods, so read-only access is
+    enforced here: if ``DEMO_API_KEY_ID`` is set (the demo key is published) and
+    the caller authenticated with it, mutating routes return 403. A no-op when
+    the env var is empty (demo key disabled) or any other key is used.
+    """
+    demo_key_id = os.environ.get("DEMO_API_KEY_ID", "").strip()
+    if not demo_key_id:
+        return
+    caller_key_id = app.current_event.request_context.identity.api_key_id
+    if caller_key_id == demo_key_id:
+        raise ForbiddenError("the public demo key is read-only; writes require a private API key")
+
+
 @app.get("/v1/items")
 def list_items() -> dict[str, Any]:
     """FR-8: list items, optionally filtered by ``category`` and ``tracked``."""
@@ -95,6 +116,7 @@ def get_item(item_id: int) -> dict[str, Any]:
 @app.post("/v1/items")
 def create_item(body: ItemCreate) -> Response[dict[str, Any]]:
     """FR-10: validate the id against arsha.io, then register in DynamoDB."""
+    _reject_demo_writes()
     settings = get_settings()
     records = ArshaClient(region=settings.region).fetch_sub_list([body.id])
     if not records:
@@ -121,6 +143,7 @@ def create_item(body: ItemCreate) -> Response[dict[str, Any]]:
 @app.patch("/v1/items/<item_id>")
 def update_item(item_id: int, body: ItemUpdate) -> dict[str, Any]:
     """FR-11: update metadata (incl. ``tracked``) in DynamoDB."""
+    _reject_demo_writes()
     if dynamo.get_item(item_id) is None:
         raise NotFoundError(f"item {item_id} not found")
     updates = _dynamo_updates(body)
@@ -135,6 +158,7 @@ def update_item(item_id: int, body: ItemUpdate) -> dict[str, Any]:
 @app.delete("/v1/items/<item_id>")
 def delete_item(item_id: int) -> dict[str, Any]:
     """FR-12: soft delete -> ``tracked = false`` in DynamoDB."""
+    _reject_demo_writes()
     if dynamo.get_item(item_id) is None:
         raise NotFoundError(f"item {item_id} not found")
     dynamo.update_item(item_id, {"tracked": "false"})

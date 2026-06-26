@@ -43,6 +43,15 @@ Parameters:
       - 'true'
       - 'false'
     Description: Deploy t4g.nano bastion for DBA access via EICE SSH tunnel
+  EnableDemoKey:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: >
+      Publish a public read-only demo API key (tight usage plan; writes
+      rejected by itemRegistry) for "try the API" links. Off by default.
   ApiDomainName:
     Type: String
     Default: ''
@@ -164,6 +173,7 @@ Resources:
         LambdaRdsAuthRoleArn: !GetAtt DataStack.Outputs.LambdaRdsAuthRoleArn
         ApiDomainName: !Ref ApiDomainName
         HostedZoneId: !Ref HostedZoneId
+        EnableDemoKey: !Ref EnableDemoKey
     # Ordering after Network/Data/Etl is enforced by the !GetAtt *.Outputs
     # references above (incl. the shared CommonLayerArn); an explicit
     # DependsOn would be redundant (cfn-lint W3005).

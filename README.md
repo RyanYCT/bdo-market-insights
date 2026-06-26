@@ -117,6 +117,28 @@ The API publishes auto-generated, interactive documentation via two key-less rou
 
 The specification is rebuilt on each code change, validated in CI, and serves as the single source of truth for the API contract. Swagger UI automatically repoints to the correct base URL when accessed through different stages or custom domains.
 
+### Try the API
+
+The `/v1/docs` and `/v1/openapi.json` routes are key-less for browsing, but
+executing a `/v1/*` request needs an API key. To make the API runnable without
+exposing a privileged key, there's an **opt-in public demo key** on a tight
+usage plan (2 req/s sustained, 5 burst, 500/day). It is **read-only**: write
+requests to `/v1/items` (`POST`/`PATCH`/`DELETE`) return `403` — the
+`itemRegistry` handler rejects writes made with the demo key id.
+
+A Postman collection is generated from the OpenAPI spec at
+`postman/bdo-market-insights.postman_collection.json` (regenerate with
+`make postman`). To try it:
+
+1. Import the collection into Postman (or import `/v1/openapi.json` directly).
+2. Set the `baseUrl` and `apiKey` collection variables (or a Postman
+   environment) — the demo key value is supplied out-of-band, never committed
+   to the repo.
+3. Send the read-only `GET` requests under **Market** and **Items**.
+
+The demo key is enabled per stage at deploy time (`EnableDemoKey=true`); see
+[`docs/runbook.md`](docs/runbook.md) for enabling it and retrieving the value.
+
 ### Endpoints
 
 ```
