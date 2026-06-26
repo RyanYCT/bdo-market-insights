@@ -203,7 +203,7 @@ make test        # pytest (unit; integration auto-skips without TEST_DATABASE_UR
 
 ### Deployment
 ```bash
-make deploy-dev          # deploy the dev stack
+make deploy STAGE=dev    # deploy the dev stack (full-state deploy)
 git tag v1.x.x && git push origin v1.x.x   # tag-gated CI deploy to prod
 ```
 Database schema is managed by Alembic and applied via an in-VPC migrator Lambda. See the [runbook](docs/runbook.md) for the one-time role bootstrap and bastion/tunnel workflow.
