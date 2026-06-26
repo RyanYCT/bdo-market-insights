@@ -143,7 +143,19 @@ jobs:
           aws-region: us-east-1
       - run: uv sync
       - run: sam build
-      - run: sam deploy --config-env prod --no-confirm-changeset
+      # Deploy the COMPLETE prod state. `sam deploy --parameter-overrides`
+      # replaces the whole parameter set and unspecified params revert to their
+      # template defaults, so list every one here. The custom domain is
+      # account-specific and kept out of git -- it comes from repository
+      # SECRETS PROD_API_DOMAIN_NAME / PROD_HOSTED_ZONE_ID (Settings > Secrets
+      # and variables > Actions > Secrets). Secrets, not variables, so the
+      # values are masked in the public Actions logs the rendered command would
+      # otherwise expose. If unset, the domain stays disabled. EnableDemoKey=true
+      # keeps the public read-only demo key live; the bastion is never kept up by CI.
+      - name: Deploy (full prod state)
+        run: |
+          sam deploy --config-env prod --no-confirm-changeset \
+            --parameter-overrides "Stage=prod BdoRegion=tw UseRdsProxy=false EnableBastion=false EnableDemoKey=true ApiDomainName=${{ secrets.PROD_API_DOMAIN_NAME }} HostedZoneId=${{ secrets.PROD_HOSTED_ZONE_ID }}"
       # Run schema migrations from inside the VPC. CI cannot reach the private
       # RDS directly, so it invokes the migrator Lambda (control plane); the
       # function connects to RDS as `lambda_migrator` via IAM auth and runs
