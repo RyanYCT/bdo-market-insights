@@ -119,25 +119,14 @@ The specification is rebuilt on each code change, validated in CI, and serves as
 
 ### Try the API
 
-The `/v1/docs` and `/v1/openapi.json` routes are key-less for browsing, but
-executing a `/v1/*` request needs an API key. To make the API runnable without
-exposing a privileged key, there's an **opt-in public demo key** on a tight
-usage plan (2 req/s sustained, 5 burst, 500/day). It is **read-only**: write
-requests to `/v1/items` (`POST`/`PATCH`/`DELETE`) return `403` — the
-`itemRegistry` handler rejects writes made with the demo key id.
+The read-only endpoints are open to explore with live data:
 
-A Postman collection is generated from the OpenAPI spec at
-`postman/bdo-market-insights.postman_collection.json` (regenerate with
-`make postman`). To try it:
+- **Run requests** — open the [Postman workspace](https://www.postman.com/ryanyip-2272909/bdo-market-insights), or import [`postman/bdo-market-insights.postman_collection.json`](postman/bdo-market-insights.postman_collection.json) (or `/v1/openapi.json`) into your own Postman and add the demo key.
+- **Browse the contract** — Swagger UI at `/v1/docs`.
 
-1. Import the collection into Postman (or import `/v1/openapi.json` directly).
-2. Set the `baseUrl` and `apiKey` collection variables (or a Postman
-   environment) — the demo key value is supplied out-of-band, never committed
-   to the repo.
-3. Send the read-only `GET` requests under **Market** and **Items**.
+The demo key is **read-only** (item writes are blocked) and lightly rate-limited, so explore freely.
 
-The demo key is enabled per stage at deploy time (`EnableDemoKey=true`); see
-[`docs/runbook.md`](docs/runbook.md) for enabling it and retrieving the value.
+*(Operator setup — enabling the key, fetching its value, regenerating the collection — is in [`docs/runbook.md`](docs/runbook.md).)*
 
 ### Endpoints
 
