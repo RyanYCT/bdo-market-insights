@@ -40,7 +40,7 @@ input/output, and retry behaviour.
 
 | Environment | Method |
 |-------------|--------|
-| Dev | `make deploy-dev` (manual; CI deploy is tag-only) |
+| Dev | `make deploy STAGE=dev` (manual; CI deploy is tag-only) |
 | Prod | Push a `v*` tag to trigger CI deploy |
 | Rollback | Deploy the previous tag |
 
@@ -58,11 +58,9 @@ input/output, and retry behaviour.
 #### Deploy dev
 
 ```bash
-# Build and validate the SAM template
-make build
-
-# Deploy to dev stack (prompts for changeset confirmation)
-make deploy-dev
+# Build, verify the layer, and deploy the dev stack (prompts for changeset
+# confirmation). `make deploy` runs `make build` (incl. verify-layer) first.
+make deploy STAGE=dev
 
 # Watch the deploy progress (optional)
 aws cloudformation describe-stacks --stack-name bdo-market-dev \
@@ -76,10 +74,10 @@ aws cloudformation describe-stacks --stack-name bdo-market-dev \
 If your changes include schema migrations (`migrations/versions/*`):
 
 ```bash
-# One-time only: enable bastion for dev (if not already deployed).
-# `make bastion-up` runs verify-layer first so it can't republish a broken
+# One-time only: enable the bastion for dev (if not already deployed).
+# `make deploy` runs verify-layer first so it can't republish a broken
 # (source-only) CommonLayer. Build on a native Linux FS, not /mnt/*.
-make bastion-up STAGE=dev
+make deploy STAGE=dev ENABLE_BASTION=true
 
 # Open tunnel in one terminal
 make db-tunnel-up STAGE=dev
@@ -93,8 +91,8 @@ uv run alembic -c migrations/alembic.ini current
 # Close tunnel
 make db-tunnel-down
 
-# Optional: disable bastion to save costs
-make bastion-down STAGE=dev
+# Optional: disable the bastion to save costs
+make deploy STAGE=dev ENABLE_BASTION=false
 ```
 
 #### Post-deploy verification (dev)
@@ -218,6 +216,14 @@ aws iam put-role-policy --role-name bdo-github-deploy \
 #    -> Actions -> New repository secret).
 gh secret set AWS_DEPLOY_ROLE_ARN \
   --body "arn:aws:iam::${ACCOUNT_ID}:role/bdo-github-deploy"
+
+# 5. Optional: if prod serves a custom domain, set its repository *secrets*
+#    (kept out of git, and masked in the public Actions logs the rendered
+#    deploy command would otherwise expose). The CI deploy passes them so every
+#    tagged release preserves the domain. Skip if not using a domain; leaving
+#    them unset deploys prod with the domain disabled.
+gh secret set PROD_API_DOMAIN_NAME --body "api.example.com"
+gh secret set PROD_HOSTED_ZONE_ID --body "ZXXXXXXXXXXXXX"
 ```
 
 > CloudFormation-generated resource roles are prefixed with the stack name
@@ -370,16 +376,17 @@ Instance Connect Endpoint (EICE), so you never SSH to it directly — the
 `db-tunnel-up` target tunnels through the EICE with `--connection-type eice`.
 
 1. Ensure the bastion is deployed. If your stack was deployed with
-   `EnableBastion=false` (the samconfig default), redeploy with it on — this
-   is purely additive (adds the bastion + EICE, touches nothing else):
+   `EnableBastion=false` (the default), redeploy with it on. The bastion is a
+   transient toggle — `make deploy` re-declares the full stack state, so include
+   the stage's persistent flags (demo key, domain) too if it has them:
 
    ```sh
-   # `make bastion-up` builds + verify-layer FIRST, then deploys, so this
-   # additive toggle can never republish a source-only CommonLayer (which
-   # would break every function at init with "No module named
-   # 'aws_lambda_powertools'"). Build on a native Linux filesystem, NOT a
-   # Windows-mounted /mnt/* path (pip --target can silently vendor nothing).
-   make bastion-up STAGE=dev
+   # `make deploy` builds + verify-layer FIRST, then deploys, so this toggle
+   # can never republish a source-only CommonLayer (which would break every
+   # function at init with "No module named 'aws_lambda_powertools'"). Build on
+   # a native Linux filesystem, NOT a Windows-mounted /mnt/* path (pip --target
+   # can silently vendor nothing).
+   make deploy STAGE=dev ENABLE_BASTION=true
    ```
 
 2. `make db-tunnel-up STAGE=<dev|prod>` — opens the EICE tunnel to RDS on
@@ -444,7 +451,7 @@ make db-tunnel-down
 
 After this one-time bootstrap, all later schema changes go through
 `make migrate-lambda` (or the CI deploy step) — no tunnel required. Drop the
-bastion again once you're done (`make bastion-down STAGE=dev`).
+bastion again once you're done (`make deploy STAGE=dev ENABLE_BASTION=false`).
 
 > **Why the bootstrap revokes the master's role membership.** On RDS the
 > master is not a superuser, and PostgreSQL 16 auto-grants the creating role
@@ -461,10 +468,18 @@ bastion again once you're done (`make bastion-down STAGE=dev`).
 ## Custom API domain
 
 The API custom domain is opt-in and off by default (ADR-0013). The hostname and
-hosted zone are **not** stored in committed config — they are passed at deploy
-time via the `make domain-up` variables `API_DOMAIN_NAME` / `HOSTED_ZONE_ID`
-(zone ID is account-specific). Use `{service}.{env}.example.com`:
-`api.example.com` for prod, `api.dev.example.com` for dev.
+hosted zone are **not** stored in committed config (account-specific). They are
+supplied two ways:
+
+- **CI (prod):** repository **secrets** `PROD_API_DOMAIN_NAME` /
+  `PROD_HOSTED_ZONE_ID` (Settings → Secrets and variables → Actions →
+  Secrets — secrets, not variables, so the values are masked in the public
+  workflow logs). The tag-gated deploy passes them, so every release keeps the
+  domain; if unset, CI deploys with the domain disabled.
+- **Manual:** the `make deploy` variables `API_DOMAIN_NAME` / `HOSTED_ZONE_ID`.
+
+Use `{service}.{env}.example.com`: `api.example.com` for prod,
+`api.dev.example.com` for dev.
 
 ### Prerequisites
 
@@ -482,15 +497,24 @@ time via the `make domain-up` variables `API_DOMAIN_NAME` / `HOSTED_ZONE_ID`
 
 ### Enable (prod example)
 
-Pass both params; this is additive to the existing stack:
+Set the CI secrets once so every tagged release preserves the domain:
 
 ```sh
-make domain-up STAGE=prod API_DOMAIN_NAME=api.example.com HOSTED_ZONE_ID=ZXXXXXXXXXXXXX
+gh secret set PROD_API_DOMAIN_NAME --body "api.example.com"
+gh secret set PROD_HOSTED_ZONE_ID --body "ZXXXXXXXXXXXXX"
 ```
 
-> `make domain-up` runs the verify-layer guard before this additive deploy, so
-> it can never republish a source-only `CommonLayer`. Build on a native Linux
-> filesystem, not a Windows-mounted `/mnt/*` path.
+To apply it now without waiting for a tag, run a full-state deploy — include the
+stage's other persistent flags (e.g. the demo key) so they are not dropped:
+
+```sh
+make deploy STAGE=prod ENABLE_DEMO_KEY=true \
+  API_DOMAIN_NAME=api.example.com HOSTED_ZONE_ID=ZXXXXXXXXXXXXX
+```
+
+> `make deploy` runs the verify-layer guard before deploying, so it can never
+> republish a source-only `CommonLayer`. Build on a native Linux filesystem,
+> not a Windows-mounted `/mnt/*` path.
 
 > The first deploy that sets a domain blocks for a few minutes while ACM
 > validates the certificate via the DNS record CloudFormation writes into the
@@ -508,11 +532,14 @@ curl -H "x-api-key: <KEY>" https://api.example.com/v1/items
 
 ### Disable
 
-Redeploy without the domain params (they revert to empty), which removes the
-cert, domain, base-path mapping, and DNS record:
+Unset the CI secrets (so releases stop re-adding it), then redeploy the full
+state without the domain vars — the domain reverts to empty, removing the cert,
+domain, base-path mapping, and DNS record:
 
 ```sh
-make domain-down STAGE=prod
+gh secret delete PROD_API_DOMAIN_NAME
+gh secret delete PROD_HOSTED_ZONE_ID
+make deploy STAGE=prod ENABLE_DEMO_KEY=true   # no domain vars -> domain removed
 ```
 
 ## Public demo API key
@@ -526,34 +553,29 @@ Never publish the privileged stage key — only this demo key.
 
 ### Enable
 
-`--parameter-overrides` **replaces** the samconfig set (it does not merge per
-key), so pass the stage's full parameter set with `EnableDemoKey=true` added —
-otherwise other toggles (e.g. the custom domain) silently revert to template
-defaults. Build first so the verify-layer gate runs.
+`make deploy` declares the full stack state, so just add `ENABLE_DEMO_KEY=true`
+(the [Deployment](#deployment) section covers why the whole state is passed each
+time). For **prod** the demo key should persist across releases — the tag-gated
+CI deploy sets `EnableDemoKey=true`, so once this is on `main` every release
+keeps it live.
 
-Dev (no custom domain):
-
-```sh
-make build
-sam deploy --config-env dev \
-  --parameter-overrides "Stage=dev BdoRegion=tw UseRdsProxy=false EnableBastion=false EnableDemoKey=true"
-```
-
-Prod (include the domain params if the stage uses a custom domain, so they are
-not torn down):
+Apply it immediately with a full-state deploy. Prod (include the domain so it is
+not dropped):
 
 ```sh
-make build
-sam deploy --config-env prod \
-  --parameter-overrides "Stage=prod BdoRegion=tw UseRdsProxy=false EnableBastion=false \
-    EnableDemoKey=true ApiDomainName=api.example.com HostedZoneId=ZXXXXXXXXXXXXX"
+make deploy STAGE=prod ENABLE_DEMO_KEY=true \
+  API_DOMAIN_NAME=api.example.com HOSTED_ZONE_ID=ZXXXXXXXXXXXXX
 ```
 
-> Test on **dev first.** The explicit demo usage-plan→stage association can hit
-> a SAM ordering quirk on the very first create. If the deploy fails with an
-> "Invalid stage identifier" / usage-plan stage error, simply re-run the deploy
-> (the stage now exists); if it recurs, add a `DependsOn` on the API stage
-> resource (its logical id is visible in `.aws-sam/build/template.yaml`).
+Dev (no custom domain), for testing:
+
+```sh
+make deploy STAGE=dev ENABLE_DEMO_KEY=true
+```
+
+> The demo usage plan is ordered after the API stage (`DependsOn: BdoApiStage`),
+> so the "API Stage not found" race on a fresh-create deploy is handled.
+> Enabling it on an existing stack (the usual prod case) is a plain update.
 
 ### Retrieve the key value
 
@@ -593,14 +615,18 @@ read, which is fine — only the status codes matter here.)
 
 ### Disable
 
-Redeploy with `EnableDemoKey=false` (again passing the stage's full parameter
-set), which removes the demo key, its usage plan, and the association:
+Run a full-state deploy with the demo key off (omit `ENABLE_DEMO_KEY`, which
+defaults to false) — this removes the demo key, its usage plan, and the
+association. Include the domain so it is not dropped:
 
 ```sh
-sam deploy --config-env prod \
-  --parameter-overrides "Stage=prod BdoRegion=tw UseRdsProxy=false EnableBastion=false \
-    ApiDomainName=api.example.com HostedZoneId=ZXXXXXXXXXXXXX"
+make deploy STAGE=prod \
+  API_DOMAIN_NAME=api.example.com HOSTED_ZONE_ID=ZXXXXXXXXXXXXX
 ```
+
+> For prod, the CI deploy sets `EnableDemoKey=true`, so a manual disable is
+> reverted by the next tagged release. To disable it permanently, flip
+> `EnableDemoKey=true` to `false` in the deploy step of `.github/workflows/ci.yml`.
 
 ## Market Insights: dev evaluation
 
@@ -618,7 +644,7 @@ backfill a small synthetic dataset and trigger the state machine by hand.
 
 ```sh
 # 1. Backfill synthetic market data into dev RDS (over the bastion tunnel).
-make bastion-up STAGE=dev          # if the bastion isn't already deployed
+make deploy STAGE=dev ENABLE_BASTION=true   # if the bastion isn't already deployed
 make db-tunnel-up STAGE=dev        # leave running; use a second terminal below
 
 # In the second terminal: a DB URL with write access over the tunnel. The RDS
@@ -645,7 +671,7 @@ curl -s -H "x-api-key: ${API_KEY}" "${API_URL}/v1/insights?region=tw&period=week
 # 4. Clean up the synthetic rows when finished.
 uv run python scripts/seed_market_dev.py --clean
 make db-tunnel-down
-make bastion-down STAGE=dev         # optional, saves the bastion cost
+make deploy STAGE=dev ENABLE_BASTION=false   # optional, saves the bastion cost
 ```
 
 > The `Summarize` step calls Bedrock. If the dev account/region has **no
@@ -670,8 +696,9 @@ After a dev evaluation, undo the opt-in pieces without touching the stack:
 uv run python scripts/seed_market_dev.py --clean
 
 make db-tunnel-down              # close the EICE tunnel
-make bastion-down STAGE=dev      # remove the bastion + EICE (saves cost)
-make domain-down STAGE=prod      # only if a custom domain was enabled
+make deploy STAGE=dev ENABLE_BASTION=false   # remove the bastion + EICE (saves cost)
+# Custom domain: see "Custom API domain → Disable" (unset the CI secrets, then
+# redeploy the full state without the domain vars). Only if one was enabled.
 make clean                       # local build artifacts (.aws-sam/, etc.)
 ```
 
