@@ -90,7 +90,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the full topology — inc
 ## Tech stack
 
 - **Language:** Python 3.12, fully type-annotated (`mypy --strict`)
-- **Compute:** AWS Lambda · Step Functions · EventBridge
+- **Compute:** AWS Lambda, Step Functions, EventBridge
   - 8 ETL/API handlers, a 4-step insights pipeline, an in-VPC migrator, and a docs API — **14** Lambdas total
 - **Data:** Amazon RDS for PostgreSQL (time series), DynamoDB (item registry), Alembic (schema migrations)
 - **API:** API Gateway (REST) with API-key usage plans
@@ -202,7 +202,7 @@ make test        # pytest (unit; integration auto-skips without TEST_DATABASE_UR
 
 ### Deployment
 
-Deployment is for the project owner (or your own fork + AWS account): the dev deploy is manual, and the prod deploy is tag-gated CI that runs against the AWS account wired up via OIDC + repo secrets — so a clone without those can't deploy here.
+Dev deploys are manual; prod is a tag-gated CI deploy. Both target the maintainer's AWS account, so deploying your own copy means forking and configuring your own AWS credentials (see the [runbook](docs/runbook.md)).
 
 ```bash
 make deploy STAGE=dev    # deploy the dev stack (full-state deploy)
