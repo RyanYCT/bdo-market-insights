@@ -113,8 +113,9 @@ API_URL=$(aws cloudformation describe-stacks \
 API_ID=$(aws cloudformation describe-stacks \
   --query "Stacks[?starts_with(StackName,'bdo-market-dev')].Outputs[] | [?OutputKey=='ApiId'].OutputValue | [0]" \
   --output text)
+# Exclude the read-only demo plan (if enabled) so this resolves the PRIVATE key.
 USAGE_PLAN_ID=$(aws apigateway get-usage-plans \
-  --query "items[?apiStages[?apiId=='${API_ID}']].id | [0]" --output text)
+  --query "items[?apiStages[?apiId=='${API_ID}'] && name!='bdo-dev-demo-plan'].id | [0]" --output text)
 API_KEY_ID=$(aws apigateway get-usage-plan-keys --usage-plan-id "${USAGE_PLAN_ID}" \
   --query 'items[0].id' --output text)
 API_KEY=$(aws apigateway get-api-key --api-key "${API_KEY_ID}" --include-value \
@@ -282,8 +283,9 @@ CUSTOM_URL=$(aws cloudformation describe-stacks \
 API_ID=$(aws cloudformation describe-stacks \
   --query "Stacks[?starts_with(StackName,'bdo-market-prod')].Outputs[] | [?OutputKey=='ApiId'].OutputValue | [0]" \
   --output text)
+# Exclude the read-only demo plan (if enabled) so this resolves the PRIVATE key.
 USAGE_PLAN_ID=$(aws apigateway get-usage-plans \
-  --query "items[?apiStages[?apiId=='${API_ID}']].id | [0]" --output text)
+  --query "items[?apiStages[?apiId=='${API_ID}'] && name!='bdo-prod-demo-plan'].id | [0]" --output text)
 API_KEY_ID=$(aws apigateway get-usage-plan-keys --usage-plan-id "${USAGE_PLAN_ID}" \
   --query 'items[0].id' --output text)
 API_KEY=$(aws apigateway get-api-key --api-key "${API_KEY_ID}" --include-value \
@@ -566,6 +568,28 @@ aws apigateway get-api-keys --name-query "bdo-prod-demo" --include-values \
 Put the value into the published Postman environment's `apiKey` variable (and
 set `baseUrl` to the stage's base URL). To rotate, disable then re-enable (a
 new key is created); the usage-plan caps limit abuse in the meantime.
+
+### Verify (read-only)
+
+Confirm the demo key can read but not write. Resolve the base URL and the demo
+key, then check a read (`200`) and a write (`403`):
+
+```sh
+API_ID=$(aws apigateway get-rest-apis --query "items[?name=='bdo-dev-api'].id | [0]" --output text)
+BASE="https://${API_ID}.execute-api.us-east-1.amazonaws.com/dev"
+KEY=$(aws apigateway get-api-keys --name-query "bdo-dev-demo" --include-values \
+  --query 'items[0].value' --output text)
+
+# read -> 200
+curl -s -o /dev/null -w "GET  items -> %{http_code}\n" -H "x-api-key: ${KEY}" "${BASE}/v1/items"
+# write -> 403 (rejected by itemRegistry before any arsha.io call)
+curl -s -o /dev/null -w "POST items -> %{http_code}\n" -X POST -H "x-api-key: ${KEY}" \
+  -H 'content-type: application/json' -d '{"id":12094}' "${BASE}/v1/items"
+```
+
+Expected: `GET items -> 200` and `POST items -> 403`. Swap `dev` for `prod` in
+the names/stage to verify prod. (A fresh stack returns an empty item list on the
+read, which is fine — only the status codes matter here.)
 
 ### Disable
 
