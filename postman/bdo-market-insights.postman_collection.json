@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "BDO Market Insights API",
-    "description": "Auto-generated from the OpenAPI spec (scripts/export_postman.py). Set the `baseUrl` and `apiKey` collection variables (or a Postman environment) before sending. The public demo key is read-only: write requests to /v1/items return 403.",
+    "description": "**BDO Market Insights API** \u2014 read-only market data for the *Black Desert Online* economy: hourly snapshots, daily rollups, enhancement-cost / volatility / liquidity analysis, and daily/weekly insights digests.\n\n**Setup**\n- `baseUrl` \u2014 API base, e.g. `https://api.example.com` (no trailing `/v1`).\n- `apiKey` \u2014 sent as the `x-api-key` header. This workspace's environment has the public **read-only demo key** preset; in your own copy, supply your own key.\n\n**Auth** \u2014 every request inherits the collection's API-key auth (`x-api-key: {{apiKey}}`); the per-request *\u201cauthorization helper from collection\u201d* note just reflects that inheritance, nothing to configure.\n\n**Limits** \u2014 the demo key is read-only (writes to `/v1/items` return `403`) and lightly rate-limited (~2 req/s, 500/day).\n\nGenerated from the OpenAPI spec (`scripts/export_postman.py`); the contract is also served as Swagger UI at `/v1/docs`.",
     "version": "1.0.0",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
@@ -40,6 +40,7 @@
   "item": [
     {
       "name": "Insights",
+      "description": "Market-wide daily/weekly insights digests (top movers per category, with a narrative summary).",
       "item": [
         {
           "name": "GET /v1/insights",
@@ -52,7 +53,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/v1/insights?region=&period=&date=&lang=",
+              "raw": "{{baseUrl}}/v1/insights?region=tw&period=daily&date=&lang=en",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -63,26 +64,26 @@
               "query": [
                 {
                   "key": "region",
-                  "value": "",
-                  "description": "BDO server region.",
+                  "value": "tw",
+                  "description": "BDO server region. Accepted: na, eu, sea, mena, kr, ru, jp, th, tw, sa, console_eu, console_na, console_asia. Default: tw.",
                   "disabled": true
                 },
                 {
                   "key": "period",
-                  "value": "",
-                  "description": "Summary period: 'daily' or 'weekly'.",
+                  "value": "daily",
+                  "description": "Summary cadence. Accepted: daily, weekly. Default: daily.",
                   "disabled": true
                 },
                 {
                   "key": "date",
                   "value": "",
-                  "description": "Summary date (YYYY-MM-DD); omit for latest.",
+                  "description": "Summary date, ISO-8601 (YYYY-MM-DD). Default: latest available.",
                   "disabled": true
                 },
                 {
                   "key": "lang",
-                  "value": "",
-                  "description": "Language code (default 'en').",
+                  "value": "en",
+                  "description": "Narrative language code. Default: en.",
                   "disabled": true
                 }
               ]
@@ -94,6 +95,7 @@
     },
     {
       "name": "Items",
+      "description": "Item registry (DynamoDB-backed catalog). Reads are open to the demo key; writes (`POST`/`PATCH`/`DELETE`) are blocked for it and return `403`.",
       "item": [
         {
           "name": "GET /v1/items",
@@ -264,6 +266,7 @@
     },
     {
       "name": "Market",
+      "description": "Market data (RDS-backed): raw hourly snapshots, daily rollups, and a combined analysis (enhancement cost + volatility + liquidity + anomaly flag).",
       "item": [
         {
           "name": "GET /v1/market/items/{item_id}/analysis",
@@ -276,7 +279,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/v1/market/items/:item_id/analysis?region=&sid=&window_days=",
+              "raw": "{{baseUrl}}/v1/market/items/:item_id/analysis?region=tw&sid=&window_days=14",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -297,20 +300,20 @@
               "query": [
                 {
                   "key": "region",
-                  "value": "",
-                  "description": "BDO server region.",
+                  "value": "tw",
+                  "description": "BDO server region. Accepted: na, eu, sea, mena, kr, ru, jp, th, tw, sa, console_eu, console_na, console_asia. Default: tw.",
                   "disabled": true
                 },
                 {
                   "key": "sid",
                   "value": "",
-                  "description": "Enhancement sub-id (default 0, the base item).",
+                  "description": "Enhancement sub-id. Default: 0 (the base item).",
                   "disabled": true
                 },
                 {
                   "key": "window_days",
-                  "value": "",
-                  "description": "Trailing analytics window in days, 1-90 (default 14).",
+                  "value": "14",
+                  "description": "Trailing analytics window in days. Range: 1-90. Default: 14. Needs at least 7 daily points.",
                   "disabled": true
                 }
               ]
@@ -329,7 +332,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/v1/market/items/:item_id/daily?region=&sid=&from=&to=",
+              "raw": "{{baseUrl}}/v1/market/items/:item_id/daily?region=tw&sid=&from=&to=",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -350,26 +353,26 @@
               "query": [
                 {
                   "key": "region",
-                  "value": "",
-                  "description": "BDO server region.",
+                  "value": "tw",
+                  "description": "BDO server region. Accepted: na, eu, sea, mena, kr, ru, jp, th, tw, sa, console_eu, console_na, console_asia. Default: tw.",
                   "disabled": true
                 },
                 {
                   "key": "sid",
                   "value": "",
-                  "description": "Enhancement sub-id; omit for all sids.",
+                  "description": "Enhancement sub-id. Default: all sids.",
                   "disabled": true
                 },
                 {
                   "key": "from",
                   "value": "",
-                  "description": "ISO-8601 date lower bound, YYYY-MM-DD (inclusive).",
+                  "description": "Lower bound, inclusive, ISO-8601 date (YYYY-MM-DD). Default: unbounded.",
                   "disabled": true
                 },
                 {
                   "key": "to",
                   "value": "",
-                  "description": "ISO-8601 date upper bound, YYYY-MM-DD (inclusive).",
+                  "description": "Upper bound, inclusive, ISO-8601 date (YYYY-MM-DD). Default: unbounded.",
                   "disabled": true
                 }
               ]
@@ -388,7 +391,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/v1/market/items/:item_id/snapshots?region=&sid=&from=&to=&limit=",
+              "raw": "{{baseUrl}}/v1/market/items/:item_id/snapshots?region=tw&sid=&from=&to=&limit=1000",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -409,32 +412,32 @@
               "query": [
                 {
                   "key": "region",
-                  "value": "",
-                  "description": "BDO server region.",
+                  "value": "tw",
+                  "description": "BDO server region. Accepted: na, eu, sea, mena, kr, ru, jp, th, tw, sa, console_eu, console_na, console_asia. Default: tw.",
                   "disabled": true
                 },
                 {
                   "key": "sid",
                   "value": "",
-                  "description": "Enhancement sub-id; omit for all sids.",
+                  "description": "Enhancement sub-id. Default: all sids.",
                   "disabled": true
                 },
                 {
                   "key": "from",
                   "value": "",
-                  "description": "ISO-8601 datetime lower bound (inclusive).",
+                  "description": "Lower bound, inclusive, ISO-8601 datetime. Default: unbounded.",
                   "disabled": true
                 },
                 {
                   "key": "to",
                   "value": "",
-                  "description": "ISO-8601 datetime upper bound (inclusive).",
+                  "description": "Upper bound, inclusive, ISO-8601 datetime. Default: unbounded.",
                   "disabled": true
                 },
                 {
                   "key": "limit",
-                  "value": "",
-                  "description": "Max rows, 1-1000 (default 1000). Out-of-range values are clamped.",
+                  "value": "1000",
+                  "description": "Max snapshots returned. Range: 1-1000. Default: 1000. Out-of-range is clamped.",
                   "disabled": true
                 }
               ]

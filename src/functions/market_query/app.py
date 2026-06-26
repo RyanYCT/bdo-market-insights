@@ -110,18 +110,34 @@ def _latest_price_by_sid(rows: list[SnapshotRow]) -> dict[int, float]:
 @app.get("/v1/market/items/<item_id>/snapshots")
 def get_snapshots(
     item_id: int,
-    region: Annotated[Region, Query(description="BDO server region.")] = DEFAULT_REGION,
-    sid: Annotated[int | None, Query(description="Enhancement sub-id; omit for all sids.")] = None,
+    region: Annotated[
+        Region,
+        Query(
+            description=(
+                "BDO server region. Accepted: na, eu, sea, mena, kr, ru, jp, th, tw, sa, "
+                "console_eu, console_na, console_asia. Default: tw."
+            )
+        ),
+    ] = DEFAULT_REGION,
+    sid: Annotated[int | None, Query(description="Enhancement sub-id. Default: all sids.")] = None,
     from_: Annotated[
         datetime | None,
-        Query(alias="from", description="ISO-8601 datetime lower bound (inclusive)."),
+        Query(
+            alias="from",
+            description="Lower bound, inclusive, ISO-8601 datetime. Default: unbounded.",
+        ),
     ] = None,
     to: Annotated[
-        datetime | None, Query(description="ISO-8601 datetime upper bound (inclusive).")
+        datetime | None,
+        Query(description="Upper bound, inclusive, ISO-8601 datetime. Default: unbounded."),
     ] = None,
     limit: Annotated[
         int,
-        Query(description="Max rows, 1-1000 (default 1000). Out-of-range values are clamped."),
+        Query(
+            description=(
+                "Max snapshots returned. Range: 1-1000. Default: 1000. Out-of-range is clamped."
+            )
+        ),
     ] = MAX_SNAPSHOT_LIMIT,
 ) -> dict[str, Any]:
     """FR-13: raw hourly snapshots (capped at 1000), newest first."""
@@ -148,14 +164,28 @@ def get_snapshots(
 @app.get("/v1/market/items/<item_id>/daily")
 def get_daily(
     item_id: int,
-    region: Annotated[Region, Query(description="BDO server region.")] = DEFAULT_REGION,
-    sid: Annotated[int | None, Query(description="Enhancement sub-id; omit for all sids.")] = None,
+    region: Annotated[
+        Region,
+        Query(
+            description=(
+                "BDO server region. Accepted: na, eu, sea, mena, kr, ru, jp, th, tw, sa, "
+                "console_eu, console_na, console_asia. Default: tw."
+            )
+        ),
+    ] = DEFAULT_REGION,
+    sid: Annotated[int | None, Query(description="Enhancement sub-id. Default: all sids.")] = None,
     from_: Annotated[
         date | None,
-        Query(alias="from", description="ISO-8601 date lower bound, YYYY-MM-DD (inclusive)."),
+        Query(
+            alias="from",
+            description="Lower bound, inclusive, ISO-8601 date (YYYY-MM-DD). Default: unbounded.",
+        ),
     ] = None,
     to: Annotated[
-        date | None, Query(description="ISO-8601 date upper bound, YYYY-MM-DD (inclusive).")
+        date | None,
+        Query(
+            description="Upper bound, inclusive, ISO-8601 date (YYYY-MM-DD). Default: unbounded."
+        ),
     ] = None,
 ) -> dict[str, Any]:
     """FR-14: daily rollups, newest first."""
@@ -180,13 +210,28 @@ def get_daily(
 @app.get("/v1/market/items/<item_id>/analysis")
 def get_analysis(
     item_id: int,
-    region: Annotated[Region, Query(description="BDO server region.")] = DEFAULT_REGION,
+    region: Annotated[
+        Region,
+        Query(
+            description=(
+                "BDO server region. Accepted: na, eu, sea, mena, kr, ru, jp, th, tw, sa, "
+                "console_eu, console_na, console_asia. Default: tw."
+            )
+        ),
+    ] = DEFAULT_REGION,
     sid: Annotated[
-        int | None, Query(description="Enhancement sub-id (default 0, the base item).")
+        int | None, Query(description="Enhancement sub-id. Default: 0 (the base item).")
     ] = None,
     window_days: Annotated[
         int,
-        Query(ge=1, le=90, description="Trailing analytics window in days, 1-90 (default 14)."),
+        Query(
+            ge=1,
+            le=90,
+            description=(
+                "Trailing analytics window in days. Range: 1-90. Default: 14. "
+                "Needs at least 7 daily points."
+            ),
+        ),
     ] = analytics.WINDOW_DAYS,
 ) -> dict[str, Any]:
     """FR-15: per-tier expected enhance cost + volatility/liquidity/anomaly."""
@@ -228,13 +273,26 @@ def get_analysis(
 
 @app.get("/v1/insights")
 def get_insights(
-    region: Annotated[Region, Query(description="BDO server region.")] = DEFAULT_REGION,
-    period: Annotated[Period, Query(description="Summary period: 'daily' or 'weekly'.")] = "daily",
+    region: Annotated[
+        Region,
+        Query(
+            description=(
+                "BDO server region. Accepted: na, eu, sea, mena, kr, ru, jp, th, tw, sa, "
+                "console_eu, console_na, console_asia. Default: tw."
+            )
+        ),
+    ] = DEFAULT_REGION,
+    period: Annotated[
+        Period, Query(description="Summary cadence. Accepted: daily, weekly. Default: daily.")
+    ] = "daily",
     date_: Annotated[
         date | None,
-        Query(alias="date", description="Summary date (YYYY-MM-DD); omit for latest."),
+        Query(
+            alias="date",
+            description="Summary date, ISO-8601 (YYYY-MM-DD). Default: latest available.",
+        ),
     ] = None,
-    lang: Annotated[str, Query(description="Language code (default 'en').")] = "en",
+    lang: Annotated[str, Query(description="Narrative language code. Default: en.")] = "en",
 ) -> Response[str]:
     """Market insights summary (digest + narrative)."""
     with _reading() as conn:
