@@ -46,19 +46,18 @@ _FOLDER_DESCRIPTIONS = {
 # Collection overview (Postman renders the collection's `info.description`).
 _COLLECTION_OVERVIEW = (
     "**BDO Market Insights API** — read-only market data for the *Black Desert Online* "
-    "economy: hourly snapshots, daily rollups, enhancement-cost / volatility / liquidity "
-    "analysis, and daily/weekly insights digests.\n\n"
-    "**Setup**\n"
-    "- `baseUrl` — API base, e.g. `https://api.example.com` (no trailing `/v1`).\n"
-    "- `apiKey` — sent as the `x-api-key` header. This workspace's environment has the "
-    "public **read-only demo key** preset; in your own copy, supply your own key.\n\n"
-    "**Auth** — every request inherits the collection's API-key auth (`x-api-key: "
-    "{{apiKey}}`); the per-request *“authorization helper from collection”* note just "
-    "reflects that inheritance, nothing to configure.\n\n"
-    "**Limits** — the demo key is read-only (writes to `/v1/items` return `403`) and "
-    "lightly rate-limited (~2 req/s, 500/day).\n\n"
-    "Generated from the OpenAPI spec (`scripts/export_postman.py`); the contract is also "
-    "served as Swagger UI at `/v1/docs`."
+    "economy: hourly price/stock snapshots, daily rollups, analytics (expected "
+    "enhancement cost, volatility, liquidity, anomaly detection), and daily/weekly "
+    "market-wide insights digests.\n\n"
+    "**Try it** — send any `GET`; the public **read-only demo key** is already set up "
+    "here. Start with `GET /v1/items`, then an item's `/analysis`, or `GET /v1/insights`.\n\n"
+    "**Notes**\n"
+    "- Read-only: writes to `/v1/items` (`POST`/`PATCH`/`DELETE`) return `403`.\n"
+    "- Lightly rate-limited (~2 req/s, 500/day).\n"
+    "- Requests inherit the collection's `x-api-key` auth — that's the per-request "
+    "*“authorization helper from collection”* note, nothing to configure.\n\n"
+    "Generated from the OpenAPI spec; the full contract is also served as Swagger UI at "
+    "`/v1/docs`. Source: https://github.com/RyanYCT/bdo-market-insights"
 )
 
 
