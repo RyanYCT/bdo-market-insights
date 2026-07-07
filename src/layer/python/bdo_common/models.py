@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Record(BaseModel):
@@ -33,20 +33,42 @@ class Record(BaseModel):
 
 
 class Item(BaseModel):
-    """DynamoDB item (bdo-<stage>-items table)."""
+    """DynamoDB item (bdo-<stage>-items table).
+
+    Holds every known BDO item (the full catalog synced from arsha ``util/db``),
+    not only the subset the ETL polls; ``tracked`` distinguishes the two. Name
+    localization keeps English on ``name`` (the guaranteed baseline) and any
+    other language in the ``names`` map.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     id: int
-    name: str
+    name: str  # canonical English name; guaranteed-present baseline
+    # Localized names, e.g. {"tw": "..."}; English stays on ``name``.
+    names: dict[str, str] = Field(default_factory=dict)
+    # Raw BDO grade code (0=White, 1=Green, 2=Blue, 3=Gold, 4=Orange, 5=Violet, ...).
+    # Open-ended: no closed enum, so future grades still store/read.
+    grade: int | None = None
     category: str | None = None
     main_category: str | None = None
     sub_category: str | None = None
     tracked: bool = True
     model_id: str = "accessory_v1"
     cron_table: Literal["a", "b"] = "a"
+    icon_status: Literal["unset", "stored", "missing"] = "unset"  # S3 icon materialization state
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+    def display_name(self, lang: str = "en") -> str:
+        """Return the localized name for ``lang``, falling back to English.
+
+        English always resolves to ``name``; any other language resolves to
+        ``names[lang]`` when present, otherwise to the English ``name``.
+        """
+        if lang == "en":
+            return self.name
+        return self.names.get(lang, self.name)
 
 
 class ItemSid(BaseModel):
