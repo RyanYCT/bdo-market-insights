@@ -20,6 +20,29 @@ _MAX_URL_LENGTH = 1900
 # else encountered while flattening (empty dicts, error envelopes) is ignored.
 _IDENTITY_KEYS = ("id", "sid")
 
+#: arsha.io ``lang`` query-param codes -> human-readable label. Used by the
+#: item-catalog sync (``util/db?lang=``) and any language-aware request. The
+#: ``grade`` returned by ``util/db`` is language-independent; ``lang`` only
+#: changes the localized item ``name``.
+SUPPORTED_LANGS: dict[str, str] = {
+    "en": "English",
+    "de": "German",
+    "fr": "French",
+    "ru": "Russian",
+    "es": "Spanish (EU)",
+    "sp": "Portuguese (RedFox)",
+    "pt": "Portuguese",
+    "jp": "Japanese",
+    "kr": "Korean",
+    "th": "Thai",
+    "tr": "Turkish",
+    "tw": "Chinese (Taiwan)",
+    "cn": "Chinese (Mainland)",
+}
+
+#: Default language when a caller omits ``lang`` (matches the project default).
+DEFAULT_LANG = "en"
+
 
 def _iter_item_dicts(node: Any) -> Iterator[dict[str, Any]]:
     """Recursively yield item dicts from arsha's polymorphic JSON.

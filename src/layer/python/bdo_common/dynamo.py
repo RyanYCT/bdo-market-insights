@@ -28,12 +28,15 @@ def _item_to_model(raw: dict[str, Any]) -> Item:
     return Item(
         id=int(raw["id"]),
         name=raw.get("name", ""),
+        names={str(k): str(v) for k, v in raw.get("names", {}).items()},
+        grade=int(raw["grade"]) if raw.get("grade") is not None else None,
         category=raw.get("category"),
         main_category=raw.get("main_category"),
         sub_category=raw.get("sub_category"),
         tracked=raw.get("tracked", "true") == "true",
         model_id=raw.get("model_id", "accessory_v1"),
         cron_table=raw.get("cron_table", "a"),
+        icon_status=raw.get("icon_status", "unset"),
         created_at=raw.get("created_at"),
         updated_at=raw.get("updated_at"),
     )
@@ -103,7 +106,12 @@ def put_item(item: Item) -> None:
         "tracked": str(item.tracked).lower(),
         "model_id": item.model_id,
         "cron_table": item.cron_table,
+        "icon_status": item.icon_status,
     }
+    if item.names:
+        data["names"] = item.names
+    if item.grade is not None:
+        data["grade"] = item.grade
     if item.category is not None:
         data["category"] = item.category
     if item.main_category is not None:

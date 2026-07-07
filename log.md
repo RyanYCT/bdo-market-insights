@@ -981,3 +981,50 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 - v3.1.0 prod cutover in progress: re-run the deploy after attaching the inline
   IAM policy; bullets are deterministic, LLM headline/overall pending Bedrock-on-prod
   verification.
+
+
+## 2026-07-05 — Item catalog model + ADR-0018 (full BDO catalog groundwork)
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/full-item-catalog`
+**Phase:** Post-launch (new feature groundwork — market grid / item catalog)
+**Commits:** see PR
+
+### Done
+- Groundwork for a full BDO item catalog sourced from arsha `util/db?lang=`
+  (returns `id`, `name`, `grade` for the whole item universe), to back a market
+  browser grid in the companion app.
+- `arsha_client.py`: recorded `SUPPORTED_LANGS` (13 arsha `lang` codes → label)
+  and `DEFAULT_LANG = "en"` as the canonical language list.
+- `Item` model: added `grade` (raw open-ended int code — no closed enum, so
+  future grades store/read), `names` map for localized names (English stays on
+  `name` as the baseline), `icon_status` (`unset`/`stored`/`missing`), and a
+  `display_name(lang)` helper (localized → English fallback).
+- `dynamo.py`: `_item_to_model` reads the three new fields (`grade` via
+  `is not None` so `0` isn't dropped); `put_item` always writes `icon_status`
+  and conditionally writes `names`/`grade`.
+- ADR-0018: full catalog in the single items table via a **sparse
+  `tracked-index`** (Query, not Scan) so ETL read cost scales with the polled
+  subset; `grade`/`names`/`icon_status` on the item row; disjoint write
+  ownership + partial `UpdateItem` so no writer clobbers another; batch-put
+  backfill vs. partial weekly sync; Pearl CDN icons via an ETL `ensureIcon`
+  step. README ADR count 17 → 18.
+- Gate: ruff, mypy (clean), `test_models.py` + `test_dynamo.py` (17 passed).
+
+### Decisions
+- Full catalog in the existing items table (not a separate table), safe via a
+  sparse tracked index + disjoint per-writer attribute ownership → ADR-0018.
+- `grade` stored as a raw open-ended int; code→name/colour mapping lives in the
+  presentation layer with a neutral fallback for unknown grades → ADR-0018.
+- English on `name`, other languages in a `names` map with English fallback →
+  ADR-0018.
+
+### Deferred / open questions
+- Not yet implemented (described in ADR-0018): the `catalogSync` Lambda +
+  weekly EventBridge rule, the sparse `tracked-index` GSI in `template.yaml`,
+  the `retrieveItems` Scan→Query change, the `ensureIcon` ETL step, and the
+  one-time backfill script.
+- Languages stored initially: `en` + `tw` (enum reserves the other 11).
+- New items land in the catalog `tracked=false`; promotion to the polled subset
+  stays an explicit `item_registry` step.
