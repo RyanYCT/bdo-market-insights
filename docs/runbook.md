@@ -118,6 +118,28 @@ path on such a table, register one item (see *Post-deploy verification* below):
 the API write path stamps the marker automatically, so the item lands in the
 `tracked-index` immediately.
 
+#### Backfill the item catalog (one-time)
+
+The full BDO item catalog (~tens of thousands of items) is synced from arsha.io
+`util/db` by the weekly `catalogSync` Lambda. For the initial load, run the
+backfill once (idempotent; safe to re-run). It partial-upserts every item, so it
+never clobbers tracked items' ETL-owned fields:
+
+```bash
+uv run python scripts/seed_catalog.py --target-table bdo-dev-items --dry-run
+uv run python scripts/seed_catalog.py --target-table bdo-dev-items
+```
+
+Thereafter the weekly Lambda keeps the catalog current (default Thu 08:00 UTC /
+16:00 UTC+8, a buffer after the Thu 03:00-07:00 UTC+8 maintenance window; adjust
+via the `CatalogSyncSchedule` parameter). You can also invoke the Lambda once for
+the initial load instead of the script:
+
+```bash
+aws lambda invoke --function-name bdo-dev-catalog-sync --payload '{}' /tmp/catalog-sync.json
+cat /tmp/catalog-sync.json   # {"total": <n>, "new": <n>, "langs": ["en","tw"]}
+```
+
 #### Post-deploy verification (dev)
 
 ```bash

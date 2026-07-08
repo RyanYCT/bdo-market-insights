@@ -72,6 +72,13 @@ Parameters:
     Description: >
       Underlying foundation-model ID that BedrockModelId routes to (IAM scoping).
       Keep in sync with BedrockModelId; strip the region prefix for CRIS profiles.
+  CatalogSyncSchedule:
+    Type: String
+    Default: 'cron(0 8 ? * THU *)'
+    Description: >
+      EventBridge cron (UTC) for the weekly full-catalog sync. Default Thu 08:00
+      UTC (= Thu 16:00 UTC+8), a buffer after the Thu 03:00-07:00 UTC+8 BDO
+      maintenance window (which can overrun on new-item patches).
 
 Conditions:
   DeployBastion: !Equals [!Ref EnableBastion, 'true']
@@ -177,6 +184,19 @@ Resources:
     # Ordering after Network/Data/Etl is enforced by the !GetAtt *.Outputs
     # references above (incl. the shared CommonLayerArn); an explicit
     # DependsOn would be redundant (cfn-lint W3005).
+
+  CatalogStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: infra/catalog.yaml
+      Parameters:
+        Stage: !Ref Stage
+        CommonLayerArn: !GetAtt EtlStack.Outputs.CommonLayerArn
+        DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
+        CatalogSyncSchedule: !Ref CatalogSyncSchedule
+    # Ordering after Data/Etl is enforced by the !GetAtt *.Outputs references
+    # above (incl. the shared CommonLayerArn); an explicit DependsOn would be
+    # redundant (cfn-lint W3005).
 
   ObservabilityStack:
     Type: AWS::CloudFormation::Stack

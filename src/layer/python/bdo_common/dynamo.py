@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
 
 import boto3
 from boto3.dynamodb.conditions import Attr, Key
 
-from bdo_common.models import Item
+from bdo_common.models import Item, MergedCatalogItem
 
 logger = logging.getLogger(__name__)
 
@@ -186,25 +189,18 @@ def update_item(item_id: int, updates: dict[str, Any]) -> None:
     table.update_item(**kwargs)
 
 
-def upsert_catalog_item(
-    *,
-    item_id: int,
-    name: str,
-    grade: int | None = None,
-    names: dict[str, str] | None = None,
-) -> bool:
-    """Partially upsert catalog-owned fields for an item; return True if new.
+def _catalog_update_kwargs(
+    item_id: int, name: str, grade: int | None, names: dict[str, str] | None
+) -> dict[str, Any]:
+    """Build the ``update_item`` kwargs for a catalog partial upsert.
 
     Writes only ``name``/``names``/``grade`` plus ``updated_at`` (and
     ``created_at`` once, via ``if_not_exists``). Never touches the ETL-owned
     attributes (``tracked``/``model_id``/``cron_table``/``icon_status``), so the
-    weekly catalog sync cannot clobber the polled subset (ADR-0018). Uses
-    ``ReturnValues=ALL_OLD``: an empty old image means the row was created by
-    this call (a newly discovered item).
+    catalog sync cannot clobber the polled subset (ADR-0018). ``ReturnValues``
+    is ``ALL_OLD`` so callers can detect a newly created item (empty old image).
     """
-    table = _get_table()
     now = datetime.now(tz=UTC).isoformat()
-
     # ``name`` is a DynamoDB reserved word; ``names`` is aliased defensively.
     set_parts = [
         "#name = :name",
@@ -225,14 +221,69 @@ def upsert_catalog_item(
         attr_names["#names"] = "names"
         attr_values[":names"] = names
 
-    response = table.update_item(
-        Key={"id": item_id},
-        UpdateExpression="SET " + ", ".join(set_parts),
-        ExpressionAttributeNames=attr_names,
-        ExpressionAttributeValues=attr_values,
-        ReturnValues="ALL_OLD",
-    )
+    return {
+        "Key": {"id": item_id},
+        "UpdateExpression": "SET " + ", ".join(set_parts),
+        "ExpressionAttributeNames": attr_names,
+        "ExpressionAttributeValues": attr_values,
+        "ReturnValues": "ALL_OLD",
+    }
+
+
+def upsert_catalog_item(
+    *,
+    item_id: int,
+    name: str,
+    grade: int | None = None,
+    names: dict[str, str] | None = None,
+) -> bool:
+    """Partially upsert catalog-owned fields for an item; return True if new.
+
+    Preserves the ETL-owned attributes (partial ``UpdateItem``); an empty old
+    image (``ReturnValues=ALL_OLD``) means the row was created by this call.
+    """
+    response = _get_table().update_item(**_catalog_update_kwargs(item_id, name, grade, names))
     return "Attributes" not in response
+
+
+# boto3 resources are not safe to share across threads, so each worker thread
+# builds its own Table once (bounded by the pool size, not per item).
+_thread_local = threading.local()
+
+
+def _thread_local_table() -> Any:
+    """Return a per-thread Table resource for concurrent catalog writes."""
+    table = getattr(_thread_local, "catalog_table", None)
+    if table is None:
+        table = boto3.resource("dynamodb").Table(_TABLE_NAME)
+        _thread_local.catalog_table = table
+    return table
+
+
+def bulk_upsert_catalog_items(
+    items: Iterable[MergedCatalogItem], *, max_workers: int = 16
+) -> tuple[int, int]:
+    """Concurrently partial-upsert many catalog items; return (total, newly_created).
+
+    Each item is written with the same partial ``UpdateItem`` as
+    :func:`upsert_catalog_item`, so ETL-owned attributes are preserved. Writes
+    run on a bounded thread pool (each thread with its own Table resource) to
+    stay well within a single Lambda invocation for the full ~tens-of-thousands
+    catalog. ``newly_created`` counts items whose old image was empty.
+    """
+    item_list = list(items)
+    if not item_list:
+        return (0, 0)
+
+    def _one(item: MergedCatalogItem) -> bool:
+        response = _thread_local_table().update_item(
+            **_catalog_update_kwargs(item.item_id, item.name, item.grade, item.names)
+        )
+        return "Attributes" not in response
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        created = sum(executor.map(_one, item_list))
+    return (len(item_list), created)
 
 
 def list_tracked_items() -> list[Item]:

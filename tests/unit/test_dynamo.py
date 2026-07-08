@@ -203,3 +203,57 @@ class TestListTrackedItems:
         put_item(Item(id=1, name="A", tracked=True))
         update_item(1, {"category": "ring"})  # no tracked change
         assert {i.id for i in list_tracked_items()} == {1}
+
+
+class TestBulkUpsertCatalogItems:
+    """Concurrent catalog upsert: counts new items, preserves ETL-owned fields."""
+
+    def test_counts_new_and_preserves_tracked(self, dynamodb_table: Any) -> None:
+        from bdo_common.dynamo import bulk_upsert_catalog_items, get_item, put_item
+        from bdo_common.models import MergedCatalogItem
+
+        # Pre-existing tracked item that must not be clobbered.
+        put_item(
+            Item(
+                id=11608,
+                name="Old Name",
+                tracked=True,
+                model_id="accessory_cron_v1",
+                cron_table="b",
+                icon_status="stored",
+            )
+        )
+
+        total, new = bulk_upsert_catalog_items(
+            [
+                MergedCatalogItem(
+                    item_id=11608, name="Deboreka Ring", names={"tw": "戒指"}, grade=4
+                ),
+                MergedCatalogItem(item_id=99999, name="New Material", grade=2),
+            ],
+            max_workers=4,
+        )
+
+        assert total == 2
+        assert new == 1  # only 99999 did not exist before
+
+        existing = get_item(11608)
+        assert existing is not None
+        assert existing.name == "Deboreka Ring"
+        assert existing.grade == 4
+        assert existing.names == {"tw": "戒指"}
+        # ETL-owned fields untouched
+        assert existing.tracked is True
+        assert existing.model_id == "accessory_cron_v1"
+        assert existing.cron_table == "b"
+        assert existing.icon_status == "stored"
+
+        created = get_item(99999)
+        assert created is not None
+        assert created.name == "New Material"
+        assert created.grade == 2
+
+    def test_empty_is_noop(self, dynamodb_table: Any) -> None:
+        from bdo_common.dynamo import bulk_upsert_catalog_items
+
+        assert bulk_upsert_catalog_items([]) == (0, 0)

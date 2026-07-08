@@ -61,10 +61,11 @@ The shared Lambda layer (`bdo-common`) packages the reusable modules —
 `arsha_client`, `db`, `models`, `repositories`, `pricing`, `analytics`, and
 `insights` — so the individual handlers stay thin.
 
-The system runs 14 Lambdas: the 8 ETL/API handlers, the in-VPC `migrator`, the
-`docs` API, and the four insights functions (`computeDigest`, `summarize`,
-`storeSummary`, `discordNotifier`). SAM nests them as `network`, `data`, `etl`,
-`api`, `insights`, `observability`, and `bastion` stacks.
+The system runs 15 Lambdas: the 8 ETL/API handlers, the in-VPC `migrator`, the
+`docs` API, the four insights functions (`computeDigest`, `summarize`,
+`storeSummary`, `discordNotifier`), and the weekly `catalogSync`. SAM nests them
+as `network`, `data`, `etl`, `api`, `insights`, `catalog`, `observability`, and
+`bastion` stacks.
 
 ### ETL state machine
 
