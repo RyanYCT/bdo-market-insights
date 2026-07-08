@@ -192,7 +192,7 @@ def upsert_catalog_item(
     name: str,
     grade: int | None = None,
     names: dict[str, str] | None = None,
-    ) -> bool:
+) -> bool:
     """Partially upsert catalog-owned fields for an item; return True if new.
 
     Writes only ``name``/``names``/``grade`` plus ``updated_at`` (and
