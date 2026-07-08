@@ -12,7 +12,9 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from bdo_common.arsha_client import ArshaClient, normalize_response
+import pytest
+
+from bdo_common.arsha_client import ArshaClient, normalize_item_db, normalize_response
 
 TIMESTAMP = 1717027200  # 2024-05-30T08:00:00 UTC
 
@@ -289,3 +291,94 @@ class TestFetchSubList:
             client.fetch_sub_list(ids)
 
         assert call_count >= 2
+
+
+# ---------------------------------------------------------------------------
+# normalize_item_db - util/db catalog rows
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeItemDb:
+    """Parse the flat util/db catalog list into CatalogEntry objects."""
+
+    def test_parses_flat_list(self) -> None:
+        raw = [
+            {"id": 37364, "name": "Wild Herb", "grade": 4},
+            {"id": 3679, "name": "[Manor] Cypress Tree", "grade": 2},
+        ]
+        entries = normalize_item_db(raw)
+        assert [(e.item_id, e.name, e.grade) for e in entries] == [
+            (37364, "Wild Herb", 4),
+            (3679, "[Manor] Cypress Tree", 2),
+        ]
+
+    def test_grade_optional(self) -> None:
+        (entry,) = normalize_item_db([{"id": 1, "name": "No Grade"}])
+        assert entry.grade is None
+
+    def test_grade_zero_preserved(self) -> None:
+        (entry,) = normalize_item_db([{"id": 7, "name": "White Item", "grade": 0}])
+        assert entry.grade == 0
+
+    def test_non_list_returns_empty(self) -> None:
+        assert normalize_item_db({"error": "boom"}) == []
+
+    def test_skips_rows_without_id(self) -> None:
+        entries = normalize_item_db([{"name": "orphan"}, {"id": 2, "name": "Keep", "grade": 0}])
+        assert [e.item_id for e in entries] == [2]
+
+    def test_skips_malformed_row(self) -> None:
+        entries = normalize_item_db(
+            [{"id": "not-an-int", "name": "Bad"}, {"id": 9, "name": "Good", "grade": 1}]
+        )
+        assert [e.item_id for e in entries] == [9]
+
+    def test_ignores_non_dict_elements(self) -> None:
+        entries = normalize_item_db([None, 42, "x", {"id": 5, "name": "Ok", "grade": 3}])
+        assert [e.item_id for e in entries] == [5]
+
+
+# ---------------------------------------------------------------------------
+# ArshaClient.fetch_item_db (mocked HTTP)
+# ---------------------------------------------------------------------------
+
+
+class TestFetchItemDb:
+    """Test the util/db full-catalog fetch."""
+
+    def test_build_item_db_url(self) -> None:
+        client = ArshaClient(util_base_url="https://api.arsha.io/util")
+        assert client._build_item_db_url("tw") == "https://api.arsha.io/util/db?lang=tw"
+
+    def test_build_item_db_url_trailing_slash_stripped(self) -> None:
+        client = ArshaClient(util_base_url="https://api.arsha.io/util/")
+        assert client._build_item_db_url("en") == "https://api.arsha.io/util/db?lang=en"
+
+    def test_unsupported_lang_raises(self) -> None:
+        client = ArshaClient()
+        with pytest.raises(ValueError, match="unsupported lang"):
+            client.fetch_item_db("xx")
+
+    def test_fetch_success(self) -> None:
+        client = ArshaClient()
+        payload = [
+            {"id": 37364, "name": "Wild Herb", "grade": 4},
+            {"id": 3679, "name": "Cypress Tree", "grade": 2},
+        ]
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(payload).encode()
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("bdo_common.arsha_client.urllib.request.urlopen", return_value=mock_resp):
+            entries = client.fetch_item_db("en")
+
+        assert {e.item_id for e in entries} == {37364, 3679}
+
+    def test_network_error_returns_empty(self) -> None:
+        client = ArshaClient()
+        with patch(
+            "bdo_common.arsha_client.urllib.request.urlopen",
+            side_effect=OSError("connection refused"),
+        ):
+            assert client.fetch_item_db("en") == []
