@@ -112,6 +112,12 @@ uv run python scripts/backfill_tracked_marker.py --target-table bdo-dev-items
 This is only needed the one time the GSI is introduced; afterwards the marker
 is maintained automatically on registration and tracked/untracked changes.
 
+On a fresh or empty table the backfill reports `0 tracked items found` — that is
+expected (there is nothing to migrate), not an error. To smoke-test the Query
+path on such a table, register one item (see *Post-deploy verification* below):
+the API write path stamps the marker automatically, so the item lands in the
+`tracked-index` immediately.
+
 #### Post-deploy verification (dev)
 
 ```bash
@@ -138,6 +144,18 @@ API_KEY=$(aws apigateway get-api-key --api-key "${API_KEY_ID}" --include-value \
 
 # Test the key-required API (ApiUrl already includes the stage path)
 curl -H "x-api-key: ${API_KEY}" "${API_URL}/v1/items" | head -20
+
+# Smoke-test the tracked-index Query path (esp. useful on a fresh/empty table).
+# Registering an item validates the id against arsha.io and writes it via
+# put_item, which stamps the sparse marker (t="1") because it is tracked -- so
+# it must appear in the tracked-index the ETL's retrieveItems now queries.
+curl -s -X POST "${API_URL}/v1/items" -H "x-api-key: ${API_KEY}" \
+  -H "Content-Type: application/json" -d '{"id": 12094}' | head -20
+# Confirm the item is present in the sparse tracked-index (Count >= 1)
+aws dynamodb query --table-name bdo-dev-items --index-name tracked-index \
+  --key-condition-expression "t = :t" \
+  --expression-attribute-values '{":t": {"S": "1"}}' \
+  --query 'Count'
 
 # Swagger UI + spec are key-less; use their dedicated outputs
 DOCS_URL=$(aws cloudformation describe-stacks \
