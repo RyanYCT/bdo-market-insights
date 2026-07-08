@@ -141,6 +141,7 @@ def dynamo_table(_db_env: None) -> Iterator[None]:
                 {"AttributeName": "id", "AttributeType": "N"},
                 {"AttributeName": "category", "AttributeType": "S"},
                 {"AttributeName": "tracked", "AttributeType": "S"},
+                {"AttributeName": "t", "AttributeType": "S"},
             ],
             GlobalSecondaryIndexes=[
                 {
@@ -150,7 +151,12 @@ def dynamo_table(_db_env: None) -> Iterator[None]:
                         {"AttributeName": "tracked", "KeyType": "RANGE"},
                     ],
                     "Projection": {"ProjectionType": "ALL"},
-                }
+                },
+                {
+                    "IndexName": "tracked-index",
+                    "KeySchema": [{"AttributeName": "t", "KeyType": "HASH"}],
+                    "Projection": {"ProjectionType": "ALL"},
+                },
             ],
             BillingMode="PAY_PER_REQUEST",
         )
