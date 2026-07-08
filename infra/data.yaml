@@ -101,9 +101,17 @@ Resources:
           AttributeType: S
         - AttributeName: tracked
           AttributeType: S
+        # Sparse marker for the tracked-index GSI (ADR-0018): written only on
+        # tracked items, absent otherwise, so the index holds just the polled
+        # subset regardless of catalog size.
+        - AttributeName: t
+          AttributeType: S
       KeySchema:
         - AttributeName: id
           KeyType: HASH
+      # NOTE: DynamoDB allows adding only ONE GSI per stack update. This adds
+      # tracked-index alongside the existing category-tracked-index; do not add
+      # a further GSI in the same deployment.
       GlobalSecondaryIndexes:
         - IndexName: category-tracked-index
           KeySchema:
@@ -111,6 +119,15 @@ Resources:
               KeyType: HASH
             - AttributeName: tracked
               KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        # Sparse index over all tracked items (ETL retrieveItems). Partition
+        # key is the `t` marker (present only when tracked), so the ETL reads
+        # the tracked subset via Query instead of a full-table Scan.
+        - IndexName: tracked-index
+          KeySchema:
+            - AttributeName: t
+              KeyType: HASH
           Projection:
             ProjectionType: ALL
 

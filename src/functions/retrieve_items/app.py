@@ -1,7 +1,7 @@
 """retrieveItems ETL Lambda: project the active item list into the ETL run.
 
-Scans DynamoDB for ``tracked = true`` items and emits them as batches of
-<= 50, each carrying the full item metadata plus a per-execution
+Queries the sparse ``tracked-index`` GSI for tracked items and emits them as
+batches of <= 50, each carrying the full item metadata plus a per-execution
 ``snapshot_at`` (the Step Functions execution start time, truncated to the
 hour, in UTC). Threading ``snapshot_at`` from here keeps snapshot writes
 idempotent across retries (FR-5/NFR-4).
@@ -55,7 +55,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     snapshot_dt = _truncate_to_hour(event.get("execution_start_time"))
     snapshot_at = snapshot_dt.isoformat()
 
-    metas = [_item_meta(item) for item in dynamo.scan_tracked_items()]
+    metas = [_item_meta(item) for item in dynamo.list_tracked_items()]
     batches = [
         {"region": region, "snapshot_at": snapshot_at, "items": metas[i : i + BATCH_SIZE]}
         for i in range(0, len(metas), BATCH_SIZE)

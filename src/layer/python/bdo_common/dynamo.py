@@ -17,6 +17,13 @@ logger = logging.getLogger(__name__)
 _TABLE_NAME = os.environ.get("DYNAMODB_TABLE", "bdo-dev-items")
 _GSI_NAME = "category-tracked-index"
 
+#: Sparse GSI over all tracked items (ADR-0018). Its partition key is a marker
+#: attribute written only on tracked items, so the index holds just the polled
+#: subset regardless of catalog size. The ETL queries it instead of scanning.
+_TRACKED_GSI_NAME = "tracked-index"
+_TRACKED_MARKER_ATTR = "t"
+_TRACKED_MARKER_VALUE = "1"
+
 
 def _get_table() -> Any:  # boto3 Table resource (untyped)
     """Return the DynamoDB Table resource."""
@@ -109,6 +116,10 @@ def put_item(item: Item) -> None:
         "cron_table": item.cron_table,
         "icon_status": item.icon_status,
     }
+    # Sparse tracked-index marker: present only when tracked (omitted otherwise
+    # so untracked items stay out of the index).
+    if item.tracked:
+        data[_TRACKED_MARKER_ATTR] = _TRACKED_MARKER_VALUE
     if item.names:
         data["names"] = item.names
     if item.grade is not None:
@@ -127,28 +138,52 @@ def put_item(item: Item) -> None:
 
 
 def update_item(item_id: int, updates: dict[str, Any]) -> None:
-    """Partially update an item's attributes."""
+    """Partially update an item's attributes.
+
+    When ``tracked`` is among the updates, the sparse tracked-index marker is
+    kept in lockstep: set when ``tracked`` becomes ``"true"`` and removed when
+    it becomes ``"false"``, so the ``tracked-index`` GSI always contains exactly
+    the tracked items (ADR-0018).
+    """
     table = _get_table()
-    expr_parts: list[str] = []
+    set_parts: list[str] = []
+    remove_parts: list[str] = []
     attr_names: dict[str, str] = {}
     attr_values: dict[str, Any] = {}
 
     for i, (key, value) in enumerate(updates.items()):
         placeholder_name = f"#k{i}"
         placeholder_value = f":v{i}"
-        expr_parts.append(f"{placeholder_name} = {placeholder_value}")
+        set_parts.append(f"{placeholder_name} = {placeholder_value}")
         attr_names[placeholder_name] = key
         attr_values[placeholder_value] = value
 
-    if not expr_parts:
+    # Keep the sparse tracked-index marker in sync with the `tracked` flag.
+    if "tracked" in updates:
+        attr_names["#tmark"] = _TRACKED_MARKER_ATTR
+        if updates["tracked"] == "true":
+            set_parts.append("#tmark = :tmark")
+            attr_values[":tmark"] = _TRACKED_MARKER_VALUE
+        else:
+            remove_parts.append("#tmark")
+
+    if not set_parts and not remove_parts:
         return
 
-    table.update_item(
-        Key={"id": item_id},
-        UpdateExpression="SET " + ", ".join(expr_parts),
-        ExpressionAttributeNames=attr_names,
-        ExpressionAttributeValues=attr_values,
-    )
+    clauses: list[str] = []
+    if set_parts:
+        clauses.append("SET " + ", ".join(set_parts))
+    if remove_parts:
+        clauses.append("REMOVE " + ", ".join(remove_parts))
+
+    kwargs: dict[str, Any] = {
+        "Key": {"id": item_id},
+        "UpdateExpression": " ".join(clauses),
+        "ExpressionAttributeNames": attr_names,
+    }
+    if attr_values:
+        kwargs["ExpressionAttributeValues"] = attr_values
+    table.update_item(**kwargs)
 
 
 def upsert_catalog_item(
@@ -200,6 +235,22 @@ def upsert_catalog_item(
     return "Attributes" not in response
 
 
-def scan_tracked_items() -> list[Item]:
-    """Scan all items where tracked=true. Used by ETL retrieveItems."""
-    return list_items(tracked=True)
+def list_tracked_items() -> list[Item]:
+    """Query the sparse tracked-index for all tracked items (ETL retrieveItems).
+
+    Reads the ``tracked-index`` GSI, whose partition key is the marker attribute
+    present only on tracked items. The read scales with the tracked subset, not
+    the full catalog, so catalog growth never inflates the hourly ETL cost.
+    """
+    table = _get_table()
+    query_kwargs: dict[str, Any] = {
+        "IndexName": _TRACKED_GSI_NAME,
+        "KeyConditionExpression": Key(_TRACKED_MARKER_ATTR).eq(_TRACKED_MARKER_VALUE),
+    }
+    response: dict[str, Any] = table.query(**query_kwargs)
+    items_raw: list[dict[str, Any]] = response.get("Items", [])
+    while "LastEvaluatedKey" in response:
+        query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        response = table.query(**query_kwargs)
+        items_raw.extend(response.get("Items", []))
+    return [_item_to_model(raw) for raw in items_raw]

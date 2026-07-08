@@ -30,6 +30,7 @@ def dynamodb_table(monkeypatch: pytest.MonkeyPatch) -> Any:
                 {"AttributeName": "id", "AttributeType": "N"},
                 {"AttributeName": "category", "AttributeType": "S"},
                 {"AttributeName": "tracked", "AttributeType": "S"},
+                {"AttributeName": "t", "AttributeType": "S"},
             ],
             GlobalSecondaryIndexes=[
                 {
@@ -39,7 +40,12 @@ def dynamodb_table(monkeypatch: pytest.MonkeyPatch) -> Any:
                         {"AttributeName": "tracked", "KeyType": "RANGE"},
                     ],
                     "Projection": {"ProjectionType": "ALL"},
-                }
+                },
+                {
+                    "IndexName": "tracked-index",
+                    "KeySchema": [{"AttributeName": "t", "KeyType": "HASH"}],
+                    "Projection": {"ProjectionType": "ALL"},
+                },
             ],
             BillingMode="PAY_PER_REQUEST",
         )
@@ -97,23 +103,6 @@ class TestPutAndListItems:
         weapons = list_items(category="weapons")
         assert len(weapons) == 2
         assert all(i.category == "weapons" for i in weapons)
-
-
-class TestScanTrackedItems:
-    """Test scan_tracked_items returns only tracked=true."""
-
-    def test_only_tracked_returned(self, dynamodb_table: Any) -> None:
-        from bdo_common.dynamo import put_item, scan_tracked_items
-
-        put_item(Item(id=1, name="Tracked A", category="accessories", tracked=True))
-        put_item(Item(id=2, name="Untracked B", category="accessories", tracked=False))
-        put_item(Item(id=3, name="Tracked C", category="weapons", tracked=True))
-
-        tracked = scan_tracked_items()
-        assert len(tracked) == 2
-        assert all(i.tracked is True for i in tracked)
-        ids = {i.id for i in tracked}
-        assert ids == {1, 3}
 
 
 class TestUpsertCatalogItem:
@@ -175,3 +164,42 @@ class TestUpsertCatalogItem:
         row = table.get_item(Key={"id": 1})["Item"]
         assert row["created_at"] == created_first  # stamped once, never overwritten
         assert row["name"] == "Second"  # other catalog fields still refresh
+
+
+class TestListTrackedItems:
+    """Sparse tracked-index query + marker lifecycle."""
+
+    def test_returns_only_tracked(self, dynamodb_table: Any) -> None:
+        from bdo_common.dynamo import list_tracked_items, put_item
+
+        put_item(Item(id=1, name="Tracked A", tracked=True))
+        put_item(Item(id=2, name="Untracked", tracked=False))
+        put_item(Item(id=3, name="Tracked B", tracked=True))
+
+        # Untracked items lack the marker, so the sparse index excludes them.
+        assert {i.id for i in list_tracked_items()} == {1, 3}
+
+    def test_soft_delete_removes_from_index(self, dynamodb_table: Any) -> None:
+        from bdo_common.dynamo import list_tracked_items, put_item, update_item
+
+        put_item(Item(id=1, name="A", tracked=True))
+        assert {i.id for i in list_tracked_items()} == {1}
+
+        update_item(1, {"tracked": "false"})  # soft delete
+        assert list_tracked_items() == []
+
+    def test_retrack_adds_back_to_index(self, dynamodb_table: Any) -> None:
+        from bdo_common.dynamo import list_tracked_items, put_item, update_item
+
+        put_item(Item(id=1, name="A", tracked=False))
+        assert list_tracked_items() == []
+
+        update_item(1, {"tracked": "true"})
+        assert {i.id for i in list_tracked_items()} == {1}
+
+    def test_patch_other_fields_keeps_marker(self, dynamodb_table: Any) -> None:
+        from bdo_common.dynamo import list_tracked_items, put_item, update_item
+
+        put_item(Item(id=1, name="A", tracked=True))
+        update_item(1, {"category": "ring"})  # no tracked change
+        assert {i.id for i in list_tracked_items()} == {1}

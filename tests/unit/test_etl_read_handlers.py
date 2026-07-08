@@ -47,7 +47,7 @@ class TestRetrieveItems:
             Item(id=2, name="B", category="ring", cron_table="b"),
             Item(id=3, name="C", category="necklace"),
         ]
-        monkeypatch.setattr(mod.dynamo, "scan_tracked_items", lambda: items)
+        monkeypatch.setattr(mod.dynamo, "list_tracked_items", lambda: items)
         monkeypatch.setattr(mod, "BATCH_SIZE", 2)
 
         result = mod.handler(
@@ -74,7 +74,7 @@ class TestRetrieveItems:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         mod = load_handler("retrieve_items")
-        monkeypatch.setattr(mod.dynamo, "scan_tracked_items", lambda: [])
+        monkeypatch.setattr(mod.dynamo, "list_tracked_items", lambda: [])
         result = mod.handler(
             {"region": "tw", "execution_start_time": "2026-06-01T00:10:00Z"},
             lambda_context,
