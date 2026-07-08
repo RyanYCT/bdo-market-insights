@@ -14,8 +14,22 @@ if config.config_file_name is not None:
 target_metadata = None
 
 
+def _to_psycopg_url(url: str) -> str:
+    """Force SQLAlchemy to use the psycopg v3 driver on a libpq URL.
+
+    A bare ``postgresql://`` (or ``postgres://``) URL resolves to the psycopg2
+    dialect, but this project ships only psycopg v3, so ``import psycopg2``
+    fails. Making the ``+psycopg`` driver explicit avoids that. Idempotent: a
+    URL that already names a driver is returned unchanged.
+    """
+    for prefix in ("postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix) :]
+    return url
+
+
 def _database_url() -> str:
-    """Return the DB URL from the environment.
+    """Return the DB URL from the environment, pinned to the psycopg v3 driver.
 
     Consumed directly (offline) or injected into the engine-config dict
     (online) -- never via ``config.set_main_option``, which routes through
@@ -24,8 +38,12 @@ def _database_url() -> str:
     syntax``). The master password used during the bastion bootstrap has no
     ``%``, which is why this only surfaced on the IAM-authenticated migrator
     Lambda.
+
+    The URL is normalized to the ``+psycopg`` driver so a plain
+    ``postgresql://`` value works without the caller having to spell out the
+    driver (only psycopg v3 is installed).
     """
-    return os.environ.get("DATABASE_URL", "postgresql://localhost/bdo")
+    return _to_psycopg_url(os.environ.get("DATABASE_URL", "postgresql://localhost/bdo"))
 
 
 def run_migrations_offline() -> None:

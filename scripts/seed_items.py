@@ -43,6 +43,10 @@ def seed_target_table(items: list[dict], target_table_name: str, *, dry_run: boo
             "id": int(item["id"]),
             "name": item.get("name", ""),
             "tracked": "true",
+            # Sparse tracked-index marker (ADR-0018): written only on tracked
+            # items so seeded rows appear in the ETL's tracked-index query
+            # without a separate backfill. Seeded items are always tracked.
+            "t": "1",
             "cron_table": "b" if int(item["id"]) in DEBOREKA_IDS else "a",
             "created_at": now,
             "updated_at": now,

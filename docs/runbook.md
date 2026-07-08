@@ -475,8 +475,8 @@ MASTER_PW=$(aws secretsmanager get-secret-value --secret-id "$MASTER_SECRET_ARN"
   --query SecretString --output text \
   | python -c 'import json,sys; print(json.load(sys.stdin)["password"])')
 
-# Use the +psycopg driver -- this project ships psycopg v3 only, so a plain
-# postgresql:// URL fails:
+# env.py normalizes the driver to +psycopg (this project ships psycopg v3
+# only), so a plain postgresql:// URL now works too; the explicit form is fine.
 export DATABASE_URL="postgresql+psycopg://postgres:${MASTER_PW}@localhost:5432/bdo"
 
 make migrate
