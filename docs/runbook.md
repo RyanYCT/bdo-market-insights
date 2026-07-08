@@ -95,6 +95,23 @@ make db-tunnel-down
 make deploy STAGE=dev ENABLE_BASTION=false
 ```
 
+#### Backfill the tracked-index marker (one-time, when adding the GSI)
+
+The `tracked-index` GSI is keyed on a marker attribute (`t`) written only on
+tracked items. When the deployment that *adds* the GSI first goes out, items
+registered earlier lack the marker and are invisible to the ETL's tracked-item
+query. Run the backfill once, right after that deploy and before the next
+hourly ETL run, so the tracked set repopulates the index:
+
+```bash
+# Preview first, then apply. DynamoDB is reachable via the AWS API (no bastion).
+uv run python scripts/backfill_tracked_marker.py --target-table bdo-dev-items --dry-run
+uv run python scripts/backfill_tracked_marker.py --target-table bdo-dev-items
+```
+
+This is only needed the one time the GSI is introduced; afterwards the marker
+is maintained automatically on registration and tracked/untracked changes.
+
 #### Post-deploy verification (dev)
 
 ```bash
