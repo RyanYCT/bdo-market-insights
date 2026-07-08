@@ -32,6 +32,21 @@ class Record(BaseModel):
     price_max: int  # arsha "priceMax" (system ask ceiling)
 
 
+class CatalogEntry(BaseModel):
+    """Normalized arsha.io ``util/db`` row: one item's catalog metadata.
+
+    ``util/db?lang=<lang>`` returns every known BDO item as
+    ``{id, name, grade}``. ``grade`` is language-independent; ``name`` is
+    localized by ``lang``. Feeds the DynamoDB item catalog.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    item_id: int  # arsha "id"
+    name: str  # arsha "name" (localized by lang)
+    grade: int | None = None  # arsha "grade"; open-ended, may be absent
+
+
 class Item(BaseModel):
     """DynamoDB item (bdo-<stage>-items table).
 

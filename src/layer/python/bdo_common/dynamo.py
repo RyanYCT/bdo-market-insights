@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import UTC, datetime
 from typing import Any
 
 import boto3
@@ -148,6 +149,55 @@ def update_item(item_id: int, updates: dict[str, Any]) -> None:
         ExpressionAttributeNames=attr_names,
         ExpressionAttributeValues=attr_values,
     )
+
+
+def upsert_catalog_item(
+    *,
+    item_id: int,
+    name: str,
+    grade: int | None = None,
+    names: dict[str, str] | None = None,
+) -> bool:
+    """Partially upsert catalog-owned fields for an item; return True if new.
+
+    Writes only ``name``/``names``/``grade`` plus ``updated_at`` (and
+    ``created_at`` once, via ``if_not_exists``). Never touches the ETL-owned
+    attributes (``tracked``/``model_id``/``cron_table``/``icon_status``), so the
+    weekly catalog sync cannot clobber the polled subset (ADR-0018). Uses
+    ``ReturnValues=ALL_OLD``: an empty old image means the row was created by
+    this call (a newly discovered item).
+    """
+    table = _get_table()
+    now = datetime.now(tz=UTC).isoformat()
+
+    # ``name`` is a DynamoDB reserved word; ``names`` is aliased defensively.
+    set_parts = [
+        "#name = :name",
+        "updated_at = :updated_at",
+        "created_at = if_not_exists(created_at, :created_at)",
+    ]
+    attr_names: dict[str, str] = {"#name": "name"}
+    attr_values: dict[str, Any] = {
+        ":name": name,
+        ":updated_at": now,
+        ":created_at": now,
+    }
+    if grade is not None:
+        set_parts.append("grade = :grade")
+        attr_values[":grade"] = grade
+    if names:
+        set_parts.append("#names = :names")
+        attr_names["#names"] = "names"
+        attr_values[":names"] = names
+
+    response = table.update_item(
+        Key={"id": item_id},
+        UpdateExpression="SET " + ", ".join(set_parts),
+        ExpressionAttributeNames=attr_names,
+        ExpressionAttributeValues=attr_values,
+        ReturnValues="ALL_OLD",
+    )
+    return "Attributes" not in response
 
 
 def scan_tracked_items() -> list[Item]:

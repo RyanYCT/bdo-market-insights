@@ -9,7 +9,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 
-from bdo_common.models import Record
+from bdo_common.models import CatalogEntry, Record
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +103,42 @@ def normalize_response(raw: Any) -> list[Record]:
     return [record for obj in _iter_item_dicts(raw) if (record := _parse_record(obj)) is not None]
 
 
+def _parse_catalog_entry(obj: dict[str, Any]) -> CatalogEntry | None:
+    """Map one arsha.io ``util/db`` row onto a CatalogEntry, or None if unusable.
+
+    Rows lacking an ``id`` are not items and return None silently; rows that are
+    present but malformed (bad id/name/grade) are skipped with a warning.
+    """
+    if "id" not in obj:
+        return None
+    try:
+        grade = obj.get("grade")
+        return CatalogEntry(
+            item_id=int(obj["id"]),
+            name=str(obj["name"]),
+            grade=int(grade) if grade is not None else None,
+        )
+    except (KeyError, ValueError, TypeError) as exc:
+        logger.warning("Skipping malformed arsha catalog row %r: %s", obj, exc)
+        return None
+
+
+def normalize_item_db(raw: Any) -> list[CatalogEntry]:
+    """Flatten an arsha.io ``util/db`` response into CatalogEntry objects.
+
+    The endpoint returns a flat list of ``{id, name, grade}`` dicts. A non-list
+    payload (e.g. an error envelope) yields an empty list; non-dict elements and
+    malformed rows are skipped.
+    """
+    if not isinstance(raw, list):
+        return []
+    return [
+        entry
+        for obj in raw
+        if isinstance(obj, dict) and (entry := _parse_catalog_entry(obj)) is not None
+    ]
+
+
 class ArshaClient:
     """HTTP client for the arsha.io market data API."""
 
@@ -111,9 +147,11 @@ class ArshaClient:
         *,
         base_url: str = "https://api.arsha.io/v2",
         region: str = "tw",
+        util_base_url: str = "https://api.arsha.io/util",
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._region = region
+        self._util_base_url = util_base_url.rstrip("/")
 
     def _build_url(self, ids: list[int]) -> str:
         """Build the GetWorldMarketSubList URL for a batch of item IDs."""
@@ -178,3 +216,29 @@ class ArshaClient:
         for payload in self.fetch_raw(item_ids):
             all_records.extend(normalize_response(payload))
         return all_records
+
+    def _build_item_db_url(self, lang: str) -> str:
+        """Build the ``util/db`` full-catalog URL for a language."""
+        return f"{self._util_base_url}/db?lang={lang}"
+
+    def fetch_item_db(self, lang: str = DEFAULT_LANG) -> list[CatalogEntry]:
+        """Fetch the full BDO item catalog for ``lang`` from arsha.io ``util/db``.
+
+        Returns every known item as a CatalogEntry (id, localized name, grade).
+        Raises ValueError for an unsupported ``lang``. A network or parse
+        failure is logged and returns an empty list, so a bad fetch is a no-op
+        for the (upsert-only) catalog sync rather than a destructive event.
+        """
+        if lang not in SUPPORTED_LANGS:
+            supported = ", ".join(sorted(SUPPORTED_LANGS))
+            msg = f"unsupported lang {lang!r}; expected one of: {supported}"
+            raise ValueError(msg)
+        url = self._build_item_db_url(lang)
+        try:
+            # URL is built internally and is always https://api.arsha.io/...
+            with urllib.request.urlopen(url, timeout=30) as resp:  # noqa: S310  # nosec B310
+                raw = json.loads(resp.read().decode())
+        except Exception:
+            logger.exception("Failed to fetch item catalog from %s", url)
+            return []
+        return normalize_item_db(raw)
