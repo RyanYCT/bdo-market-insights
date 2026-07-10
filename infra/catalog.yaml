@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Catalog sync for bdo-market-insights: a weekly Lambda that pulls the full BDO
+  item catalog from arsha.io util/db and partial-upserts it into the items table
+  (ETL-owned fields preserved, ADR-0018). Not in a VPC -- needs the public
+  internet (arsha.io) and DynamoDB only, so it mirrors itemRegistry's placement.
+
+Parameters:
+  Stage:
+    Type: String
+    AllowedValues: [dev, prod]
+  CommonLayerArn:
+    Type: String
+    Description: ARN of the shared bdo-common Lambda layer (from the ETL stack)
+  DynamoDbTableName:
+    Type: String
+    Description: per-stage items table name (bdo-<stage>-items)
+  CatalogSyncSchedule:
+    Type: String
+    Default: 'cron(0 8 ? * THU *)'
+    Description: >
+      EventBridge cron (UTC) for the weekly catalog sync. Default Thu 08:00 UTC
+      (= Thu 16:00 UTC+8). BDO maintenance is Thu 03:00-07:00 UTC+8
+      (= Wed 19:00-23:00 UTC) and can overrun on new-item patches; this leaves a
+      generous buffer so new items are live in util/db before the sync runs. The
+      sync is idempotent, so an early run simply catches new items the next week.
+  CatalogLangs:
+    Type: String
+    Default: 'en,tw'
+    Description: >
+      Comma-separated arsha util/db languages to sync. English is the canonical
+      name (stored on `name`); others go in the `names` map.
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 256
+    Tracing: Active
+    Layers:
+      - !Ref CommonLayerArn
+    Environment:
+      Variables:
+        STAGE: !Ref Stage
+        POWERTOOLS_SERVICE_NAME: bdo-market-insights
+        POWERTOOLS_METRICS_NAMESPACE: BdoMarket
+
+Resources:
+  # ──────────────────────────────────────────────
+  # catalogSync — full-catalog upsert, not in VPC (arsha.io + DynamoDB)
+  # ──────────────────────────────────────────────
+  CatalogSyncFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-catalog-sync'
+      CodeUri: ../src/functions/catalog_sync
+      Handler: app.handler
+      # The full catalog is ~tens of thousands of items across languages; the
+      # write pass is concurrent but still wants a long ceiling and headroom.
+      Timeout: 900
+      MemorySize: 1024
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref DynamoDbTableName
+          CATALOG_LANGS: !Ref CatalogLangs
+      Policies:
+        # Write-only: the sync upserts, it never reads the table.
+        - DynamoDBWritePolicy:
+            TableName: !Ref DynamoDbTableName
+      Events:
+        WeeklyCatalogSync:
+          Type: Schedule
+          Properties:
+            Schedule: !Ref CatalogSyncSchedule
+            Description: Weekly full-catalog sync from arsha.io util/db (post-maintenance)
+
+Outputs:
+  CatalogSyncFunctionArn:
+    Value: !GetAtt CatalogSyncFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-CatalogSyncFunctionArn'

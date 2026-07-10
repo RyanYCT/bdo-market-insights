@@ -47,6 +47,22 @@ class CatalogEntry(BaseModel):
     grade: int | None = None  # arsha "grade"; open-ended, may be absent
 
 
+class MergedCatalogItem(BaseModel):
+    """A catalog item merged across languages, ready to upsert.
+
+    Produced by merging per-language ``util/db`` rows: ``name`` is the English
+    (canonical) name, ``names`` holds the other localizations, and ``grade`` is
+    the language-independent grade code.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    item_id: int
+    name: str
+    names: dict[str, str] = Field(default_factory=dict)
+    grade: int | None = None
+
+
 class Item(BaseModel):
     """DynamoDB item (bdo-<stage>-items table).
 
