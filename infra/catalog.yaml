@@ -64,10 +64,20 @@ Resources:
         Variables:
           DYNAMODB_TABLE: !Ref DynamoDbTableName
           CATALOG_LANGS: !Ref CatalogLangs
+          # SSM parameter holding the last-synced catalog content checksum; the
+          # sync skips all writes when the fetched catalog matches it.
+          CATALOG_CHECKSUM_PARAM: !Sub '/bdo/${Stage}/catalog-checksum'
       Policies:
-        # Write-only: the sync upserts, it never reads the table.
-        - DynamoDBWritePolicy:
+        # Read (Scan) to diff current state + write the changed items.
+        - DynamoDBCrudPolicy:
             TableName: !Ref DynamoDbTableName
+        # Read/write only the catalog checksum parameter.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:PutParameter
+              Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/bdo/${Stage}/catalog-checksum'
       Events:
         WeeklyCatalogSync:
           Type: Schedule

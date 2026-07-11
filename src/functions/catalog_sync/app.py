@@ -38,13 +38,19 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Run one full-catalog sync and emit metrics."""
     langs = _langs()
     max_workers = int(os.environ.get("CATALOG_MAX_WORKERS", "16"))
+    checksum_param = os.environ.get("CATALOG_CHECKSUM_PARAM") or None
 
     stats = catalog.sync_catalog(
-        ArshaClient(), langs, default_lang=DEFAULT_LANG, max_workers=max_workers
+        ArshaClient(),
+        langs,
+        default_lang=DEFAULT_LANG,
+        max_workers=max_workers,
+        checksum_param=checksum_param,
     )
 
     failed_langs = [lang for lang, count in stats.fetched.items() if count == 0]
     metrics.add_metric(name="CatalogItemsSynced", unit=MetricUnit.Count, value=stats.total)
+    metrics.add_metric(name="CatalogItemsWritten", unit=MetricUnit.Count, value=stats.written)
     metrics.add_metric(name="CatalogNewItems", unit=MetricUnit.Count, value=stats.new)
     # Non-zero when a language fetch failed (flaky util/db) or the run was
     # skipped because the default language failed -- alarm target.
@@ -55,16 +61,20 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         "catalogSync complete",
         extra={
             "total": stats.total,
+            "written": stats.written,
             "new": stats.new,
             "langs": langs,
             "failed_langs": failed_langs,
             "skipped": stats.skipped,
+            "unchanged": stats.unchanged,
         },
     )
     return {
         "total": stats.total,
+        "written": stats.written,
         "new": stats.new,
         "langs": langs,
         "failed_langs": failed_langs,
         "skipped": stats.skipped,
+        "unchanged": stats.unchanged,
     }

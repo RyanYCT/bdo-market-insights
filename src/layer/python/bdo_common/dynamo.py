@@ -286,6 +286,38 @@ def bulk_upsert_catalog_items(
     return (len(item_list), created)
 
 
+def _collect_fingerprints(
+    raw_items: list[dict[str, Any]],
+    out: dict[int, tuple[str, int | None, dict[str, str]]],
+) -> None:
+    """Accumulate (name, grade, names) fingerprints from scanned raw rows."""
+    for raw in raw_items:
+        grade = int(raw["grade"]) if raw.get("grade") is not None else None
+        names = {str(k): str(v) for k, v in raw.get("names", {}).items()}
+        out[int(raw["id"])] = (raw.get("name", ""), grade, names)
+
+
+def scan_catalog_fingerprints() -> dict[int, tuple[str, int | None, dict[str, str]]]:
+    """Scan all items, projecting the fields the catalog sync diffs against.
+
+    Returns ``{id: (name, grade, names)}`` for every row, so the catalog sync
+    can write only the items whose stored values differ from ``util/db``.
+    """
+    table = _get_table()
+    scan_kwargs: dict[str, Any] = {
+        "ProjectionExpression": "id, #name, grade, #names",
+        "ExpressionAttributeNames": {"#name": "name", "#names": "names"},
+    }
+    fingerprints: dict[int, tuple[str, int | None, dict[str, str]]] = {}
+    response = table.scan(**scan_kwargs)
+    _collect_fingerprints(response.get("Items", []), fingerprints)
+    while "LastEvaluatedKey" in response:
+        scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        response = table.scan(**scan_kwargs)
+        _collect_fingerprints(response.get("Items", []), fingerprints)
+    return fingerprints
+
+
 def list_tracked_items() -> list[Item]:
     """Query the sparse tracked-index for all tracked items (ETL retrieveItems).
 

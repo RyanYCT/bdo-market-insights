@@ -257,3 +257,20 @@ class TestBulkUpsertCatalogItems:
         from bdo_common.dynamo import bulk_upsert_catalog_items
 
         assert bulk_upsert_catalog_items([]) == (0, 0)
+
+
+class TestScanCatalogFingerprints:
+    """scan_catalog_fingerprints returns (name, grade, names) per item."""
+
+    def test_projects_name_grade_names(self, dynamodb_table: Any) -> None:
+        from bdo_common.dynamo import put_item, scan_catalog_fingerprints, upsert_catalog_item
+
+        put_item(Item(id=1, name="A", grade=4))
+        put_item(Item(id=2, name="C"))  # no grade
+        upsert_catalog_item(item_id=3, name="B", grade=3, names={"tw": "乙"})
+
+        fps = scan_catalog_fingerprints()
+
+        assert fps[1] == ("A", 4, {})
+        assert fps[2] == ("C", None, {})
+        assert fps[3] == ("B", 3, {"tw": "乙"})
