@@ -12,6 +12,7 @@ API exposes snapshots, daily rollups, and BDO-domain analytics.
 architecture-beta
     group external(cloud)[External]
         service arsha(internet)[arsha API] in external
+        service pearl(internet)[Pearl CDN] in external
         service dweb(internet)[Discord Webhook] in external
 
     group aws(cloud)[AWS Cloud]
@@ -24,6 +25,11 @@ architecture-beta
         service sns(cloud)[SNS] in aws
         service discord(server)[discordNotifier] in aws
         service bedrock(cloud)[Bedrock] in aws
+        service cron4(cloud)[EventBridge Weekly] in aws
+        service catalogsync(server)[catalogSync] in aws
+        service cron5(cloud)[EventBridge Daily] in aws
+        service iconsync(server)[iconSync] in aws
+        service icons(disk)[Icons Bucket] in aws
 
     group vpc(cloud)[VPC] in aws
         service etl(server)[ETL State Machine] in vpc
@@ -43,6 +49,14 @@ architecture-beta
     apigw:L --> T:itemreg
     itemreg:T --> B:dynamo
 
+    cron4:B --> T:catalogsync
+    catalogsync:R --> L:arsha
+    catalogsync:B --> T:dynamo
+    cron5:B --> T:iconsync
+    iconsync:L --> R:pearl
+    iconsync:B --> T:dynamo
+    iconsync:R --> L:icons
+
     etl:B -- T:dbhub
     insights:T -- B:dbhub
     migrator:B -- T:rds
@@ -61,11 +75,11 @@ The shared Lambda layer (`bdo-common`) packages the reusable modules —
 `arsha_client`, `db`, `models`, `repositories`, `pricing`, `analytics`, and
 `insights` — so the individual handlers stay thin.
 
-The system runs 15 Lambdas: the 8 ETL/API handlers, the in-VPC `migrator`, the
+The system runs 16 Lambdas: the 8 ETL/API handlers, the in-VPC `migrator`, the
 `docs` API, the four insights functions (`computeDigest`, `summarize`,
-`storeSummary`, `discordNotifier`), and the weekly `catalogSync`. SAM nests them
-as `network`, `data`, `etl`, `api`, `insights`, `catalog`, `observability`, and
-`bastion` stacks.
+`storeSummary`, `discordNotifier`), the weekly `catalogSync`, and the daily
+`iconSync`. SAM nests them as `network`, `data`, `etl`, `api`, `insights`,
+`catalog`, `icons`, `observability`, and `bastion` stacks.
 
 ### ETL state machine
 

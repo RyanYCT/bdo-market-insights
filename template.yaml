@@ -79,6 +79,12 @@ Parameters:
       EventBridge cron (UTC) for the weekly full-catalog sync. Default Thu 08:00
       UTC (= Thu 16:00 UTC+8), a buffer after the Thu 03:00-07:00 UTC+8 BDO
       maintenance window (which can overrun on new-item patches).
+  IconSyncSchedule:
+    Type: String
+    Default: 'cron(0 9 ? * * *)'
+    Description: >
+      EventBridge cron (UTC) for the daily item-icon materializer. Default 09:00
+      UTC. No-op once every tracked item's icon is stored/missing.
 
 Conditions:
   DeployBastion: !Equals [!Ref EnableBastion, 'true']
@@ -197,6 +203,17 @@ Resources:
     # Ordering after Data/Etl is enforced by the !GetAtt *.Outputs references
     # above (incl. the shared CommonLayerArn); an explicit DependsOn would be
     # redundant (cfn-lint W3005).
+
+  IconsStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: infra/icons.yaml
+      Parameters:
+        Stage: !Ref Stage
+        BdoRegion: !Ref BdoRegion
+        CommonLayerArn: !GetAtt EtlStack.Outputs.CommonLayerArn
+        DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
+        IconSyncSchedule: !Ref IconSyncSchedule
 
   ObservabilityStack:
     Type: AWS::CloudFormation::Stack
