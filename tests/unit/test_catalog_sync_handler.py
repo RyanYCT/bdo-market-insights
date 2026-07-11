@@ -23,12 +23,41 @@ class TestCatalogSyncHandler:
         def fake_sync(
             client: Any, langs: list[str], *, default_lang: str = "en", max_workers: int = 16
         ) -> CatalogSyncStats:
-            return CatalogSyncStats(total=68000, new=12, langs=langs)
+            return CatalogSyncStats(
+                total=68000, new=12, langs=langs, fetched={"en": 68000, "tw": 68000}
+            )
 
         monkeypatch.setattr(mod.catalog, "sync_catalog", fake_sync)
 
         result = mod.handler({}, lambda_context)
-        assert result == {"total": 68000, "new": 12, "langs": ["en", "tw"]}
+        assert result == {
+            "total": 68000,
+            "new": 12,
+            "langs": ["en", "tw"],
+            "failed_langs": [],
+            "skipped": False,
+        }
+
+    def test_reports_failed_langs(
+        self,
+        load_handler: Callable[[str], ModuleType],
+        lambda_context: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mod = load_handler("catalog_sync")
+
+        def fake_sync(
+            client: Any, langs: list[str], *, default_lang: str = "en", max_workers: int = 16
+        ) -> CatalogSyncStats:
+            return CatalogSyncStats(
+                total=68000, new=0, langs=langs, fetched={"en": 68000, "tw": 0}
+            )
+
+        monkeypatch.setattr(mod.catalog, "sync_catalog", fake_sync)
+
+        result = mod.handler({}, lambda_context)
+        assert result["failed_langs"] == ["tw"]
+        assert result["skipped"] is False
 
     def test_respects_catalog_langs_env(
         self,

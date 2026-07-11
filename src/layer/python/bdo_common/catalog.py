@@ -25,6 +25,8 @@ class CatalogSyncStats:
     total: int
     new: int
     langs: list[str] = field(default_factory=list)
+    fetched: dict[str, int] = field(default_factory=dict)  # per-language item counts
+    skipped: bool = False  # True when the run was skipped (default language failed)
 
 
 def merge_catalog(
@@ -82,10 +84,30 @@ def sync_catalog(
     deleting anything -- the sync is strictly additive.
     """
     by_lang = {lang: client.fetch_item_db(lang) for lang in langs}
+    fetched = {lang: len(entries) for lang, entries in by_lang.items()}
+
+    # The default language supplies the canonical (English) name. If it failed
+    # to fetch (empty), skip the run rather than overwriting every item's name
+    # with a fallback from another language.
+    if not by_lang.get(default_lang):
+        logger.error(
+            "catalog sync skipped: default language %r returned no items (fetch failed)",
+            default_lang,
+        )
+        return CatalogSyncStats(total=0, new=0, langs=langs, fetched=fetched, skipped=True)
+
+    failed = [lang for lang, count in fetched.items() if count == 0]
+    if failed:
+        # Non-default languages that failed are simply not updated this run;
+        # existing localized names are preserved (empty names are not written).
+        logger.warning(
+            "catalog sync: languages returned no data, kept existing values: %s", failed
+        )
+
     merged = merge_catalog(by_lang, default_lang=default_lang)
     total, new = dynamo.bulk_upsert_catalog_items(merged, max_workers=max_workers)
     logger.info(
         "catalog sync complete",
-        extra={"total": total, "new": new, "langs": langs},
+        extra={"total": total, "new": new, "langs": langs, "fetched": fetched},
     )
-    return CatalogSyncStats(total=total, new=new, langs=langs)
+    return CatalogSyncStats(total=total, new=new, langs=langs, fetched=fetched, skipped=False)

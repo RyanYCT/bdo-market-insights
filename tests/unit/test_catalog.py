@@ -98,3 +98,40 @@ class TestSyncCatalog:
         by_id = {m.item_id: m for m in captured["items"]}
         assert by_id[1].names == {"tw": "甲"}
         assert by_id[2].names == {}  # id 2 only in en
+
+    def test_skips_when_default_lang_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # en (canonical) failed to fetch -> empty; tw succeeded.
+        client = _StubClient({"en": [], "tw": [CatalogEntry(item_id=1, name="甲", grade=4)]})
+        called = {"bulk": False}
+
+        def fake_bulk(items: Any, *, max_workers: int = 16) -> tuple[int, int]:
+            called["bulk"] = True
+            return (0, 0)
+
+        monkeypatch.setattr(dynamo, "bulk_upsert_catalog_items", fake_bulk)
+
+        stats = catalog.sync_catalog(client, ["en", "tw"])  # type: ignore[arg-type]
+
+        assert stats.skipped is True
+        assert stats.total == 0
+        assert stats.fetched == {"en": 0, "tw": 1}
+        assert called["bulk"] is False  # no write when the canonical language failed
+
+    def test_proceeds_when_nondefault_lang_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # tw failed -> empty; en fine. Merge writes en names only; empty tw is
+        # not written, so any existing localized names are preserved.
+        client = _StubClient({"en": [CatalogEntry(item_id=1, name="A", grade=4)], "tw": []})
+        captured: dict[str, Any] = {}
+
+        def fake_bulk(items: Any, *, max_workers: int = 16) -> tuple[int, int]:
+            item_list = list(items)
+            captured["items"] = item_list
+            return (len(item_list), len(item_list))
+
+        monkeypatch.setattr(dynamo, "bulk_upsert_catalog_items", fake_bulk)
+
+        stats = catalog.sync_catalog(client, ["en", "tw"])  # type: ignore[arg-type]
+
+        assert stats.skipped is False
+        assert stats.fetched == {"en": 1, "tw": 0}
+        assert captured["items"][0].names == {}  # no tw this run
