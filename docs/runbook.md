@@ -140,6 +140,19 @@ aws lambda invoke --function-name bdo-dev-catalog-sync --payload '{}' /tmp/catal
 cat /tmp/catalog-sync.json   # {"total": <n>, "new": <n>, "langs": ["en","tw"]}
 ```
 
+#### Item icons
+
+Icons are self-hosted in the `bdo-<stage>-icons` bucket and materialized from the
+Pearl Abyss CDN by the daily `iconSync` Lambda, which processes tracked items
+with `icon_status=unset` (marking each `stored`, or `missing` when the CDN has no
+icon). No manual step is required — new tracked items get an icon by the next
+daily run. To materialize immediately (e.g. right after registering items):
+
+```bash
+aws lambda invoke --function-name bdo-dev-icon-sync --payload '{}' /tmp/icon-sync.json
+cat /tmp/icon-sync.json   # {"pending": <n>, "stored": <n>, "missing": <n>, "errors": <n>}
+```
+
 #### Post-deploy verification (dev)
 
 ```bash

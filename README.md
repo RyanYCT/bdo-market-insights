@@ -4,7 +4,7 @@ A **serverless, event-driven market-data platform** for the *Black Desert Online
 
 The project is a study in building a **production-grade serverless data pipeline cheaply and safely**: IAM-authenticated database access (no passwords), a no-NAT VPC, single shared Lambda layer, infrastructure-as-code with nested stacks, and a full CI quality gate — all targeted at **under ~US$15/month** of incremental cost.
 
-> **Status:** Live in prod (v3.2.0). 15 Lambdas, two Step Functions pipelines (hourly ETL + daily/weekly market-insights), and a REST API — deployable to `dev`/`prod` via AWS SAM.
+> **Status:** Live in prod (v3.2.0). 16 Lambdas, two Step Functions pipelines (hourly ETL + daily/weekly market-insights), and a REST API — deployable to `dev`/`prod` via AWS SAM.
 
 ---
 
@@ -91,7 +91,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the full topology — inc
 
 - **Language:** Python 3.12, fully type-annotated (`mypy --strict`)
 - **Compute:** AWS Lambda, Step Functions, EventBridge
-  - 8 ETL/API handlers, a 4-step insights pipeline, a weekly catalog-sync, an in-VPC migrator, and a docs API — **15** Lambdas total
+  - 8 ETL/API handlers, a 4-step insights pipeline, a weekly catalog-sync, a daily icon-sync, an in-VPC migrator, and a docs API — **16** Lambdas total
 - **Data:** Amazon RDS for PostgreSQL (time series), DynamoDB (item registry), Alembic (schema migrations)
 - **API:** API Gateway (REST) with API-key usage plans
   - OpenAPI 3.1 spec auto-generated from the handlers and served via interactive Swagger UI

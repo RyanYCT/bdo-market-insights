@@ -1,0 +1,106 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Item-icon materialization for bdo-market-insights: a private S3 bucket for
+  self-hosted icons and a daily Lambda that fetches icons from the Pearl Abyss
+  CDN for tracked items missing them (icon_status=unset), storing them in the
+  bucket. Not in a VPC -- needs the public internet (Pearl CDN), DynamoDB, and
+  S3 only.
+
+Parameters:
+  Stage:
+    Type: String
+    AllowedValues: [dev, prod]
+  BdoRegion:
+    Type: String
+    Description: BDO region; upper-cased into the Pearl CDN icon path (e.g. tw -> TW)
+  CommonLayerArn:
+    Type: String
+    Description: ARN of the shared bdo-common Lambda layer (from the ETL stack)
+  DynamoDbTableName:
+    Type: String
+    Description: per-stage items table name (bdo-<stage>-items)
+  IconSyncSchedule:
+    Type: String
+    Default: 'cron(0 9 ? * * *)'
+    Description: >
+      EventBridge cron (UTC) for the daily icon materializer. Default 09:00 UTC.
+      Only processes tracked items with icon_status=unset, so it is a no-op once
+      every tracked item's icon is stored/missing; new tracked items get an icon
+      by the next run.
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 256
+    Tracing: Active
+    Layers:
+      - !Ref CommonLayerArn
+    Environment:
+      Variables:
+        STAGE: !Ref Stage
+        BDO_REGION: !Ref BdoRegion
+        POWERTOOLS_SERVICE_NAME: bdo-market-insights
+        POWERTOOLS_METRICS_NAMESPACE: BdoMarket
+
+Resources:
+  # ──────────────────────────────────────────────
+  # Icons bucket — private; served later via CloudFront OAC (follow-up).
+  # ──────────────────────────────────────────────
+  IconsBucket:
+    Type: AWS::S3::Bucket
+    # Retain on stack delete so materialized icons survive teardown/recreate;
+    # they are re-fetchable from the CDN but keeping them avoids a re-scrape.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'bdo-${Stage}-icons'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # ──────────────────────────────────────────────
+  # iconSync — daily materializer, not in VPC (Pearl CDN + DynamoDB + S3)
+  # ──────────────────────────────────────────────
+  IconSyncFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-icon-sync'
+      CodeUri: ../src/functions/icon_sync
+      Handler: app.handler
+      Timeout: 300
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref DynamoDbTableName
+          ICONS_BUCKET: !Ref IconsBucket
+      Policies:
+        # Read tracked items (Query tracked-index) + set icon_status (UpdateItem).
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DynamoDbTableName
+        # Write materialized icons.
+        - S3WritePolicy:
+            BucketName: !Sub 'bdo-${Stage}-icons'
+      Events:
+        DailyIconSync:
+          Type: Schedule
+          Properties:
+            Schedule: !Ref IconSyncSchedule
+            Description: Daily icon materialization for tracked items (icon_status=unset)
+
+Outputs:
+  IconsBucketName:
+    Value: !Ref IconsBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-IconsBucketName'
+
+  IconSyncFunctionArn:
+    Value: !GetAtt IconSyncFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-IconSyncFunctionArn'
