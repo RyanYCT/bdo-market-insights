@@ -132,12 +132,19 @@ uv run python scripts/seed_catalog.py --target-table bdo-dev-items
 
 Thereafter the weekly Lambda keeps the catalog current (default Thu 08:00 UTC /
 16:00 UTC+8, a buffer after the Thu 03:00-07:00 UTC+8 maintenance window; adjust
-via the `CatalogSyncSchedule` parameter). You can also invoke the Lambda once for
-the initial load instead of the script:
+via the `CatalogSyncSchedule` parameter).
+
+You can also invoke the Lambda for the initial load instead of the script, but
+the first run writes the whole catalog and takes a few minutes — longer than the
+AWS CLI's 60s read timeout. Invoke it **asynchronously** (`--invocation-type
+Event`) and read the result from the logs; a synchronous `aws lambda invoke`
+would time out on the client while the function keeps running:
 
 ```bash
-aws lambda invoke --function-name bdo-dev-catalog-sync --payload '{}' /tmp/catalog-sync.json
-cat /tmp/catalog-sync.json   # {"total": <n>, "new": <n>, "langs": ["en","tw"]}
+aws lambda invoke --function-name bdo-dev-catalog-sync \
+  --invocation-type Event --payload '{}' /tmp/catalog-sync.json   # returns 202; payload is empty
+aws logs tail /aws/lambda/bdo-dev-catalog-sync --since 10m --follow
+# look for "catalogSync complete" with total / written / new
 ```
 
 #### Item icons
@@ -146,12 +153,20 @@ Icons are self-hosted in the `bdo-<stage>-icons` bucket and materialized from th
 Pearl Abyss CDN by the daily `iconSync` Lambda, which processes tracked items
 with `icon_status=unset` (marking each `stored`, or `missing` when the CDN has no
 icon). No manual step is required — new tracked items get an icon by the next
-daily run. To materialize immediately (e.g. right after registering items):
+daily run. It processes only tracked items with `icon_status=unset`, so it is a
+no-op once every tracked item's icon is `stored`/`missing`. To materialize
+immediately (e.g. right after registering items), invoke it **asynchronously**
+and read the result from the logs:
 
 ```bash
-aws lambda invoke --function-name bdo-dev-icon-sync --payload '{}' /tmp/icon-sync.json
-cat /tmp/icon-sync.json   # {"pending": <n>, "stored": <n>, "missing": <n>, "errors": <n>}
+aws lambda invoke --function-name bdo-dev-icon-sync \
+  --invocation-type Event --payload '{}' /tmp/icon-sync.json   # returns 202; payload is empty
+aws logs tail /aws/lambda/bdo-dev-icon-sync --since 5m --follow
+# look for "iconSync complete" with stored / missing / errors
 ```
+
+> The icon materializer fetches from the Pearl Abyss CDN, not arsha, so it is
+> unaffected by arsha outages.
 
 #### Post-deploy verification (dev)
 
