@@ -110,14 +110,17 @@ item without losing each other's changes — no condition needed for that either
 ### 5. Icons
 
 Icons come from the official Pearl Abyss CDN
-(`https://{host}/{region}/TradeMarket/Common/img/BDO/item/{id}.png`) and are
-self-hosted in S3 rather than hotlinked. An idempotent `ensureIcon` step is
-folded into the **existing hourly ETL** over the polled subset (consistent with
-ADR-0010's "materialize on the next ETL run" approach), keyed by `icon_status`:
-`stored` → skip; `unset` → fetch and `PUT` to S3, then set `stored`; a `404` →
-set `missing` (stop retrying; the UI uses a placeholder); a transient error →
-leave `unset` to retry next cycle. Only polled items — the ones actually
-displayed — have their icons materialized.
+(`https://{host}/{region}/TradeMarket/Common/img/BDO/item/{id}.png`, region
+upper-cased) and are self-hosted in a private S3 bucket rather than hotlinked. A
+**standalone daily `iconSync` Lambda** materializes them for the **tracked
+subset only** — the items the grid displays; fetching all ~tens-of-thousands of
+catalog icons (mostly items never shown) would be wasted bandwidth and storage.
+It processes items with `icon_status = unset`, keyed on that attribute: `stored`
+→ skip; fetch → `PUT` to S3 → `stored`; a `403`/`404` (the CDN has no icon for
+that id) → `missing` (stop retrying; the UI uses a placeholder); a transient
+error → leave `unset` to retry next run. It runs independently of the hourly ETL
+(the hot path is untouched); a newly curated tracked item gets its icon by the
+next daily run.
 
 ## Consequences
 
@@ -140,10 +143,25 @@ displayed — have their icons materialized.
   decision trades that for a single source of truth and no grade
   denormalization, relying on disjoint write ownership for safety instead.
 
+## Future work
+
+- **Full-catalog item browser.** Icons are materialized only for the tracked
+  subset (§5). A later frontend feature — a page to browse every BDO item and
+  choose which to track — would extend icon coverage to the whole catalog. Icon
+  materialization would then be **catalog-driven rather than curation-driven**:
+  run `iconSync` chained after `catalogSync`, gated on whether the catalog
+  actually changed (unchanged catalog ⇒ no new items ⇒ skip both), replacing the
+  standalone daily schedule used for the tracked-only scope. Deferred until the
+  browser exists, to avoid fetching and storing icons for the many catalog items
+  that are never displayed.
+
 ## Related
 
-- ADR-0004 — Step Functions ETL; `ensureIcon` extends this state machine.
-- ADR-0010 — lazy item population; this ADR extends catalog handling and reuses
-  the "materialize on the next ETL run" approach for icons.
+- ADR-0004 — Step Functions ETL; this ADR switches its `retrieveItems` stage to
+  the sparse-index query. The catalog sync and icon materializer run as separate
+  scheduled Lambdas, not inside the state machine.
+- ADR-0010 — lazy item population; this ADR extends catalog handling and follows
+  the same "materialize later, don't block the hot path" spirit for icons (via a
+  separate scheduled Lambda rather than the ETL).
 - ADR-0003 — the shared Lambda layer, where `SUPPORTED_LANGS`, the `Item` model,
   and the DynamoDB wrappers live.
