@@ -21,10 +21,19 @@ class TestCatalogSyncHandler:
         mod = load_handler("catalog_sync")
 
         def fake_sync(
-            client: Any, langs: list[str], *, default_lang: str = "en", max_workers: int = 16
+            client: Any,
+            langs: list[str],
+            *,
+            default_lang: str = "en",
+            max_workers: int = 16,
+            checksum_param: str | None = None,
         ) -> CatalogSyncStats:
             return CatalogSyncStats(
-                total=68000, new=12, langs=langs, fetched={"en": 68000, "tw": 68000}
+                total=68000,
+                new=12,
+                langs=langs,
+                fetched={"en": 68000, "tw": 68000},
+                written=12,
             )
 
         monkeypatch.setattr(mod.catalog, "sync_catalog", fake_sync)
@@ -32,10 +41,12 @@ class TestCatalogSyncHandler:
         result = mod.handler({}, lambda_context)
         assert result == {
             "total": 68000,
+            "written": 12,
             "new": 12,
             "langs": ["en", "tw"],
             "failed_langs": [],
             "skipped": False,
+            "unchanged": False,
         }
 
     def test_reports_failed_langs(
@@ -47,7 +58,12 @@ class TestCatalogSyncHandler:
         mod = load_handler("catalog_sync")
 
         def fake_sync(
-            client: Any, langs: list[str], *, default_lang: str = "en", max_workers: int = 16
+            client: Any,
+            langs: list[str],
+            *,
+            default_lang: str = "en",
+            max_workers: int = 16,
+            checksum_param: str | None = None,
         ) -> CatalogSyncStats:
             return CatalogSyncStats(
                 total=68000, new=0, langs=langs, fetched={"en": 68000, "tw": 0}
@@ -70,7 +86,12 @@ class TestCatalogSyncHandler:
         captured: dict[str, Any] = {}
 
         def fake_sync(
-            client: Any, langs: list[str], *, default_lang: str = "en", max_workers: int = 16
+            client: Any,
+            langs: list[str],
+            *,
+            default_lang: str = "en",
+            max_workers: int = 16,
+            checksum_param: str | None = None,
         ) -> CatalogSyncStats:
             captured["langs"] = langs
             return CatalogSyncStats(total=1, new=0, langs=langs)
