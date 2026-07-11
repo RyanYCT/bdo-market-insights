@@ -12,6 +12,7 @@ API exposes snapshots, daily rollups, and BDO-domain analytics.
 architecture-beta
     group external(cloud)[External]
         service arsha(internet)[arsha API] in external
+        service pearl(internet)[Pearl CDN] in external
         service dweb(internet)[Discord Webhook] in external
 
     group aws(cloud)[AWS Cloud]
@@ -24,6 +25,11 @@ architecture-beta
         service sns(cloud)[SNS] in aws
         service discord(server)[discordNotifier] in aws
         service bedrock(cloud)[Bedrock] in aws
+        service cron4(cloud)[EventBridge Weekly] in aws
+        service catalogsync(server)[catalogSync] in aws
+        service cron5(cloud)[EventBridge Daily] in aws
+        service iconsync(server)[iconSync] in aws
+        service icons(disk)[Icons Bucket] in aws
 
     group vpc(cloud)[VPC] in aws
         service etl(server)[ETL State Machine] in vpc
@@ -42,6 +48,14 @@ architecture-beta
     apigw:T --> B:mq
     apigw:L --> T:itemreg
     itemreg:T --> B:dynamo
+
+    cron4:B --> T:catalogsync
+    catalogsync:R --> L:arsha
+    catalogsync:B --> T:dynamo
+    cron5:B --> T:iconsync
+    iconsync:L --> R:pearl
+    iconsync:B --> T:dynamo
+    iconsync:R --> L:icons
 
     etl:B -- T:dbhub
     insights:T -- B:dbhub
