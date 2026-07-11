@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+import urllib.error
 import urllib.request
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -14,6 +16,24 @@ from bdo_common.models import CatalogEntry, Record
 logger = logging.getLogger(__name__)
 
 _MAX_BATCH_SIZE = 50
+
+#: ``util/db`` is a low-traffic, uncached endpoint that intermittently returns
+#: HTTP 500 or times out; transient failures are retried with linear backoff.
+_UTIL_DB_MAX_ATTEMPTS = 4
+_UTIL_DB_TIMEOUT_SECONDS = 30
+_UTIL_DB_BACKOFF_SECONDS = 3.0
+
+
+def _is_retryable_fetch_error(exc: Exception) -> bool:
+    """True for transient errors worth retrying (timeouts, 5xx, 429).
+
+    A 4xx client error (other than 429) is deterministic, so it is not retried.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code == 429 or exc.code >= 500
+    return True
+
+
 _MAX_URL_LENGTH = 1900
 
 # arsha.io item dicts are identified by the presence of these keys. Anything
@@ -225,8 +245,9 @@ class ArshaClient:
         """Fetch the full BDO item catalog for ``lang`` from arsha.io ``util/db``.
 
         Returns every known item as a CatalogEntry (id, localized name, grade).
-        Raises ValueError for an unsupported ``lang``. A network or parse
-        failure is logged and returns an empty list, so a bad fetch is a no-op
+        Raises ValueError for an unsupported ``lang``. Transient failures (5xx,
+        timeouts) are retried with linear backoff; if every attempt fails the
+        error is logged and an empty list is returned, so a bad fetch is a no-op
         for the (upsert-only) catalog sync rather than a destructive event.
         """
         if lang not in SUPPORTED_LANGS:
@@ -234,11 +255,26 @@ class ArshaClient:
             msg = f"unsupported lang {lang!r}; expected one of: {supported}"
             raise ValueError(msg)
         url = self._build_item_db_url(lang)
-        try:
-            # URL is built internally and is always https://api.arsha.io/...
-            with urllib.request.urlopen(url, timeout=30) as resp:  # noqa: S310  # nosec B310
-                raw = json.loads(resp.read().decode())
-        except Exception:
-            logger.exception("Failed to fetch item catalog from %s", url)
-            return []
-        return normalize_item_db(raw)
+        for attempt in range(1, _UTIL_DB_MAX_ATTEMPTS + 1):
+            try:
+                # URL is built internally and is always https://api.arsha.io/...
+                with urllib.request.urlopen(  # noqa: S310  # nosec B310
+                    url, timeout=_UTIL_DB_TIMEOUT_SECONDS
+                ) as resp:
+                    raw = json.loads(resp.read().decode())
+                return normalize_item_db(raw)
+            except Exception as exc:
+                if not _is_retryable_fetch_error(exc) or attempt == _UTIL_DB_MAX_ATTEMPTS:
+                    logger.error(
+                        "util/db fetch failed for %s after %d attempt(s): %s", url, attempt, exc
+                    )
+                    return []
+                logger.warning(
+                    "util/db fetch attempt %d/%d failed for %s: %s; retrying",
+                    attempt,
+                    _UTIL_DB_MAX_ATTEMPTS,
+                    url,
+                    exc,
+                )
+                time.sleep(_UTIL_DB_BACKOFF_SECONDS * attempt)
+        return []  # unreachable: the loop returns on success or final failure

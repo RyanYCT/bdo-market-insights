@@ -43,10 +43,28 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         ArshaClient(), langs, default_lang=DEFAULT_LANG, max_workers=max_workers
     )
 
+    failed_langs = [lang for lang, count in stats.fetched.items() if count == 0]
     metrics.add_metric(name="CatalogItemsSynced", unit=MetricUnit.Count, value=stats.total)
     metrics.add_metric(name="CatalogNewItems", unit=MetricUnit.Count, value=stats.new)
+    # Non-zero when a language fetch failed (flaky util/db) or the run was
+    # skipped because the default language failed -- alarm target.
+    metrics.add_metric(
+        name="CatalogLangFetchFailures", unit=MetricUnit.Count, value=len(failed_langs)
+    )
     logger.info(
         "catalogSync complete",
-        extra={"total": stats.total, "new": stats.new, "langs": langs},
+        extra={
+            "total": stats.total,
+            "new": stats.new,
+            "langs": langs,
+            "failed_langs": failed_langs,
+            "skipped": stats.skipped,
+        },
     )
-    return {"total": stats.total, "new": stats.new, "langs": langs}
+    return {
+        "total": stats.total,
+        "new": stats.new,
+        "langs": langs,
+        "failed_langs": failed_langs,
+        "skipped": stats.skipped,
+    }

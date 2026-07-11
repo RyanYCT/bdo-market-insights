@@ -8,13 +8,19 @@ the legacy pipe-delimited ``resultMsg`` format.
 from __future__ import annotations
 
 import json
+import urllib.error
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bdo_common.arsha_client import ArshaClient, normalize_item_db, normalize_response
+from bdo_common.arsha_client import (
+    _UTIL_DB_MAX_ATTEMPTS,
+    ArshaClient,
+    normalize_item_db,
+    normalize_response,
+)
 
 TIMESTAMP = 1717027200  # 2024-05-30T08:00:00 UTC
 
@@ -377,8 +383,55 @@ class TestFetchItemDb:
 
     def test_network_error_returns_empty(self) -> None:
         client = ArshaClient()
-        with patch(
-            "bdo_common.arsha_client.urllib.request.urlopen",
-            side_effect=OSError("connection refused"),
+        with (
+            patch(
+                "bdo_common.arsha_client.urllib.request.urlopen",
+                side_effect=OSError("connection refused"),
+            ),
+            patch("bdo_common.arsha_client.time.sleep"),
         ):
             assert client.fetch_item_db("en") == []
+
+    @staticmethod
+    def _ok_response(payload: list[dict[str, Any]]) -> MagicMock:
+        resp = MagicMock()
+        resp.read.return_value = json.dumps(payload).encode()
+        resp.__enter__ = MagicMock(return_value=resp)
+        resp.__exit__ = MagicMock(return_value=False)
+        return resp
+
+    def test_retries_transient_then_succeeds(self) -> None:
+        client = ArshaClient()
+        good = self._ok_response([{"id": 1, "name": "A", "grade": 4}])
+        err = urllib.error.HTTPError("u", 500, "boom", {}, None)  # type: ignore[arg-type]
+        with (
+            patch(
+                "bdo_common.arsha_client.urllib.request.urlopen", side_effect=[err, good]
+            ) as urlopen,
+            patch("bdo_common.arsha_client.time.sleep") as sleep,
+        ):
+            entries = client.fetch_item_db("en")
+        assert [e.item_id for e in entries] == [1]
+        assert urlopen.call_count == 2
+        sleep.assert_called_once()
+
+    def test_gives_up_after_max_attempts(self) -> None:
+        client = ArshaClient()
+        err = urllib.error.HTTPError("u", 500, "boom", {}, None)  # type: ignore[arg-type]
+        with (
+            patch("bdo_common.arsha_client.urllib.request.urlopen", side_effect=err) as urlopen,
+            patch("bdo_common.arsha_client.time.sleep"),
+        ):
+            assert client.fetch_item_db("en") == []
+        assert urlopen.call_count == _UTIL_DB_MAX_ATTEMPTS
+
+    def test_non_retryable_4xx_gives_up_immediately(self) -> None:
+        client = ArshaClient()
+        err = urllib.error.HTTPError("u", 404, "not found", {}, None)  # type: ignore[arg-type]
+        with (
+            patch("bdo_common.arsha_client.urllib.request.urlopen", side_effect=err) as urlopen,
+            patch("bdo_common.arsha_client.time.sleep") as sleep,
+        ):
+            assert client.fetch_item_db("en") == []
+        assert urlopen.call_count == 1  # 4xx is not retried
+        sleep.assert_not_called()
