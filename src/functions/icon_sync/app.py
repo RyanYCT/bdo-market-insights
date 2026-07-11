@@ -6,6 +6,10 @@ stores it in the icons bucket (marking the item ``stored`` or ``missing``). Runs
 independently of the ETL so it never touches the hourly hot path; new tracked
 items get their icon by the next daily run. Idempotent -- items already
 ``stored``/``missing`` are skipped.
+
+Scope is intentionally the tracked subset only. Extending icons to the full
+catalog (a future item browser) would make materialization catalog-driven and
+chain this after ``catalogSync`` -- see ADR-0018 "Future work".
 """
 
 from __future__ import annotations
