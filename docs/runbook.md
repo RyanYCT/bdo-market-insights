@@ -9,6 +9,7 @@ evaluation, cleanup/teardown, and troubleshooting.
 - [Daily operations](#daily-operations)
 - [Deployment](#deployment)
   - [Quick reference](#quick-reference)
+  - [Deployment notes](#deployment-notes)
   - [Dev deployment (manual)](#dev-deployment-manual)
   - [CI/CD deploy role (GitHub OIDC) bootstrap](#cicd-deploy-role-github-oidc-bootstrap)
   - [Prod deployment (CI/CD)](#prod-deployment-cicd)
@@ -44,6 +45,20 @@ input/output, and retry behaviour.
 | Prod | Push a `v*` tag to trigger CI deploy |
 | Rollback | Deploy the previous tag |
 
+### Deployment notes
+
+Two things apply to every `make deploy` below:
+
+- **Build on a native Linux filesystem, not a Windows-mounted `/mnt/*` path.**
+  `make deploy` runs `make build` (including the verify-layer guard) first, so a
+  deploy can never republish a source-only `CommonLayer` — which would otherwise
+  break every function at init with `No module named 'aws_lambda_powertools'`.
+  On a `/mnt/*` path `pip --target` can silently vendor nothing.
+- **`make deploy` re-declares the full stack state.** Every invocation must pass
+  the stage's persistent flags (`ENABLE_DEMO_KEY`, the custom-domain vars) or
+  they are dropped — even when you are only toggling one option (e.g. the
+  bastion). CI passes them for prod on every tagged release.
+
 ### Dev deployment (manual)
 
 **Use this workflow to test changes on the dev stack before promoting to prod.**
@@ -58,8 +73,8 @@ input/output, and retry behaviour.
 #### Deploy dev
 
 ```bash
-# Build, verify the layer, and deploy the dev stack (prompts for changeset
-# confirmation). `make deploy` runs `make build` (incl. verify-layer) first.
+# Build and deploy the dev stack (prompts for changeset confirmation).
+# See "Deployment notes" above re: the build guard and full-state flags.
 make deploy STAGE=dev
 
 # Watch the deploy progress (optional)
@@ -75,8 +90,7 @@ If your changes include schema migrations (`migrations/versions/*`):
 
 ```bash
 # One-time only: enable the bastion for dev (if not already deployed).
-# `make deploy` runs verify-layer first so it can't republish a broken
-# (source-only) CommonLayer. Build on a native Linux FS, not /mnt/*.
+# (Full-state deploy — pass the stage's other persistent flags too.)
 make deploy STAGE=dev ENABLE_BASTION=true
 
 # Open tunnel in one terminal
@@ -156,10 +170,9 @@ Icons are self-hosted in the `bdo-<stage>-icons` bucket and materialized from th
 Pearl Abyss CDN by the daily `iconSync` Lambda, which processes tracked items
 with `icon_status=unset` (marking each `stored`, or `missing` when the CDN has no
 icon). No manual step is required — new tracked items get an icon by the next
-daily run. It processes only tracked items with `icon_status=unset`, so it is a
-no-op once every tracked item's icon is `stored`/`missing`. To materialize
-immediately (e.g. right after registering items), invoke it **asynchronously**
-and read the result from the logs:
+daily run, and the job is a no-op once every tracked icon is `stored`/`missing`.
+To materialize immediately (e.g. right after registering items), invoke it
+**asynchronously** and read the result from the logs:
 
 ```bash
 aws lambda invoke --function-name bdo-dev-icon-sync \
@@ -173,51 +186,60 @@ aws logs tail /aws/lambda/bdo-dev-icon-sync --since 5m --follow
 
 #### Post-deploy verification (dev)
 
+This block is parametrized on `STAGE`; the [prod section](#post-deploy-verification-prod)
+reuses it with `STAGE=prod`.
+
 ```bash
+STAGE=dev
+
 # Resolve the API base URL from the nested API stack. The root stack
-# (bdo-market-dev) exposes no outputs of its own, so query across all stacks
+# (bdo-market-${STAGE}) exposes no outputs of its own, so query across all stacks
 # whose name starts with the stack prefix and pick the nested API stack's output.
 API_URL=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-dev')].Outputs[] | [?OutputKey=='ApiUrl'].OutputValue | [0]" \
+  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?OutputKey=='ApiUrl'].OutputValue | [0]" \
   --output text)
 
 # The API key is an API Gateway key created by the usage plan (NOT Secrets
 # Manager). Resolve it via the REST API id so the dev/prod keys in the same
 # account are never confused.
 API_ID=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-dev')].Outputs[] | [?OutputKey=='ApiId'].OutputValue | [0]" \
+  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?OutputKey=='ApiId'].OutputValue | [0]" \
   --output text)
 # Exclude the read-only demo plan (if enabled) so this resolves the PRIVATE key.
 USAGE_PLAN_ID=$(aws apigateway get-usage-plans \
-  --query "items[?apiStages[?apiId=='${API_ID}'] && name!='bdo-dev-demo-plan'].id | [0]" --output text)
+  --query "items[?apiStages[?apiId=='${API_ID}'] && name!='bdo-${STAGE}-demo-plan'].id | [0]" --output text)
 API_KEY_ID=$(aws apigateway get-usage-plan-keys --usage-plan-id "${USAGE_PLAN_ID}" \
   --query 'items[0].id' --output text)
 API_KEY=$(aws apigateway get-api-key --api-key "${API_KEY_ID}" --include-value \
   --query 'value' --output text)
 
+# Swagger UI + spec are key-less; use their dedicated output
+DOCS_URL=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?OutputKey=='DocsUrl'].OutputValue | [0]" \
+  --output text)
+
 # Test the key-required API (ApiUrl already includes the stage path)
 curl -H "x-api-key: ${API_KEY}" "${API_URL}/v1/items" | head -20
+curl -s "${DOCS_URL}" | grep -q "swagger-ui" && echo "Swagger UI OK"
 
-# Smoke-test the tracked-index Query path (esp. useful on a fresh/empty table).
+# Check CloudWatch Logs for errors (last 10 minutes)
+aws logs tail /aws/lambda/bdo-${STAGE}-market-query --since 10m --follow
+```
+
+Optional (dev / fresh-table only): smoke-test the tracked-index Query path. Skip
+on prod — this registers a real tracked item.
+
+```bash
 # Registering an item validates the id against arsha.io and writes it via
 # put_item, which stamps the sparse marker (t="1") because it is tracked -- so
 # it must appear in the tracked-index the ETL's retrieveItems now queries.
 curl -s -X POST "${API_URL}/v1/items" -H "x-api-key: ${API_KEY}" \
   -H "Content-Type: application/json" -d '{"id": 12094}' | head -20
 # Confirm the item is present in the sparse tracked-index (Count >= 1)
-aws dynamodb query --table-name bdo-dev-items --index-name tracked-index \
+aws dynamodb query --table-name bdo-${STAGE}-items --index-name tracked-index \
   --key-condition-expression "t = :t" \
   --expression-attribute-values '{":t": {"S": "1"}}' \
   --query 'Count'
-
-# Swagger UI + spec are key-less; use their dedicated outputs
-DOCS_URL=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-dev')].Outputs[] | [?OutputKey=='DocsUrl'].OutputValue | [0]" \
-  --output text)
-curl -s "${DOCS_URL}" | grep -q "swagger-ui" && echo "Swagger UI OK"
-
-# Check CloudWatch Logs for errors (last 10 minutes)
-aws logs tail /aws/lambda/bdo-dev-market-query --since 10m --follow
 ```
 
 ### CI/CD deploy role (GitHub OIDC) bootstrap
@@ -359,44 +381,25 @@ gh run view <RUN_ID> --log
 
 #### Post-deploy verification (prod)
 
-Once the workflow completes (indicated by a ✓ or ✗ badge):
+Once the workflow completes (indicated by a ✓ or ✗ badge), resolve
+`API_URL` / `API_KEY` / `DOCS_URL` and run the API + Swagger checks exactly as in
+[Post-deploy verification (dev)](#post-deploy-verification-dev) with `STAGE=prod`
+(skip the item-registration smoke test). Then run the two prod-only checks: the
+custom domain and live ETL history.
 
 ```bash
-# Resolve the API base URL from the nested API stack (same cross-stack query
-# pattern as dev; the root stack exposes no outputs of its own).
-API_URL=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-prod')].Outputs[] | [?OutputKey=='ApiUrl'].OutputValue | [0]" \
-  --output text)
+STAGE=prod
+# (resolve API_URL / API_KEY / DOCS_URL and test the API per the dev block)
 
-# Or, if the custom domain is enabled (ADR-0013), use it instead:
+# If the custom domain is enabled (ADR-0013), it should serve too:
 CUSTOM_URL=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-prod')].Outputs[] | [?OutputKey=='CustomApiUrl'].OutputValue | [0]" \
+  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?OutputKey=='CustomApiUrl'].OutputValue | [0]" \
   --output text)
-
-# Resolve the API Gateway key via the REST API id (NOT Secrets Manager)
-API_ID=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-prod')].Outputs[] | [?OutputKey=='ApiId'].OutputValue | [0]" \
-  --output text)
-# Exclude the read-only demo plan (if enabled) so this resolves the PRIVATE key.
-USAGE_PLAN_ID=$(aws apigateway get-usage-plans \
-  --query "items[?apiStages[?apiId=='${API_ID}'] && name!='bdo-prod-demo-plan'].id | [0]" --output text)
-API_KEY_ID=$(aws apigateway get-usage-plan-keys --usage-plan-id "${USAGE_PLAN_ID}" \
-  --query 'items[0].id' --output text)
-API_KEY=$(aws apigateway get-api-key --api-key "${API_KEY_ID}" --include-value \
-  --query 'value' --output text)
-
-# Test the API
-curl -H "x-api-key: ${API_KEY}" "${API_URL}/v1/items?limit=1" | head -20
-
-# Check Swagger UI is serving (key-less) via its dedicated output
-DOCS_URL=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-prod')].Outputs[] | [?OutputKey=='DocsUrl'].OutputValue | [0]" \
-  --output text)
-curl -s "${DOCS_URL}" | grep -q "swagger-ui" && echo "Swagger UI OK"
+[ -n "$CUSTOM_URL" ] && curl -H "x-api-key: ${API_KEY}" "${CUSTOM_URL}/v1/items?limit=1" | head -20
 
 # Verify recent ETL runs succeeded (state machine ARN is exported by the ETL stack)
 ETL_ARN=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-prod')].Outputs[] | [?OutputKey=='EtlStateMachineArn'].OutputValue | [0]" \
+  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?OutputKey=='EtlStateMachineArn'].OutputValue | [0]" \
   --output text)
 aws stepfunctions list-executions --state-machine-arn "${ETL_ARN}" \
   --query 'executions[:3].[name, status, stopDate]' --output table
@@ -465,15 +468,11 @@ Instance Connect Endpoint (EICE), so you never SSH to it directly — the
 
 1. Ensure the bastion is deployed. If your stack was deployed with
    `EnableBastion=false` (the default), redeploy with it on. The bastion is a
-   transient toggle — `make deploy` re-declares the full stack state, so include
-   the stage's persistent flags (demo key, domain) too if it has them:
+   transient toggle, but the deploy re-declares full stack state, so include the
+   stage's persistent flags (demo key, domain) too if it has them (see
+   [Deployment notes](#deployment-notes)):
 
    ```sh
-   # `make deploy` builds + verify-layer FIRST, then deploys, so this toggle
-   # can never republish a source-only CommonLayer (which would break every
-   # function at init with "No module named 'aws_lambda_powertools'"). Build on
-   # a native Linux filesystem, NOT a Windows-mounted /mnt/* path (pip --target
-   # can silently vendor nothing).
    make deploy STAGE=dev ENABLE_BASTION=true
    ```
 
@@ -541,16 +540,12 @@ After this one-time bootstrap, all later schema changes go through
 `make migrate-lambda` (or the CI deploy step) — no tunnel required. Drop the
 bastion again once you're done (`make deploy STAGE=dev ENABLE_BASTION=false`).
 
-> **Why the bootstrap revokes the master's role membership.** On RDS the
-> master is not a superuser, and PostgreSQL 16 auto-grants the creating role
-> membership in every role it creates. Because `lambda_rds_user` and
-> `lambda_migrator` hold `rds_iam`, that auto-membership makes the master a
-> *transitive* member of `rds_iam` — which makes RDS route the master to PAM
-> (IAM) auth and **breaks master password login** (`FATAL: PAM authentication
-> failed for user "postgres"`). Migrations `0002`/`0003` therefore
-> `REVOKE … FROM CURRENT_USER` at the end so the master keeps password auth.
-> If you are ever locked out this way, connect once with an IAM token (the
-> master now has `rds_iam`, so IAM auth works) and run
+> Migrations `0002`/`0003` end with `REVOKE … FROM CURRENT_USER` so the master
+> keeps password login; without it the master becomes a transitive `rds_iam`
+> member and RDS routes it to PAM auth (`FATAL: PAM authentication failed for
+> user "postgres"`). See [ADR-0008](adr/0008-iam-database-authentication.md) for
+> the mechanism. If you are ever locked out this way, connect once with an IAM
+> token (the master now holds `rds_iam`, so IAM auth works) and run
 > `REVOKE lambda_rds_user FROM postgres; REVOKE lambda_migrator FROM postgres;`.
 
 ## Custom API domain
@@ -592,17 +587,14 @@ gh secret set PROD_API_DOMAIN_NAME --body "api.example.com"
 gh secret set PROD_HOSTED_ZONE_ID --body "ZXXXXXXXXXXXXX"
 ```
 
-To apply it now without waiting for a tag, run a full-state deploy — include the
-stage's other persistent flags (e.g. the demo key) so they are not dropped:
+To apply it now without waiting for a tag, run a full-state deploy (keep the
+stage's other persistent flags, e.g. the demo key — see
+[Deployment notes](#deployment-notes)):
 
 ```sh
 make deploy STAGE=prod ENABLE_DEMO_KEY=true \
   API_DOMAIN_NAME=api.example.com HOSTED_ZONE_ID=ZXXXXXXXXXXXXX
 ```
-
-> `make deploy` runs the verify-layer guard before deploying, so it can never
-> republish a source-only `CommonLayer`. Build on a native Linux filesystem,
-> not a Windows-mounted `/mnt/*` path.
 
 > The first deploy that sets a domain blocks for a few minutes while ACM
 > validates the certificate via the DNS record CloudFormation writes into the
@@ -641,11 +633,10 @@ Never publish the privileged stage key — only this demo key.
 
 ### Enable
 
-`make deploy` declares the full stack state, so just add `ENABLE_DEMO_KEY=true`
-(the [Deployment](#deployment) section covers why the whole state is passed each
-time). For **prod** the demo key should persist across releases — the tag-gated
-CI deploy sets `EnableDemoKey=true`, so once this is on `main` every release
-keeps it live.
+Add `ENABLE_DEMO_KEY=true` to a full-state deploy (see
+[Deployment notes](#deployment-notes)). For **prod** the demo key should persist
+across releases — the tag-gated CI deploy sets `EnableDemoKey=true`, so once this
+is on `main` every release keeps it live.
 
 Apply it immediately with a full-state deploy. Prod (include the domain so it is
 not dropped):
