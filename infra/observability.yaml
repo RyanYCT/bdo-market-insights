@@ -1,9 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Observability for bdo-market-insights: one CloudWatch dashboard, the three
-  SLO alarms (API 5xx rate, API p95 latency, ETL execution failure -> SNS),
-  and log-group retention for every Lambda. Targets match docs/slo.md and the
-  Observability section of .kiro/specs/v3/design.md.
+  Observability for bdo-market-insights: one CloudWatch dashboard, the SLO +
+  pipeline alarms (API 5xx rate, API p95 latency, ETL/insights execution
+  failures, insight + catalog fetch failures -> SNS), and log-group retention
+  for every Lambda. Targets match docs/slo.md and the Observability section of
+  .kiro/specs/v3/design.md.
 
 Parameters:
   Stage:
@@ -249,6 +250,30 @@ Resources:
             Period: 86400
             Stat: Sum
 
+  # Catalog freshness: the weekly catalogSync emits CatalogLangFetchFailures
+  # (count of languages whose util/db fetch failed after retries; also non-zero
+  # when the run was skipped because the default language failed). Any failure
+  # in 24h means the catalog did not fully sync -> notify. Matches the default
+  # `service` dimension Powertools attaches (POWERTOOLS_SERVICE_NAME).
+  CatalogFetchFailuresAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-${Stage}-catalog-fetch-failures'
+      AlarmDescription: 'One or more catalog language fetches failed (flaky util/db) in 24h'
+      Namespace: BdoMarket
+      MetricName: CatalogLangFetchFailures
+      Dimensions:
+        - Name: service
+          Value: bdo-market-insights
+      Statistic: Sum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
   # ──────────────────────────────────────────────
   # Log-group retention (one per Lambda; names follow the FunctionName
   # convention bdo-${Stage}-<name> from infra/etl.yaml and infra/api.yaml).
@@ -337,6 +362,18 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-discord'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  CatalogSyncLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-catalog-sync'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  IconSyncLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-icon-sync'
       RetentionInDays: !Ref LogRetentionInDays
 
   # ──────────────────────────────────────────────
