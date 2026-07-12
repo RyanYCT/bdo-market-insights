@@ -109,7 +109,7 @@ flowchart LR
     catalogsync -->|"upsert changed"| ddb[("DynamoDB items")]
 
     iconsync -->|"tracked, icon_status=unset"| ddb
-    iconsync -->|"fetch PNG"| pearl["Pearl CDN"]
+    iconsync -->|"fetch PNG"| pearl["Pearl Abyss CDN"]
     iconsync -->|"put icon"| s3[("S3 icons")]
 ```
 
