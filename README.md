@@ -1,10 +1,14 @@
 # BDO Market Insights
 
-A **serverless, event-driven market-data platform** for the *Black Desert Online* in-game economy, built on AWS. It ingests hourly price/stock data, stores it as a time series, and exposes it through a REST API with domain-specific analytics — expected item-enhancement cost, price volatility, liquidity, and anomaly detection.
+[![version](https://img.shields.io/github/v/tag/RyanYCT/bdo-market-insights?sort=semver&label=version)](https://github.com/RyanYCT/bdo-market-insights/tags)
+[![CI](https://img.shields.io/github/actions/workflow/status/RyanYCT/bdo-market-insights/ci.yml?branch=main&label=CI)](https://github.com/RyanYCT/bdo-market-insights/actions/workflows/ci.yml)
+![license](https://img.shields.io/badge/license-MIT-blue)
 
-The project is a study in building a **production-grade serverless data pipeline cheaply and safely**: IAM-authenticated database access (no passwords), a no-NAT VPC, single shared Lambda layer, infrastructure-as-code with nested stacks, and a full CI quality gate — all targeted at **under ~US$15/month** of incremental cost.
+A **serverless, event-driven market-data platform** for the *Black Desert Online* in-game economy, built on AWS. It ingests hourly price/stock data, stores it as a time series, and exposes it through a REST API with domain analytics — expected item-enhancement cost, price volatility, liquidity, and anomaly detection.
 
-> **Status:** Live in prod (v3.2.0). 16 Lambdas, two Step Functions pipelines (hourly ETL + daily/weekly market-insights), and a REST API — deployable to `dev`/`prod` via AWS SAM.
+It runs a serverless data pipeline in production, cheaply and safely: passwordless (IAM-authenticated) database access, a no-NAT VPC, a single shared Lambda layer, infrastructure-as-code with nested stacks, and a full CI quality gate — all targeted at **≤ ~US$15/month** incremental cost.
+
+> **Status:** live in prod, deployable to `dev`/`prod` via AWS SAM — single-purpose Lambdas behind two Step Functions pipelines (hourly ETL + daily/weekly insights) and a REST API.
 
 ---
 
@@ -12,16 +16,16 @@ The project is a study in building a **production-grade serverless data pipeline
 
 The data answers real trading questions for players:
 
-- **Buy-vs-enhance** — is it cheaper to buy the PEN item, or enhance one yourself? `analysis` compares market price against expected enhancement cost.
-- **Item sniping** — surface mispriced or anomalous listings via the `is_anomalous` flag (z-score) and volatility. (It flags opportunities — it doesn't push real-time alerts.)
-- **Timing trades** — read price volatility (σ, CV) and liquidity to decide when to buy or sell.
-- **What moved this week** — daily/weekly market-wide digests of the top movers per category.
+- **Buy vs. enhance** — cheaper to buy the PEN item, or enhance one yourself? `analysis` weighs market price against expected enhancement cost.
+- **Item sniping** — surface mispriced or anomalous listings via the `is_anomalous` flag (z-score) and volatility. (Flags opportunities; no real-time alerts.)
+- **Timing trades** — read volatility (σ, CV) and liquidity to decide when to buy or sell.
+- **What moved this week** — daily/weekly digests of the top movers per category.
 
-Underneath, the game economy is a stand-in for any volatile financial/IoT time-series problem, and the engineering is shaped by four constraints:
+The engineering is shaped by four constraints:
 
 - **Time-series ingestion** from a third-party API with five polymorphic response shapes normalized into one schema.
 - **Cost discipline** — serverless that avoids the usual traps (NAT gateways, idle compute, RDS Proxy unless needed).
-- **Security by default** — Lambdas reach Postgres via **IAM database authentication**; no database passwords anywhere.
+- **Security by default** — passwordless Lambda→Postgres access via IAM database authentication.
 - **Domain analytics** — turning raw prices into decisions via a probabilistic Markov model over enhancement tiers.
 
 ## What it does
@@ -37,61 +41,63 @@ Underneath, the game economy is a stand-in for any volatile financial/IoT time-s
 
 ## Architecture
 
+A context view — external sources, the AWS compute groups, and the data stores.
+
 ```mermaid
-architecture-beta
-    group external(cloud)[External]
-        service arsha(internet)[arsha API] in external
-        service dweb(internet)[Discord Webhook] in external
+flowchart LR
+    client(["Client"])
 
-    group aws(cloud)[AWS Cloud]
-        service cron1(cloud)[EventBridge Hourly] in aws
-        service cron2(cloud)[EventBridge Daily and Weekly] in aws
-        service apigw(internet)[API Gateway] in aws
-        service itemreg(server)[itemRegistry] in aws
-        service dynamo(database)[DynamoDB] in aws
-        service sns(cloud)[SNS] in aws
-        service discord(server)[discordNotifier] in aws
-        service bedrock(cloud)[Bedrock] in aws
+    subgraph ext["External"]
+        arsha["arsha.io API"]
+        pearl["Pearl Abyss CDN"]
+        discord["Discord"]
+    end
 
-    group vpc(cloud)[VPC] in aws
-        service etl(server)[ETL State Machine] in vpc
-        service insights(server)[Insights State Machine] in vpc
-        service mq(server)[marketQuery] in vpc
-        service rds(database)[RDS Postgres] in vpc
-        junction dbhub in vpc
+    subgraph aws["AWS Cloud"]
+        eb["EventBridge schedules"]
+        subgraph compute["Compute"]
+            api["REST API<br/>itemRegistry · marketQuery · docs"]
+            etl["ETL pipeline"]
+            catalog["Catalog & icon sync"]
+            insights["Insights pipeline"]
+        end
+        subgraph data["Data stores"]
+            ddb[("DynamoDB<br/>registry + catalog")]
+            rds[("RDS Postgres<br/>snapshots + rollups")]
+            s3[("S3<br/>item icons")]
+        end
+    end
 
-    cron1:B --> T:etl
-    cron2:T --> B:insights
-    etl:R --> L:arsha
-    apigw:T --> B:mq
-    apigw:L --> R:itemreg
-    itemreg:T --> B:dynamo
-
-    etl:B -- T:dbhub
-    insights:T -- B:dbhub
-    mq:R -- L:rds
-    dbhub:L -- R:rds
-
-    insights:R --> T:bedrock
-    insights:R --> B:sns
-    sns:B --> T:discord
-    discord:R --> L:dweb
+    client --> api
+    eb --> etl
+    eb --> catalog
+    eb --> insights
+    api --> ddb
+    api --> rds
+    etl --> arsha
+    etl --> rds
+    catalog --> arsha
+    catalog --> pearl
+    catalog --> ddb
+    catalog --> s3
+    insights --> rds
+    insights --> discord
 ```
 
 The database and the Lambdas that touch it (`etl`, `insights`, `marketQuery`)
-run inside a VPC and authenticate to Postgres via IAM; the **arsha API** (an
-external third-party service) and the Discord webhook are the only external
-dependencies.
+run inside a VPC and authenticate to Postgres via IAM. External dependencies are
+the **arsha.io API** (market data + item catalog), the **Pearl Abyss CDN** (item
+icons), and the Discord webhook for insight delivery.
 
 **Shared Lambda layer (`bdo-common`)** holds all reusable logic — the arsha API client + normalizer, psycopg connection helper, Pydantic models, SQL repositories, the pricing models, and the analytics functions — so the individual handlers stay thin.
 
-See [`docs/architecture.md`](docs/architecture.md) for the full topology — including the `migrator` and `purgeOldSnapshots` Lambdas and the ETL/insights state-machine breakdowns — and [`docs/adr/`](docs/adr/) for the 18 Architecture Decision Records explaining the *why* behind each major choice.
+See [`docs/architecture.md`](docs/architecture.md) for the subsystem diagrams (ETL and insights state machines, catalog/icon sync) and the full component list, and [`docs/adr/`](docs/adr/) for the Architecture Decision Records behind each major choice.
 
 ## Tech stack
 
 - **Language:** Python 3.12, fully type-annotated (`mypy --strict`)
 - **Compute:** AWS Lambda, Step Functions, EventBridge
-  - 8 ETL/API handlers, a 4-step insights pipeline, a weekly catalog-sync, a daily icon-sync, an in-VPC migrator, and a docs API — **16** Lambdas total
+  - single-purpose handlers: ETL and API, a multi-step insights pipeline, a weekly catalog-sync, a daily icon-sync, an in-VPC migrator, and a docs API
 - **Data:** Amazon RDS for PostgreSQL (time series), DynamoDB (item registry), Alembic (schema migrations)
 - **API:** API Gateway (REST) with API-key usage plans
   - OpenAPI 3.1 spec auto-generated from the handlers and served via interactive Swagger UI
@@ -101,9 +107,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the full topology — inc
 - **Tooling:** `uv` (deps), `ruff` (lint/format), `pytest` + `moto` (tests)
   - GitHub Actions CI/CD, plus OpenAPI spec generation and drift detection
 
-## Engineering highlights
-
-Notable design decisions:
+## Design decisions
 
 - **Passwordless database access.** Every Lambda connects to Postgres using **IAM database authentication** — short-lived tokens, no secrets to rotate or leak. A separate `dba` role (Secrets Manager) exists only for human access. *(ADR-0008)*
 - **No-NAT private networking.** DB-touching Lambdas run in a VPC; a DynamoDB **Gateway Endpoint** gives in-VPC access with zero NAT cost. Human DBA access goes through an **EC2 Instance Connect Endpoint** + a `t4g.nano` bastion with **no public IP**. *(ADR-0006, ADR-0009)*
@@ -213,7 +217,7 @@ Database schema is managed by Alembic and applied via an in-VPC migrator Lambda.
 ## Documentation
 
 - **[Architecture](docs/architecture.md)** — components, data flow, networking
-- **[ADRs](docs/adr/)** — 18 architecture decision records
+- **[ADRs](docs/adr/)** — architecture decision records
 - **[Runbook](docs/runbook.md)** — operations, DB access, migrations, failure scenarios
 - **[SLOs](docs/slo.md)** — availability and latency targets
 
