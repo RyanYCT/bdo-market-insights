@@ -195,23 +195,30 @@ def _catalog_update_kwargs(
     """Build the ``update_item`` kwargs for a catalog partial upsert.
 
     Writes only ``name``/``names``/``grade`` plus ``updated_at`` (and
-    ``created_at`` once, via ``if_not_exists``). Never touches the ETL-owned
-    attributes (``tracked``/``model_id``/``cron_table``/``icon_status``), so the
-    catalog sync cannot clobber the polled subset (ADR-0018). ``ReturnValues``
-    is ``ALL_OLD`` so callers can detect a newly created item (empty old image).
+    ``created_at`` once, via ``if_not_exists``). ``tracked`` is initialized to
+    ``"false"`` on newly created rows but preserved on existing ones (also via
+    ``if_not_exists``), so a catalog-created item is untracked by default while
+    the polled subset is never clobbered. The remaining ETL-owned attributes
+    (``model_id``/``cron_table``/``icon_status``) are left untouched (ADR-0018).
+    ``ReturnValues`` is ``ALL_OLD`` so callers can detect a newly created item
+    (empty old image).
     """
     now = datetime.now(tz=UTC).isoformat()
-    # ``name`` is a DynamoDB reserved word; ``names`` is aliased defensively.
+    # ``name`` is a DynamoDB reserved word; ``names``/``tracked`` are aliased
+    # defensively. ``if_not_exists`` on ``tracked`` seeds new rows as untracked
+    # without ever overwriting an already-tracked item's flag.
     set_parts = [
         "#name = :name",
         "updated_at = :updated_at",
         "created_at = if_not_exists(created_at, :created_at)",
+        "#tracked = if_not_exists(#tracked, :untracked)",
     ]
-    attr_names: dict[str, str] = {"#name": "name"}
+    attr_names: dict[str, str] = {"#name": "name", "#tracked": "tracked"}
     attr_values: dict[str, Any] = {
         ":name": name,
         ":updated_at": now,
         ":created_at": now,
+        ":untracked": "false",
     }
     if grade is not None:
         set_parts.append("grade = :grade")
