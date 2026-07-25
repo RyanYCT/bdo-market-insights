@@ -6,6 +6,7 @@ evaluation, cleanup/teardown, and troubleshooting.
 
 ## Contents
 
+- [Decision flow](#decision-flow)
 - [Daily operations](#daily-operations)
 - [Deployment](#deployment)
   - [Quick reference](#quick-reference)
@@ -22,7 +23,36 @@ evaluation, cleanup/teardown, and troubleshooting.
 - [Public demo API key](#public-demo-api-key)
 - [Market Insights: dev evaluation](#market-insights-dev-evaluation)
 - [Cleanup and teardown](#cleanup-and-teardown)
+- [Recreating a stack from scratch](#recreating-a-stack-from-scratch)
 - [Troubleshooting](#troubleshooting)
+
+## Decision flow
+
+Start here: pick what you are doing and follow the arrows to the section that
+covers it. Every box names a section in this runbook (see [Contents](#contents)).
+
+```mermaid
+flowchart TD
+    q(["What do you need to do?"])
+
+    q --> shipping{"Ship a change?"}
+    q --> reset{"Remove or reset a stack?"}
+    q --> monitor["Check ETL / API health<br/>→ Daily operations"]
+    q --> dbwork["Run SQL or a migration<br/>→ Database access via bastion"]
+    q --> feature["Toggle custom domain / demo key<br/>→ Custom API domain ·<br/>Public demo API key"]
+    q --> reviewi["Review insights on dev<br/>→ Market Insights: dev evaluation"]
+    q --> broken["Something is broken<br/>→ Troubleshooting"]
+
+    shipping -->|"prod"| pr["Prod deployment (CI/CD)<br/>→ Post-deploy verification (prod)"]
+    shipping -->|"dev · stack exists"| dv["Dev deployment (manual)<br/>+ migrations if schema changed<br/>→ Post-deploy verification (dev)"]
+    shipping -->|"dev · no stack yet"| rc
+
+    reset -->|"just delete it"| cl["Cleanup and teardown"]
+    reset -->|"stuck in ROLLBACK_COMPLETE<br/>or 'already exists' on create"| rc
+    reset -->|"rebuild dev clean"| rc
+
+    rc["Recreating a stack from scratch<br/>clear orphans → deploy → rebuild data"]
+```
 
 ## Daily operations
 
@@ -880,6 +910,68 @@ ENIs -- delete the remaining compute/data stacks, then retry Network.
 
 > Irreversible. If others may depend on the stack, prefer the staged
 > disable -> observe -> delete approach documented in `docs/cleanup-tasks.md`.
+
+## Recreating a stack from scratch
+
+Use this when a stack was deleted, or a first-time create failed and left it in
+`ROLLBACK_COMPLETE` (that state can only be deleted, not updated). A few
+fixed-name resources survive a delete/rollback and will fail the fresh CREATE
+with "already exists", so clear them first, then rebuild the data. Commands show
+`dev`; swap `dev` -> `prod` as needed.
+
+### Clear orphaned resources
+
+```sh
+# Lambda-auto-created log groups. ObservabilityStack declares each Lambda's log
+# group explicitly, so any group a prior invocation created blocks its CREATE.
+for lg in $(aws logs describe-log-groups \
+  --log-group-name-prefix /aws/lambda/bdo-dev- \
+  --query 'logGroups[].logGroupName' --output text); do
+  aws logs delete-log-group --log-group-name "$lg"
+done
+
+# Icons bucket: DeletionPolicy: Retain with a fixed name, so it survives
+# teardown/rollback (and is re-created + retained again by a partial deploy).
+# Icons are re-fetchable from the Pearl Abyss CDN.
+aws s3 rm s3://bdo-dev-icons --recursive
+aws s3api delete-bucket --bucket bdo-dev-icons
+
+# The dba secret may sit in a 30-day deletion recovery window (fixed name).
+aws secretsmanager delete-secret --secret-id bdo-dev-dba-credentials \
+  --force-delete-without-recovery
+```
+
+Confirm nothing lingers (both should be empty):
+
+```sh
+aws logs describe-log-groups --log-group-name-prefix /aws/lambda/bdo-dev- \
+  --query 'logGroups[].logGroupName'
+aws s3 ls | grep bdo-dev-icons
+```
+
+### Deploy the empty stack
+
+```sh
+make deploy STAGE=dev
+```
+
+If it still fails with "already exists", that named resource needs the same
+delete-then-retry -- see [Troubleshooting](#troubleshooting).
+
+### Rebuild the data
+
+RDS and DynamoDB come back empty (neither is retained), so run the first-time
+data path in order:
+
+1. [First-time role bootstrap](#first-time-role-bootstrap), then
+   [Running migrations](#running-migrations) -- the fresh RDS has no
+   roles/schema yet.
+2. [Backfill the item catalog](#backfill-the-item-catalog-one-time) -- seeds the
+   catalog (retries flaky `util/db`, but cannot work around an arsha outage).
+3. Register tracked items and run an ETL cycle (see
+   [Daily operations](#daily-operations)).
+4. [Item icons](#item-icons) materialize on the next daily `iconSync` run, or
+   invoke it asynchronously to materialize immediately.
 
 ## Troubleshooting
 
