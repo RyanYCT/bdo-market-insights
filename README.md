@@ -16,8 +16,8 @@ It runs a serverless data pipeline in production, cheaply and safely: passwordle
 
 The data answers real trading questions for players:
 
-- **Buy vs. enhance** — cheaper to buy the PEN item, or enhance one yourself? `analysis` weighs market price against expected enhancement cost.
-- **Item sniping** — surface mispriced or anomalous listings via the `is_anomalous` flag (z-score) and volatility. (Flags opportunities; no real-time alerts.)
+- **Buy vs. enhance** — cheaper to buy the item, or enhance one yourself? `analysis` weighs market price against expected enhancement cost.
+- **Item sniping** — surface mispriced or anomalous listings via the `is_anomalous` flag (z-score) and volatility. (Flags opportunities.)
 - **Timing trades** — read volatility (σ, CV) and liquidity to decide when to buy or sell.
 - **What moved this week** — daily/weekly digests of the top movers per category.
 
