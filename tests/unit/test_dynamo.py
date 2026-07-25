@@ -119,6 +119,18 @@ class TestUpsertCatalogItem:
         assert item.name == "Wild Herb"
         assert item.grade == 4
 
+    def test_new_item_defaults_untracked(self, dynamodb_table: Any) -> None:
+        from bdo_common.dynamo import get_item, list_tracked_items, upsert_catalog_item
+
+        # A catalog-created row nobody registered must be untracked, not fall
+        # back to the model's "true" default, and stay out of the sparse index.
+        upsert_catalog_item(item_id=37364, name="Wild Herb", grade=4)
+
+        item = get_item(37364)
+        assert item is not None
+        assert item.tracked is False
+        assert list_tracked_items() == []
+
     def test_existing_returns_false(self, dynamodb_table: Any) -> None:
         from bdo_common.dynamo import upsert_catalog_item
 
