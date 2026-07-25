@@ -75,14 +75,11 @@ Two things apply to every `make deploy` below:
 ```bash
 # Build and deploy the dev stack (prompts for changeset confirmation).
 # See "Deployment notes" above re: the build guard and full-state flags.
+# make deploy streams stack events and blocks until the deploy settles.
 make deploy STAGE=dev
-
-# Watch the deploy progress (optional)
-aws cloudformation describe-stacks --stack-name bdo-market-dev \
-  --query 'Stacks[0].StackStatus' --output text
-
-# Once `CREATE_COMPLETE` or `UPDATE_COMPLETE`, verify...
 ```
+
+Once it settles on `CREATE_COMPLETE` / `UPDATE_COMPLETE`, verify (below).
 
 #### Apply migrations (if applicable)
 
@@ -799,6 +796,18 @@ remove any orphaned nested stacks" below). Know what goes with it:
   recovery window); the RDS-managed master secret is removed with the DB.
 - Lambda-created CloudWatch log groups can remain orphaned -- delete separately
   if desired. The shared SAM deploy bucket is not part of the stack and stays.
+- **The `bdo-<stage>-icons` S3 bucket is *retained*** (`DeletionPolicy: Retain`
+  in `infra/icons.yaml`), so it and its objects survive teardown. Its fixed name
+  also makes a later fresh deploy fail to *re-create* it (`IconsStack` ->
+  `CREATE_FAILED`, because the bucket already exists). To fully remove it -- or
+  to unblock a clean recreate -- purge and delete it (swap `dev` -> `prod` as
+  needed; icons are re-fetchable from the Pearl Abyss CDN, so the next iconSync
+  run just re-materializes them):
+
+  ```sh
+  aws s3 rm s3://bdo-dev-icons --recursive   # purge objects first
+  aws s3api delete-bucket --bucket bdo-dev-icons
+  ```
 
 #### Dev
 
@@ -888,6 +897,7 @@ ENIs -- delete the remaining compute/data stacks, then retry Network.
 | Custom domain returns 403 "Forbidden" | Base-path mapping or DNS not resolved yet, or the request omits `x-api-key`. Confirm the A-alias resolves to the regional API domain and include the API key. |
 | Missed ETL runs | Safe to re-execute - writes are idempotent on `(region, item_id, sid, snapshot_at)`. |
 | CI deploy: "Could not load credentials from any providers" | The `AWS_DEPLOY_ROLE_ARN` secret (and its OIDC role) is not set up. See "CI/CD deploy role (GitHub OIDC) bootstrap". |
+| `IconsStack` `CREATE_FAILED` ("Validation failure detected") on deploy | The retained `bdo-<stage>-icons` bucket (fixed name) survives an earlier teardown/rollback, so a fresh CREATE collides with the existing bucket. Purge + delete it (see "Cleanup and teardown"), then redeploy. |
 
 ### Insights
 
