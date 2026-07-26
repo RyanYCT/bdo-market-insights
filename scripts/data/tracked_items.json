@@ -1,0 +1,34 @@
+[
+  { "id": 12032, "name": "Ring of Cadry Guardian" },
+  { "id": 12061, "name": "Tungrad Ring" },
+  { "id": 12068, "name": "Ominous Ring" },
+  { "id": 12091, "name": "Ocean Haze Ring" },
+  { "id": 12094, "name": "Deboreka Ring", "cron_table": "b" },
+
+  { "id": 11629, "name": "Tungrad Necklace" },
+  { "id": 11653, "name": "Deboreka Necklace", "cron_table": "b" },
+  { "id": 11662, "name": "Revived River Necklace" },
+  { "id": 11663, "name": "Revived Lunar Necklace" },
+  { "id": 11688, "name": "Asadal Necklace" },
+
+  { "id": 11828, "name": "Tungrad Earring" },
+  { "id": 11834, "name": "Narc Ear Accessory" },
+  { "id": 11853, "name": "Black Distortion Earring" },
+  { "id": 11855, "name": "Dawn Earring" },
+  { "id": 11856, "name": "Ethereal Earring" },
+  { "id": 11875, "name": "Vaha's Dawn" },
+  { "id": 11882, "name": "Deboreka Earring", "cron_table": "b" },
+
+  { "id": 12229, "name": "Centaurus Belt" },
+  { "id": 12237, "name": "Tungrad Belt" },
+  { "id": 12257, "name": "Turo's Belt" },
+  { "id": 12276, "name": "Deboreka Belt", "cron_table": "b" },
+  { "id": 12282, "name": "Taebaek's Belt" },
+  { "id": 12285, "name": "Asadal Belt" },
+
+  { "id": 17081, "name": "Blessing of Kamasylve (15 Days)" },
+  { "id": 17646, "name": "Sealed Book of Combat (15 Days)" },
+  { "id": 18927, "name": "Sealed Book of Life (15 Days)" },
+  { "id": 47688, "name": "Value Pack (30 Days)" },
+  { "id": 601204, "name": "Secret Book of Old Moon (15 Days)" }
+]

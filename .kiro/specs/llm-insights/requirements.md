@@ -16,9 +16,10 @@ This builds directly on the analytics the platform already computes
 pre-computed, deterministic digest (see ADR-0016). Default region: `tw`
 (region-aware, like the ETL).
 
-Both categories are already tracked in the registry; `buff` items are seeded
-reproducibly via `scripts/seed_items.py --source-table <buff source>`, and the
-ETL ingests them unchanged (it is category-agnostic).
+Both categories are already tracked in the registry; the tracked set (including
+the `buff` items) is seeded reproducibly from `scripts/data/tracked_items.json`
+via `scripts/seed_items.py`, and the ETL ingests them unchanged (it is
+category-agnostic).
 
 ## Functional Requirements
 

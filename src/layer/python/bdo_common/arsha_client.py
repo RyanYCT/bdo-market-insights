@@ -11,7 +11,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 
-from bdo_common.models import CatalogEntry, Record
+from bdo_common.models import CatalogEntry, MarketListItem, Record
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +159,41 @@ def normalize_item_db(raw: Any) -> list[CatalogEntry]:
     ]
 
 
+def _parse_market_list_entry(obj: dict[str, Any]) -> MarketListItem | None:
+    """Map one arsha.io ``GetWorldMarketList`` row onto a MarketListItem, or None.
+
+    Rows missing the id or category keys are skipped silently; present-but-
+    malformed rows are skipped with a warning.
+    """
+    if "id" not in obj or "mainCategory" not in obj or "subCategory" not in obj:
+        return None
+    try:
+        return MarketListItem(
+            item_id=int(obj["id"]),
+            name=str(obj.get("name", "")),
+            main_category=int(obj["mainCategory"]),
+            sub_category=int(obj["subCategory"]),
+        )
+    except (KeyError, ValueError, TypeError) as exc:
+        logger.warning("Skipping malformed arsha market-list row %r: %s", obj, exc)
+        return None
+
+
+def normalize_market_list(raw: Any) -> list[MarketListItem]:
+    """Flatten an arsha.io ``GetWorldMarketList`` response into MarketListItems.
+
+    The endpoint returns a flat list of item dicts, each with its category
+    codes. A non-list payload yields an empty list; malformed rows are skipped.
+    """
+    if not isinstance(raw, list):
+        return []
+    return [
+        entry
+        for obj in raw
+        if isinstance(obj, dict) and (entry := _parse_market_list_entry(obj)) is not None
+    ]
+
+
 class ArshaClient:
     """HTTP client for the arsha.io market data API."""
 
@@ -271,6 +306,51 @@ class ArshaClient:
                     return []
                 logger.warning(
                     "util/db fetch attempt %d/%d failed for %s: %s; retrying",
+                    attempt,
+                    _UTIL_DB_MAX_ATTEMPTS,
+                    url,
+                    exc,
+                )
+                time.sleep(_UTIL_DB_BACKOFF_SECONDS * attempt)
+        return []  # unreachable: the loop returns on success or final failure
+
+    def _build_market_list_url(self, main_category: int, sub_category: int) -> str:
+        """Build the GetWorldMarketList URL for one market (main, sub) category."""
+        return (
+            f"{self._base_url}/{self._region}/GetWorldMarketList"
+            f"?mainCategory={main_category}&subCategory={sub_category}"
+        )
+
+    def fetch_market_list(self, main_category: int, sub_category: int) -> list[MarketListItem]:
+        """Fetch every item in one market category, with its taxonomy codes.
+
+        ``GetWorldMarketList`` is the only endpoint that returns an item's
+        ``mainCategory``/``subCategory``; the catalog (``util/db``) and
+        ``GetWorldMarketSubList`` do not. Used to derive an item's category from
+        the live taxonomy. Transient failures (5xx, timeouts) are retried with
+        linear backoff; if every attempt fails the error is logged and an empty
+        list is returned (the caller reports the affected items as unclassified).
+        """
+        url = self._build_market_list_url(main_category, sub_category)
+        for attempt in range(1, _UTIL_DB_MAX_ATTEMPTS + 1):
+            try:
+                # URL is built internally and is always https://api.arsha.io/...
+                with urllib.request.urlopen(  # noqa: S310  # nosec B310
+                    url, timeout=_UTIL_DB_TIMEOUT_SECONDS
+                ) as resp:
+                    raw = json.loads(resp.read().decode())
+                return normalize_market_list(raw)
+            except Exception as exc:
+                if not _is_retryable_fetch_error(exc) or attempt == _UTIL_DB_MAX_ATTEMPTS:
+                    logger.error(
+                        "GetWorldMarketList fetch failed for %s after %d attempt(s): %s",
+                        url,
+                        attempt,
+                        exc,
+                    )
+                    return []
+                logger.warning(
+                    "GetWorldMarketList attempt %d/%d failed for %s: %s; retrying",
                     attempt,
                     _UTIL_DB_MAX_ATTEMPTS,
                     url,

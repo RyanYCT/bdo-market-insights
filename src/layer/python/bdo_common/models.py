@@ -63,6 +63,22 @@ class MergedCatalogItem(BaseModel):
     grade: int | None = None
 
 
+class MarketListItem(BaseModel):
+    """Normalized arsha.io ``GetWorldMarketList`` row: id + market category codes.
+
+    ``GetWorldMarketList?mainCategory=<m>&subCategory=<s>`` lists every item in a
+    market category, each carrying its ``mainCategory``/``subCategory`` codes.
+    Used to derive an item's category from the live BDO taxonomy.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    item_id: int  # arsha "id"
+    name: str  # arsha "name"
+    main_category: int  # arsha "mainCategory"
+    sub_category: int  # arsha "subCategory"
+
+
 class Item(BaseModel):
     """DynamoDB item (bdo-<stage>-items table).
 
