@@ -1028,3 +1028,127 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 - Languages stored initially: `en` + `tw` (enum reserves the other 11).
 - New items land in the catalog `tracked=false`; promotion to the polled subset
   stays an explicit `item_registry` step.
+
+
+
+## 2026-07-12 — Full item catalog + icons pipeline (ADR-0018 built)
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** various (`feat/catalog-*`, `feat/icons-*`, `perf/catalog-*`, `fix/catalog-*`, `docs/*`)
+**Phase:** Post-launch — market grid / catalog feature
+**Commits:** PRs #47–#59
+
+> Catch-up entry. The per-session catalog/icons build was not logged at the
+> time; grouped here by theme.
+
+### Done
+- arsha `util/db` fetch + catalog upsert helper with disjoint-attribute writes
+  (#47).
+- Sparse `tracked-index` GSI — ETL reads the polled set via Query, not a full
+  Scan (#48); runbook smoke-test via item registration (#49); normalized the DB
+  driver across migrations/seed and had the seed write the `tracked` marker (#50).
+- `catalogSync` Lambda + weekly EventBridge rule + one-time full-catalog
+  backfill (#51); daily `iconSync` materializer writing to a **private** icons
+  bucket (#52).
+- Hardening: retry the flaky `util/db` fetch + guard default-lang failure (#53);
+  async-invoke the catalog/icon Lambdas in the runbook (sync invoke times out)
+  (#55); checksum fast-path + diff writes to skip unchanged weeks (#56).
+- Observability: per-function log retention + a catalog-fetch alarm for the
+  scheduled jobs (#57).
+- Docs: split the crowded system diagram into context + subsystem views (#58);
+  deduped deploy warnings and factored the runbook verification blocks (#59).
+
+### Decisions
+- All the above realize ADR-0018 — no new ADR. Icons bucket stays private
+  (CDN-fronted later); checksum fast-path and async-invoke are local ops choices.
+
+### Deferred / open questions
+- Icons served privately for now; CloudFront fronting deferred to the frontend
+  work.
+
+## 2026-07-25 — Docs slim-down, CVE pin, catalog tracked-default fix
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** various (`docs/*`, `chore/*`, `fix/catalog-*`)
+**Phase:** Post-launch — hardening
+**Commits:** PRs #60–#62
+
+### Done
+- README: trimmed prose, refreshed the architecture diagram, and drift-proofed
+  the status line — dropped the hand-maintained Lambda / pipeline counts that go
+  stale (#60).
+- Pinned `setuptools` past PYSEC-2026-3447 to clear the CI `pip-audit` gate (#61).
+- Fixed `catalogSync` to default catalog-created items to `tracked=false` so the
+  weekly full-catalog sync never silently expands the polled set (#62).
+
+### Decisions
+- Status line carries no live counts — drift-proof over precise (local choice).
+
+### Deferred / open questions
+- None.
+
+## 2026-07-26 — File-driven tracked-set seed + arsha taxonomy; v3.3.0 to prod
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/seed-*`, `feat/scripts-*`
+**Phase:** Post-launch — seeding / prod cutover
+**Commits:** PRs #66, #67
+
+### Done
+- Reworked seeding to be file-driven: a JSON list of target item IDs picks which
+  items to track on a fresh environment, so anyone standing up a dev (or new)
+  environment chooses a starting tracked set instead of relying on a single-env
+  hardcode. Removed the `bdo.accessory` single-environment default now that prod
+  is stable (#66).
+- Category is now derived from the `main_category` + `sub_category` pair (e.g.
+  `20/1` = accessory-ring) instead of defaulting to none and being set by hand
+  (#66).
+- Added `scripts/discover_categories.py` to enumerate the arsha market taxonomy
+  (main categories 1, 5, 10 … 85; sub categories 1, 2, 3 … until a 404) and emit
+  the mapping as JSON (#67).
+- Cut **v3.3.0** to prod (new feature ⇒ minor bump from v3.2.1): tested on dev
+  first, then verified prod.
+
+### Decisions
+- Seed list is data (a file), not code; category derived from the arsha
+  main/sub pair — local choices.
+
+### Deferred / open questions
+- None.
+
+## 2026-07-26 — Runbook restructure for operability
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** various (`docs/runbook-*`)
+**Phase:** Post-launch — docs / operability
+**Commits:** PRs #63, #64, #65, #68, #69
+
+> Catch-up entry; groups the runbook-operability PRs by theme (they interleave
+> with the seed work above).
+
+### Done
+- Documented the retained icons-bucket teardown/recreate path and trimmed
+  duplicated deploy + readme wording (#63).
+- Added a decision-flow router at the top of the runbook — which blocks to run
+  for a given situation — plus a recreate-from-scratch section, after a rollback
+  showed the detailed-but-loose runbook made you jump around (#64).
+- Streamlined the migration flow to a single method in the correct order (no
+  more "bootstrap role → jump to apply migrations") (#65).
+- Documented the tracked-set seed (`seed_items.py`) as a first-time step (#68).
+- Reorganized the whole runbook by task — a "First-time bring-up" umbrella
+  (deploy → bootstrap → catalog → tracked set → icons → verify) vs routine
+  "Deployment", plus "Feature toggles" and "Recovery & teardown" umbrellas;
+  "Database access" became its own on-demand section (not a bring-up step).
+  Content-preserving (byte-identical commands, all links resolve). Kept it one
+  file rather than splitting (#69).
+
+### Decisions
+- Runbook organized by task/scenario, not by mechanism; one file over a split
+  (user choice) — local docs choices, no ADR.
+
+### Deferred / open questions
+- None.
