@@ -26,9 +26,9 @@
   { "id": 12282, "name": "Taebaek's Belt" },
   { "id": 12285, "name": "Asadal Belt" },
 
-  { "id": 17081, "name": "Blessing of Kamasylve (15 Days)", "category": "buff" },
-  { "id": 17646, "name": "Sealed Book of Combat (15 Days)", "category": "buff" },
-  { "id": 18927, "name": "Sealed Book of Life (15 Days)", "category": "buff" },
-  { "id": 47688, "name": "Value Pack (30 Days)", "category": "buff" },
-  { "id": 601204, "name": "Secret Book of Old Moon (15 Days)", "category": "buff" }
+  { "id": 17081, "name": "Blessing of Kamasylve (15 Days)" },
+  { "id": 17646, "name": "Sealed Book of Combat (15 Days)" },
+  { "id": 18927, "name": "Sealed Book of Life (15 Days)" },
+  { "id": 47688, "name": "Value Pack (30 Days)" },
+  { "id": 601204, "name": "Secret Book of Old Moon (15 Days)" }
 ]

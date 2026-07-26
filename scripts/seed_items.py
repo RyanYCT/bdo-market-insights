@@ -8,9 +8,11 @@ Writes ``tracked=true`` + the sparse tracked-index marker + ``cron_table`` +
 catalog-owned fields (``name``/``grade``/``names``) that ``seed_catalog`` /
 ``catalogSync`` populate are preserved (ADR-0018).
 
-An entry may set an explicit ``"category"`` (e.g. buff items, which are not in an
-accessory-style market category); the coarse label is then taken verbatim while
-``main``/``sub`` are still filled from the taxonomy when the item is found there.
+Category is derived entirely from the live taxonomy via ``categories.json``
+(e.g. accessories under ``20:1``-``20:4``, buff consumables under ``55:6``); an
+item not covered by that map is tracked but left ungrouped -- extend the map.
+The optional ``name`` on each entry is an informational comment (the catalog
+owns the authoritative name) and is ignored on write.
 
     uv run python scripts/seed_items.py --target-table bdo-dev-items
     uv run python scripts/seed_items.py --target-table bdo-dev-items --dry-run
@@ -45,20 +47,20 @@ def build_category_index(
 ) -> dict[int, tuple[str, int, int]]:
     """Build ``id -> (category, main_category, sub_category)`` from arsha.
 
-    Fetches ``GetWorldMarketList`` for every (mainCategory, subCategory) in the
-    category map, so an item's coarse category is derived from the live BDO
-    taxonomy rather than hand-entered. Keys starting with ``_`` (e.g. comments)
-    are skipped.
+    Fetches ``GetWorldMarketList`` for every ``"main:sub"`` key in the category
+    map, so an item's coarse category is derived from the live BDO taxonomy
+    rather than hand-entered. Keys starting with ``_`` (e.g. comments) are
+    skipped.
     """
     index: dict[int, tuple[str, int, int]] = {}
-    for main_code, spec in categories.items():
-        if main_code.startswith("_"):
+    for key, spec in categories.items():
+        if key.startswith("_"):
             continue
+        main_str, _, sub_str = key.partition(":")
+        main_int, sub_int = int(main_str), int(sub_str)
         category = str(spec["category"])
-        main_int = int(main_code)
-        for sub_code in spec.get("sub_categories", {}):
-            for entry in client.fetch_market_list(main_int, int(sub_code)):
-                index[entry.item_id] = (category, entry.main_category, entry.sub_category)
+        for entry in client.fetch_market_list(main_int, sub_int):
+            index[entry.item_id] = (category, entry.main_category, entry.sub_category)
     return index
 
 
@@ -67,25 +69,21 @@ def build_item_updates(
 ) -> tuple[dict[str, Any], bool]:
     """Build the DynamoDB partial-update for one tracked entry.
 
-    Returns ``(updates, classified)``. ``classified`` is False when the item has
-    no explicit category and was not found in the arsha category index (so it is
-    tracked but ungrouped). An explicit ``category`` overrides the derived label;
-    ``main``/``sub`` are filled from the taxonomy whenever the item is found.
+    Returns ``(updates, classified)``. ``category``/``main``/``sub`` are derived
+    entirely from the arsha taxonomy index; ``classified`` is False when the item
+    is not found there (so it is tracked but ungrouped -- add its category to
+    categories.json).
     """
     updates: dict[str, Any] = {"tracked": "true", "cron_table": entry.get("cron_table", "a")}
     if "model_id" in entry:
         updates["model_id"] = entry["model_id"]
 
-    explicit = entry.get("category")
     found = index.get(int(entry["id"]))
     if found is not None:
         category, main, sub = found
-        updates["category"] = str(explicit) if explicit else category
+        updates["category"] = category
         updates["main_category"] = str(main)
         updates["sub_category"] = str(sub)
-        return updates, True
-    if explicit:
-        updates["category"] = str(explicit)
         return updates, True
     return updates, False
 
@@ -96,8 +94,6 @@ def _export(dynamo: Any, path: Path) -> None:
     records: list[dict[str, Any]] = []
     for item in sorted(items, key=lambda i: i.id):
         rec: dict[str, Any] = {"id": item.id, "name": item.name}
-        if item.category:
-            rec["category"] = item.category
         if item.cron_table != "a":
             rec["cron_table"] = item.cron_table
         if item.model_id != "accessory_v1":
