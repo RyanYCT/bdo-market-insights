@@ -113,28 +113,21 @@ Once it settles on `CREATE_COMPLETE` / `UPDATE_COMPLETE`, verify (below).
 
 #### Apply migrations (if applicable)
 
-If your changes include schema migrations (`migrations/versions/*`):
+If your changes include schema migrations (`migrations/versions/*`), apply them
+after the deploy through the in-VPC migrator Lambda — no bastion or tunnel
+needed:
 
 ```bash
-# One-time only: enable the bastion for dev (if not already deployed).
-# (Full-state deploy — pass the stage's other persistent flags too.)
-make deploy STAGE=dev ENABLE_BASTION=true
-
-# Open tunnel in one terminal
-make db-tunnel-up STAGE=dev
-
-# In another terminal, run migrations
-make migrate STAGE=dev
-
-# Verify head migration
-uv run alembic -c migrations/alembic.ini current
-
-# Close tunnel
-make db-tunnel-down
-
-# Optional: disable the bastion to save costs
-make deploy STAGE=dev ENABLE_BASTION=false
+make migrate-lambda STAGE=dev
 ```
+
+See [Running migrations](#running-migrations) for how this works.
+
+> **First time on a fresh database?** The `lambda_migrator` role does not exist
+> yet, so the migrator Lambda cannot run. Do the one-time
+> [First-time role bootstrap](#first-time-role-bootstrap) instead — it applies
+> `0001`–`0003` (schema + roles) as the master through the bastion, in one pass.
+> Every later migration then uses `make migrate-lambda` as above.
 
 #### Backfill the tracked-index marker (one-time, when adding the GSI)
 
@@ -509,19 +502,6 @@ Instance Connect Endpoint (EICE), so you never SSH to it directly — the
 3. Connect pgAdmin (or psql) to `localhost:5432` using the `dba` role.
    Credentials are in the `bdo-<stage>-dba-credentials` Secrets Manager secret.
 
-### Running migrations
-
-Routine schema migrations run **from inside the VPC**. The CI deploy job
-invokes the migrator Lambda (`bdo-<stage>-migrator`) after `sam deploy`;
-the function connects to RDS as `lambda_migrator` via IAM auth and runs
-`alembic upgrade head`. A GitHub runner cannot reach the private RDS
-directly, so it drives the migration through this Lambda (control-plane
-invoke). Trigger it by hand for dev:
-
-```sh
-make migrate-lambda STAGE=dev
-```
-
 ### First-time role bootstrap
 
 (Run once, via the bastion.) The Postgres roles themselves are cluster-level
@@ -530,8 +510,9 @@ objects created by migrations `0002`/`0003` and need privileges the
 
 - `0002_bootstrap_roles` — `lambda_rds_user` (runtime, IAM auth) and
   `dba` (human login; created only when `DBA_PASSWORD` is set).
-- `0003_migrator_role` — `lambda_migrator` (IAM auth) used by the
-  migrator Lambda above; also grants it DML on `alembic_version`.
+- `0003_migrator_role` — `lambda_migrator` (IAM auth) used by the migrator
+  Lambda (see [Running migrations](#running-migrations) below); also grants it
+  DML on `alembic_version`.
 
 Apply the full chain (`0001`–`0003`) **once** as the RDS master user
 through the bastion tunnel. With the tunnel open (step 2 above), in a second
@@ -574,6 +555,19 @@ bastion again once you're done (`make deploy STAGE=dev ENABLE_BASTION=false`).
 > the mechanism. If you are ever locked out this way, connect once with an IAM
 > token (the master now holds `rds_iam`, so IAM auth works) and run
 > `REVOKE lambda_rds_user FROM postgres; REVOKE lambda_migrator FROM postgres;`.
+
+### Running migrations
+
+Thereafter, routine schema migrations run **from inside the VPC** — no bastion
+or tunnel needed. The CI deploy job invokes the migrator Lambda
+(`bdo-<stage>-migrator`) after `sam deploy`; the function connects to RDS as
+`lambda_migrator` via IAM auth and runs `alembic upgrade head`. A GitHub runner
+cannot reach the private RDS directly, so it drives the migration through this
+Lambda (control-plane invoke). Trigger it by hand for dev:
+
+```sh
+make migrate-lambda STAGE=dev
+```
 
 ## Custom API domain
 
@@ -963,9 +957,10 @@ delete-then-retry -- see [Troubleshooting](#troubleshooting).
 RDS and DynamoDB come back empty (neither is retained), so run the first-time
 data path in order:
 
-1. [First-time role bootstrap](#first-time-role-bootstrap), then
-   [Running migrations](#running-migrations) -- the fresh RDS has no
-   roles/schema yet.
+1. [First-time role bootstrap](#first-time-role-bootstrap) -- the fresh RDS has
+   no roles or schema. The bootstrap applies migrations `0001`–`0003` (schema +
+   roles) as the master through the bastion, in one pass; no separate migration
+   step is needed.
 2. [Backfill the item catalog](#backfill-the-item-catalog-one-time) -- seeds the
    catalog (retries flaky `util/db`, but cannot work around an arsha outage).
 3. Register tracked items and run an ETL cycle (see
