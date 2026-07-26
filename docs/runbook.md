@@ -184,6 +184,27 @@ aws logs tail /aws/lambda/bdo-dev-catalog-sync --since 10m --follow
 # look for "catalogSync complete" with total / written / new
 ```
 
+#### Seed the tracked set (one-time)
+
+The ETL polls only *tracked* items. Seed the curated set from
+`scripts/data/tracked_items.json` (a list of item ids); each item's category is
+derived from the live BDO taxonomy via `scripts/data/categories.json` and
+arsha's `GetWorldMarketList`:
+
+```bash
+uv run python scripts/seed_items.py --target-table bdo-dev-items --dry-run
+uv run python scripts/seed_items.py --target-table bdo-dev-items
+```
+
+It partial-upserts `tracked=true` + the sparse tracked-index marker +
+`cron_table`/`category`/`main_category`/`sub_category`, preserving the
+catalog-owned `name`/`grade`/`names` (run after the catalog backfill so names are
+present). Because it stamps the marker, no separate tracked-index backfill is
+needed for seeded items. Edit the JSON to curate a different set, or regenerate
+it from a running stage with `--export`. An item whose category is not covered by
+`categories.json` is still tracked but left ungrouped — extend the map to
+classify it.
+
 #### Item icons
 
 Icons are self-hosted in the `bdo-<stage>-icons` bucket and materialized from the
@@ -963,8 +984,8 @@ data path in order:
    step is needed.
 2. [Backfill the item catalog](#backfill-the-item-catalog-one-time) -- seeds the
    catalog (retries flaky `util/db`, but cannot work around an arsha outage).
-3. Register tracked items and run an ETL cycle (see
-   [Daily operations](#daily-operations)).
+3. [Seed the tracked set](#seed-the-tracked-set-one-time), then run an ETL cycle
+   (see [Daily operations](#daily-operations)).
 4. [Item icons](#item-icons) materialize on the next daily `iconSync` run, or
    invoke it asynchronously to materialize immediately.
 
