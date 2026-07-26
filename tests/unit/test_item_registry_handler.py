@@ -92,6 +92,9 @@ def test_list_items_filters(
     assert item["grade"] == 4
     assert item["names"] == {"tw": "\u5fb7\u6ce2\u96f7\u5361\u6212\u6307"}
     assert item["icon_status"] == "stored"
+    # Internal ETL routing fields are omitted from the public contract.
+    assert "model_id" not in item
+    assert "cron_table" not in item
     assert captured == {"category": "ring", "tracked": True}
 
 
@@ -111,6 +114,9 @@ def test_get_item_found(
     assert body["grade"] == 4
     assert body["icon_status"] == "stored"
     assert body["names"] == {}
+    # Internal ETL routing fields are omitted from the public contract.
+    assert "model_id" not in body
+    assert "cron_table" not in body
 
 
 def test_get_item_404(
@@ -138,10 +144,13 @@ def test_create_item_validates_via_arsha(
     assert created[0].id == 12094
     assert created[0].name == "Deboreka Ring"  # taken from arsha
     assert created[0].cron_table == "b"
-    # 201 body serializes the created item (incl. the ADR-0018 catalog fields).
+    # 201 body serializes the created item (incl. the ADR-0018 catalog fields),
+    # projected onto the public contract (no internal ETL routing fields).
     created_body = json.loads(resp["body"])
     assert created_body["id"] == 12094
     assert created_body["icon_status"] == "unset"
+    assert "cron_table" not in created_body  # dropped from the public shape
+    assert "model_id" not in created_body
 
 
 def test_create_item_rejects_unknown_id(

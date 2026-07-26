@@ -10,6 +10,7 @@ arsha.io).
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from typing import Any, Literal
 
 from aws_lambda_powertools import Logger, Metrics, Tracer
@@ -25,7 +26,7 @@ from aws_lambda_powertools.event_handler.exceptions import (
 )
 from aws_lambda_powertools.metrics import MetricUnit
 from aws_lambda_powertools.utilities.typing import LambdaContext
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from bdo_common import dynamo
 from bdo_common.arsha_client import ArshaClient
@@ -62,10 +63,48 @@ class ItemUpdate(BaseModel):
     tracked: bool | None = None
 
 
+class ItemResponse(BaseModel):
+    """Public shape of a registry item.
+
+    A curated view of the stored :class:`Item` for API consumers: the internal
+    ETL routing fields (``model_id``, ``cron_table``) are intentionally omitted
+    from the contract.
+    """
+
+    id: int
+    name: str  # canonical English name
+    names: dict[str, str] = Field(default_factory=dict)  # localized names, e.g. {"tw": "..."}
+    grade: int | None = None  # raw BDO grade code; mapped to colour in the client
+    category: str | None = None
+    main_category: str | None = None
+    sub_category: str | None = None
+    tracked: bool = True
+    icon_status: Literal["unset", "stored", "missing"] = "unset"
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    @classmethod
+    def from_item(cls, item: Item) -> ItemResponse:
+        """Project a stored :class:`Item` onto the public response shape."""
+        return cls(
+            id=item.id,
+            name=item.name,
+            names=item.names,
+            grade=item.grade,
+            category=item.category,
+            main_category=item.main_category,
+            sub_category=item.sub_category,
+            tracked=item.tracked,
+            icon_status=item.icon_status,
+            created_at=item.created_at,
+            updated_at=item.updated_at,
+        )
+
+
 class ItemListResponse(BaseModel):
     """Response body for ``GET /v1/items``: the matching items plus a count."""
 
-    items: list[Item]
+    items: list[ItemResponse]
     count: int
 
 
@@ -108,20 +147,22 @@ def list_items() -> ItemListResponse:
         app.current_event.get_query_string_value(name="tracked", default_value=None)
     )
     items = dynamo.list_items(category=category, tracked=tracked)
-    return ItemListResponse(items=items, count=len(items))
+    return ItemListResponse(
+        items=[ItemResponse.from_item(item) for item in items], count=len(items)
+    )
 
 
 @app.get("/v1/items/<item_id>")
-def get_item(item_id: int) -> Item:
+def get_item(item_id: int) -> ItemResponse:
     """FR-9: return one item, or 404."""
     item = dynamo.get_item(item_id)
     if item is None:
         raise NotFoundError(f"item {item_id} not found")
-    return item
+    return ItemResponse.from_item(item)
 
 
 @app.post("/v1/items")
-def create_item(body: ItemCreate) -> Response[Item]:
+def create_item(body: ItemCreate) -> Response[ItemResponse]:
     """FR-10: validate the id against arsha.io, then register in DynamoDB."""
     _reject_demo_writes()
     settings = get_settings()
@@ -143,12 +184,12 @@ def create_item(body: ItemCreate) -> Response[Item]:
     return Response(
         status_code=201,
         content_type=content_types.APPLICATION_JSON,
-        body=item,
+        body=ItemResponse.from_item(item),
     )
 
 
 @app.patch("/v1/items/<item_id>")
-def update_item(item_id: int, body: ItemUpdate) -> Item:
+def update_item(item_id: int, body: ItemUpdate) -> ItemResponse:
     """FR-11: update metadata (incl. ``tracked``) in DynamoDB."""
     _reject_demo_writes()
     if dynamo.get_item(item_id) is None:
@@ -159,7 +200,7 @@ def update_item(item_id: int, body: ItemUpdate) -> Item:
     refreshed = dynamo.get_item(item_id)
     if refreshed is None:  # pragma: no cover - concurrent delete
         raise NotFoundError(f"item {item_id} not found")
-    return refreshed
+    return ItemResponse.from_item(refreshed)
 
 
 @app.delete("/v1/items/<item_id>")

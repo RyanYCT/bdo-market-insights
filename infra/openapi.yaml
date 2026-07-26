@@ -10,89 +10,6 @@ components:
           type: array
       title: HTTPValidationError
       type: object
-    Item:
-      description: 'DynamoDB item (bdo-<stage>-items table).
-
-
-        Holds every known BDO item (the full catalog synced from arsha ``util/db``),
-
-        not only the subset the ETL polls; ``tracked`` distinguishes the two. Name
-
-        localization keeps English on ``name`` (the guaranteed baseline) and any
-
-        other language in the ``names`` map.'
-      properties:
-        category:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Category
-        created_at:
-          anyOf:
-          - format: date-time
-            type: string
-          - type: 'null'
-          title: Created At
-        cron_table:
-          default: a
-          enum:
-          - a
-          - b
-          title: Cron Table
-          type: string
-        grade:
-          anyOf:
-          - type: integer
-          - type: 'null'
-          title: Grade
-        icon_status:
-          default: unset
-          enum:
-          - unset
-          - stored
-          - missing
-          title: Icon Status
-          type: string
-        id:
-          title: Id
-          type: integer
-        main_category:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Main Category
-        model_id:
-          default: accessory_v1
-          title: Model Id
-          type: string
-        name:
-          title: Name
-          type: string
-        names:
-          additionalProperties:
-            type: string
-          title: Names
-          type: object
-        sub_category:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Sub Category
-        tracked:
-          default: true
-          title: Tracked
-          type: boolean
-        updated_at:
-          anyOf:
-          - format: date-time
-            type: string
-          - type: 'null'
-          title: Updated At
-      required:
-      - id
-      - name
-      title: Item
-      type: object
     ItemCreate:
       description: Request body for ``POST /v1/items``. ``name`` is taken from arsha.io.
       properties:
@@ -142,13 +59,83 @@ components:
           type: integer
         items:
           items:
-            $ref: '#/components/schemas/Item'
+            $ref: '#/components/schemas/ItemResponse'
           title: Items
           type: array
       required:
       - items
       - count
       title: ItemListResponse
+      type: object
+    ItemResponse:
+      description: 'Public shape of a registry item.
+
+
+        A curated view of the stored :class:`Item` for API consumers: the internal
+
+        ETL routing fields (``model_id``, ``cron_table``) are intentionally omitted
+
+        from the contract.'
+      properties:
+        category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category
+        created_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Created At
+        grade:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Grade
+        icon_status:
+          default: unset
+          enum:
+          - unset
+          - stored
+          - missing
+          title: Icon Status
+          type: string
+        id:
+          title: Id
+          type: integer
+        main_category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Main Category
+        name:
+          title: Name
+          type: string
+        names:
+          additionalProperties:
+            type: string
+          title: Names
+          type: object
+        sub_category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Sub Category
+        tracked:
+          default: true
+          title: Tracked
+          type: boolean
+        updated_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Updated At
+      required:
+      - id
+      - name
+      title: ItemResponse
       type: object
     ItemUpdate:
       description: Request body for ``PATCH /v1/items/{id}`` (all fields optional).
@@ -336,7 +323,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Item'
+                $ref: '#/components/schemas/ItemResponse'
           description: Successful Response
         '422':
           content:
@@ -385,7 +372,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Item'
+                $ref: '#/components/schemas/ItemResponse'
           description: Successful Response
         '422':
           content:
@@ -414,7 +401,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Item'
+                $ref: '#/components/schemas/ItemResponse'
           description: Successful Response
         '422':
           content:
