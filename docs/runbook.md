@@ -1,29 +1,31 @@
 # Runbook
 
 Operational guide for the live v3 stacks (`bdo-market-dev` / `bdo-market-prod`):
-daily operations, deployment, database access, the custom domain, insights
-evaluation, cleanup/teardown, and troubleshooting.
+first-time bring-up, daily operations, deployment, feature toggles, database
+access, insights evaluation, recovery/teardown, and troubleshooting.
 
 ## Contents
 
 - [Decision flow](#decision-flow)
+- [First-time bring-up](#first-time-bring-up)
 - [Daily operations](#daily-operations)
 - [Deployment](#deployment)
   - [Quick reference](#quick-reference)
   - [Deployment notes](#deployment-notes)
   - [Dev deployment (manual)](#dev-deployment-manual)
-  - [CI/CD deploy role (GitHub OIDC) bootstrap](#cicd-deploy-role-github-oidc-bootstrap)
+  - [Running migrations](#running-migrations)
+  - [Backfill the tracked-index marker](#backfill-the-tracked-index-marker-one-time-when-adding-the-gsi)
   - [Prod deployment (CI/CD)](#prod-deployment-cicd)
   - [Rollback](#rollback)
   - [Breaking changes](#breaking-changes)
+- [Feature toggles](#feature-toggles)
+  - [Custom API domain](#custom-api-domain)
+  - [Public demo API key](#public-demo-api-key)
 - [Database access via bastion](#database-access-via-bastion)
-  - [Running migrations](#running-migrations)
-  - [First-time role bootstrap](#first-time-role-bootstrap)
-- [Custom API domain](#custom-api-domain)
-- [Public demo API key](#public-demo-api-key)
 - [Market Insights: dev evaluation](#market-insights-dev-evaluation)
-- [Cleanup and teardown](#cleanup-and-teardown)
-- [Recreating a stack from scratch](#recreating-a-stack-from-scratch)
+- [Recovery & teardown](#recovery--teardown)
+  - [Cleanup and teardown](#cleanup-and-teardown)
+  - [Recreating a stack from scratch](#recreating-a-stack-from-scratch)
 - [Troubleshooting](#troubleshooting)
 
 ## Decision flow
@@ -36,123 +38,106 @@ flowchart TD
     q(["What do you need to do?"])
 
     q --> shipping{"Ship a change?"}
+    q --> standup["Stand up a fresh stack<br/>→ First-time bring-up"]
     q --> reset{"Remove or reset a stack?"}
     q --> monitor["Check ETL / API health<br/>→ Daily operations"]
-    q --> dbwork["Run SQL or a migration<br/>→ Database access via bastion"]
-    q --> feature["Toggle custom domain / demo key<br/>→ Custom API domain ·<br/>Public demo API key"]
+    q --> dbwork["Connect to Postgres (ad-hoc / recovery)<br/>→ Database access via bastion"]
+    q --> feature["Toggle custom domain / demo key<br/>→ Feature toggles"]
     q --> reviewi["Review insights on dev<br/>→ Market Insights: dev evaluation"]
     q --> broken["Something is broken<br/>→ Troubleshooting"]
 
     shipping -->|"prod"| pr["Prod deployment (CI/CD)<br/>→ Post-deploy verification (prod)"]
     shipping -->|"dev · stack exists"| dv["Dev deployment (manual)<br/>+ migrations if schema changed<br/>→ Post-deploy verification (dev)"]
-    shipping -->|"dev · no stack yet"| rc
+    shipping -->|"dev · no stack yet"| standup
 
     reset -->|"just delete it"| cl["Cleanup and teardown"]
     reset -->|"stuck in ROLLBACK_COMPLETE<br/>or 'already exists' on create"| rc
     reset -->|"rebuild dev clean"| rc
 
-    rc["Recreating a stack from scratch<br/>clear orphans → deploy → rebuild data"]
+    rc["Recreating a stack from scratch<br/>clear orphans → then First-time bring-up"]
 ```
 
-## Daily operations
+## First-time bring-up
 
-ETL runs hourly via EventBridge (one execution per active region).
-Monitor health from the CloudWatch dashboard:
+Standing up a stack from empty (a new account, or after a full teardown — see
+[Recreating a stack from scratch](#recreating-a-stack-from-scratch) for the
+orphan-clearing that precedes this). Do these in order; each is a self-contained
+subsection below, so the sequence reads top to bottom without jumping out:
 
-- **BdoMarket/EtlSuccessfulItems** - items processed without error
-- **BdoMarket/EtlFailedItems** - items that failed in the current run
+1. **Deploy the stack:** `make deploy STAGE=dev` (a fresh create; see
+   [Deployment notes](#deployment-notes) for the build guard and full-state flags).
+2. **[First-time role bootstrap](#first-time-role-bootstrap)** — create the DB
+   roles and apply the initial schema.
+3. **[Backfill the item catalog](#backfill-the-item-catalog-one-time)**.
+4. **[Seed the tracked set](#seed-the-tracked-set-one-time)**.
+5. **[Item icons](#item-icons)** — materialize.
+6. **Verify** — [Post-deploy verification (dev)](#post-deploy-verification-dev).
 
-Step Functions console shows full execution history, per-state
-input/output, and retry behaviour.
+For **prod**, also run the one-time
+[CI/CD deploy role bootstrap](#cicd-deploy-role-github-oidc-bootstrap) so tagged
+releases can deploy.
 
-## Deployment
+### First-time role bootstrap
 
-### Quick reference
+(Run once, via the bastion.) The Postgres roles themselves are cluster-level
+objects created by migrations `0002`/`0003` and need privileges the
+`lambda_migrator` role does not hold:
 
-| Environment | Method |
-|-------------|--------|
-| Dev | `make deploy STAGE=dev` (manual; CI deploy is tag-only) |
-| Prod | Push a `v*` tag to trigger CI deploy |
-| Rollback | Deploy the previous tag |
+- `0002_bootstrap_roles` — `lambda_rds_user` (runtime, IAM auth) and
+  `dba` (human login; created only when `DBA_PASSWORD` is set).
+- `0003_migrator_role` — `lambda_migrator` (IAM auth) used by the migrator
+  Lambda (see [Running migrations](#running-migrations)); also grants it DML on
+  `alembic_version`.
 
-### Deployment notes
+Apply the full chain (`0001`–`0003`) **once** as the RDS master user through the
+bastion tunnel. Enable the bastion and open the tunnel (see
+[Database access via bastion](#database-access-via-bastion) for the mechanics),
+then run the chain in a second terminal:
 
-Two things apply to every `make deploy` below:
-
-- **Build on a native Linux filesystem, not a Windows-mounted `/mnt/*` path.**
-  `make deploy` runs `make build` (including the verify-layer guard) first, so a
-  deploy can never republish a source-only `CommonLayer` — which would otherwise
-  break every function at init with `No module named 'aws_lambda_powertools'`.
-  On a `/mnt/*` path `pip --target` can silently vendor nothing.
-- **`make deploy` re-declares the full stack state.** Every invocation must pass
-  the stage's persistent flags (`ENABLE_DEMO_KEY`, the custom-domain vars) or
-  they are dropped — even when you are only toggling one option (e.g. the
-  bastion). CI passes them for prod on every tagged release.
-
-### Dev deployment (manual)
-
-**Use this workflow to test changes on the dev stack before promoting to prod.**
-
-#### Pre-deploy checklist
-
-- [ ] Code review complete (PR merged to `main`)
-- [ ] All CI checks passed (lint, typecheck, tests, audit, scan, OpenAPI drift)
-- [ ] Schema changes? Ensure migrations are in `migrations/versions/` with sequential numbers
-- [ ] Local `make test` passes (including integration if `TEST_DATABASE_URL` is set)
-
-#### Deploy dev
-
-```bash
-# Build and deploy the dev stack (prompts for changeset confirmation).
-# See "Deployment notes" above re: the build guard and full-state flags.
-# make deploy streams stack events and blocks until the deploy settles.
-make deploy STAGE=dev
+```sh
+make deploy STAGE=dev ENABLE_BASTION=true   # one-time; skip if the bastion is already up
+make db-tunnel-up STAGE=dev                 # leave running; use a second terminal below
 ```
 
-Once it settles on `CREATE_COMPLETE` / `UPDATE_COMPLETE`, verify (below).
+```sh
+STAGE=dev
 
-#### Apply migrations (if applicable)
+# dba password (so 0002 creates the dba login role):
+export DBA_PASSWORD="$(aws secretsmanager get-secret-value \
+  --secret-id bdo-${STAGE}-dba-credentials \
+  --query SecretString --output text \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["password"])')"
 
-If your changes include schema migrations (`migrations/versions/*`), apply them
-after the deploy through the in-VPC migrator Lambda — no bastion or tunnel
-needed:
+# master password from the RDS-managed master secret (NOT the dba secret):
+MASTER_SECRET_ARN=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] \
+           | [?OutputKey=='MasterSecretArn'].OutputValue | [0]" --output text)
+MASTER_PW=$(aws secretsmanager get-secret-value --secret-id "$MASTER_SECRET_ARN" \
+  --query SecretString --output text \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["password"])')
 
-```bash
-make migrate-lambda STAGE=dev
+# env.py normalizes the driver to +psycopg (this project ships psycopg v3
+# only), so a plain postgresql:// URL now works too; the explicit form is fine.
+export DATABASE_URL="postgresql+psycopg://postgres:${MASTER_PW}@localhost:5432/bdo"
+
+make migrate
+uv run alembic -c migrations/alembic.ini current   # expect: 0003 (head)
+make db-tunnel-down
 ```
 
-See [Running migrations](#running-migrations) for how this works.
+After this one-time bootstrap, all later schema changes go through
+`make migrate-lambda` (or the CI deploy step) — no tunnel required. Drop the
+bastion again once you're done (`make deploy STAGE=dev ENABLE_BASTION=false`).
 
-> **First time on a fresh database?** The `lambda_migrator` role does not exist
-> yet, so the migrator Lambda cannot run. Do the one-time
-> [First-time role bootstrap](#first-time-role-bootstrap) instead — it applies
-> `0001`–`0003` (schema + roles) as the master through the bastion, in one pass.
-> Every later migration then uses `make migrate-lambda` as above.
+> Migrations `0002`/`0003` end with `REVOKE … FROM CURRENT_USER` so the master
+> keeps password login; without it the master becomes a transitive `rds_iam`
+> member and RDS routes it to PAM auth (`FATAL: PAM authentication failed for
+> user "postgres"`). See [ADR-0008](adr/0008-iam-database-authentication.md) for
+> the mechanism. If you are ever locked out this way, connect once with an IAM
+> token (the master now holds `rds_iam`, so IAM auth works) and run
+> `REVOKE lambda_rds_user FROM postgres; REVOKE lambda_migrator FROM postgres;`.
 
-#### Backfill the tracked-index marker (one-time, when adding the GSI)
-
-The `tracked-index` GSI is keyed on a marker attribute (`t`) written only on
-tracked items. When the deployment that *adds* the GSI first goes out, items
-registered earlier lack the marker and are invisible to the ETL's tracked-item
-query. Run the backfill once, right after that deploy and before the next
-hourly ETL run, so the tracked set repopulates the index:
-
-```bash
-# Preview first, then apply. DynamoDB is reachable via the AWS API (no bastion).
-uv run python scripts/backfill_tracked_marker.py --target-table bdo-dev-items --dry-run
-uv run python scripts/backfill_tracked_marker.py --target-table bdo-dev-items
-```
-
-This is only needed the one time the GSI is introduced; afterwards the marker
-is maintained automatically on registration and tracked/untracked changes.
-
-On a fresh or empty table the backfill reports `0 tracked items found` — that is
-expected (there is nothing to migrate), not an error. To smoke-test the Query
-path on such a table, register one item (see *Post-deploy verification* below):
-the API write path stamps the marker automatically, so the item lands in the
-`tracked-index` immediately.
-
-#### Backfill the item catalog (one-time)
+### Backfill the item catalog (one-time)
 
 The full BDO item catalog (~tens of thousands of items) is synced from arsha.io
 `util/db` by the weekly `catalogSync` Lambda. For the initial load, run the
@@ -184,7 +169,7 @@ aws logs tail /aws/lambda/bdo-dev-catalog-sync --since 10m --follow
 # look for "catalogSync complete" with total / written / new
 ```
 
-#### Seed the tracked set (one-time)
+### Seed the tracked set (one-time)
 
 The ETL polls only *tracked* items. Seed the curated set from
 `scripts/data/tracked_items.json` (a list of item ids); each item's category is
@@ -205,7 +190,7 @@ it from a running stage with `--export`. An item whose category is not covered b
 `categories.json` is still tracked but left ungrouped — extend the map to
 classify it.
 
-#### Item icons
+### Item icons
 
 Icons are self-hosted in the `bdo-<stage>-icons` bucket and materialized from the
 Pearl Abyss CDN by the daily `iconSync` Lambda, which processes tracked items
@@ -224,64 +209,6 @@ aws logs tail /aws/lambda/bdo-dev-icon-sync --since 5m --follow
 
 > The icon materializer fetches from the Pearl Abyss CDN, not arsha, so it is
 > unaffected by arsha outages.
-
-#### Post-deploy verification (dev)
-
-This block is parametrized on `STAGE`; the [prod section](#post-deploy-verification-prod)
-reuses it with `STAGE=prod`.
-
-```bash
-STAGE=dev
-
-# Resolve the API base URL from the nested API stack. The root stack
-# (bdo-market-${STAGE}) exposes no outputs of its own, so query across all stacks
-# whose name starts with the stack prefix and pick the nested API stack's output.
-API_URL=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?OutputKey=='ApiUrl'].OutputValue | [0]" \
-  --output text)
-
-# The API key is an API Gateway key created by the usage plan (NOT Secrets
-# Manager). Resolve it via the REST API id so the dev/prod keys in the same
-# account are never confused.
-API_ID=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?OutputKey=='ApiId'].OutputValue | [0]" \
-  --output text)
-# Exclude the read-only demo plan (if enabled) so this resolves the PRIVATE key.
-USAGE_PLAN_ID=$(aws apigateway get-usage-plans \
-  --query "items[?apiStages[?apiId=='${API_ID}'] && name!='bdo-${STAGE}-demo-plan'].id | [0]" --output text)
-API_KEY_ID=$(aws apigateway get-usage-plan-keys --usage-plan-id "${USAGE_PLAN_ID}" \
-  --query 'items[0].id' --output text)
-API_KEY=$(aws apigateway get-api-key --api-key "${API_KEY_ID}" --include-value \
-  --query 'value' --output text)
-
-# Swagger UI + spec are key-less; use their dedicated output
-DOCS_URL=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?OutputKey=='DocsUrl'].OutputValue | [0]" \
-  --output text)
-
-# Test the key-required API (ApiUrl already includes the stage path)
-curl -H "x-api-key: ${API_KEY}" "${API_URL}/v1/items" | head -20
-curl -s "${DOCS_URL}" | grep -q "swagger-ui" && echo "Swagger UI OK"
-
-# Check CloudWatch Logs for errors (last 10 minutes)
-aws logs tail /aws/lambda/bdo-${STAGE}-market-query --since 10m --follow
-```
-
-Optional (dev / fresh-table only): smoke-test the tracked-index Query path. Skip
-on prod — this registers a real tracked item.
-
-```bash
-# Registering an item validates the id against arsha.io and writes it via
-# put_item, which stamps the sparse marker (t="1") because it is tracked -- so
-# it must appear in the tracked-index the ETL's retrieveItems now queries.
-curl -s -X POST "${API_URL}/v1/items" -H "x-api-key: ${API_KEY}" \
-  -H "Content-Type: application/json" -d '{"id": 12094}' | head -20
-# Confirm the item is present in the sparse tracked-index (Count >= 1)
-aws dynamodb query --table-name bdo-${STAGE}-items --index-name tracked-index \
-  --key-condition-expression "t = :t" \
-  --expression-attribute-values '{":t": {"S": "1"}}' \
-  --query 'Count'
-```
 
 ### CI/CD deploy role (GitHub OIDC) bootstrap
 
@@ -385,8 +312,183 @@ gh secret set PROD_HOSTED_ZONE_ID --body "ZXXXXXXXXXXXXX"
 > role, and you can tighten to least-privilege later by replaying CloudTrail.
 
 > First prod deploy only: the RDS Postgres roles must be bootstrapped
-> (migrations `0001`–`0003` as the master user via the bastion — see "First-time
-> role bootstrap") before the CI migrator step can run as `lambda_migrator`.
+> (migrations `0001`–`0003` as the master user via the bastion — see
+> [First-time role bootstrap](#first-time-role-bootstrap)) before the CI migrator
+> step can run as `lambda_migrator`.
+
+## Daily operations
+
+ETL runs hourly via EventBridge (one execution per active region).
+Monitor health from the CloudWatch dashboard:
+
+- **BdoMarket/EtlSuccessfulItems** - items processed without error
+- **BdoMarket/EtlFailedItems** - items that failed in the current run
+
+Step Functions console shows full execution history, per-state
+input/output, and retry behaviour.
+
+## Deployment
+
+### Quick reference
+
+| Environment | Method |
+|-------------|--------|
+| Dev | `make deploy STAGE=dev` (manual; CI deploy is tag-only) |
+| Prod | Push a `v*` tag to trigger CI deploy |
+| Rollback | Deploy the previous tag |
+
+### Deployment notes
+
+Two things apply to every `make deploy` below:
+
+- **Build on a native Linux filesystem, not a Windows-mounted `/mnt/*` path.**
+  `make deploy` runs `make build` (including the verify-layer guard) first, so a
+  deploy can never republish a source-only `CommonLayer` — which would otherwise
+  break every function at init with `No module named 'aws_lambda_powertools'`.
+  On a `/mnt/*` path `pip --target` can silently vendor nothing.
+- **`make deploy` re-declares the full stack state.** Every invocation must pass
+  the stage's persistent flags (`ENABLE_DEMO_KEY`, the custom-domain vars) or
+  they are dropped — even when you are only toggling one option (e.g. the
+  bastion). CI passes them for prod on every tagged release.
+
+### Dev deployment (manual)
+
+**Use this workflow to test changes on the dev stack before promoting to prod.**
+(Setting up a stack from empty? See [First-time bring-up](#first-time-bring-up).)
+
+#### Pre-deploy checklist
+
+- [ ] Code review complete (PR merged to `main`)
+- [ ] All CI checks passed (lint, typecheck, tests, audit, scan, OpenAPI drift)
+- [ ] Schema changes? Ensure migrations are in `migrations/versions/` with sequential numbers
+- [ ] Local `make test` passes (including integration if `TEST_DATABASE_URL` is set)
+
+#### Deploy dev
+
+```bash
+# Build and deploy the dev stack (prompts for changeset confirmation).
+# See "Deployment notes" above re: the build guard and full-state flags.
+# make deploy streams stack events and blocks until the deploy settles.
+make deploy STAGE=dev
+```
+
+Once it settles on `CREATE_COMPLETE` / `UPDATE_COMPLETE`, verify (below).
+
+#### Apply migrations (if applicable)
+
+If your changes include schema migrations (`migrations/versions/*`), apply them
+after the deploy through the in-VPC migrator Lambda — no bastion or tunnel
+needed:
+
+```bash
+make migrate-lambda STAGE=dev
+```
+
+See [Running migrations](#running-migrations) for how this works.
+
+> **First time on a fresh database?** The `lambda_migrator` role does not exist
+> yet, so the migrator Lambda cannot run. Do the one-time
+> [First-time role bootstrap](#first-time-role-bootstrap) instead — it applies
+> `0001`–`0003` (schema + roles) as the master through the bastion, in one pass.
+> Every later migration then uses `make migrate-lambda` as above.
+
+#### Post-deploy verification (dev)
+
+This block is parametrized on `STAGE`; the [prod section](#post-deploy-verification-prod)
+reuses it with `STAGE=prod`.
+
+```bash
+STAGE=dev
+
+# Resolve the API base URL from the nested API stack. The root stack
+# (bdo-market-${STAGE}) exposes no outputs of its own, so query across all stacks
+# whose name starts with the stack prefix and pick the nested API stack's output.
+API_URL=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?OutputKey=='ApiUrl'].OutputValue | [0]" \
+  --output text)
+
+# The API key is an API Gateway key created by the usage plan (NOT Secrets
+# Manager). Resolve it via the REST API id so the dev/prod keys in the same
+# account are never confused.
+API_ID=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?OutputKey=='ApiId'].OutputValue | [0]" \
+  --output text)
+# Exclude the read-only demo plan (if enabled) so this resolves the PRIVATE key.
+USAGE_PLAN_ID=$(aws apigateway get-usage-plans \
+  --query "items[?apiStages[?apiId=='${API_ID}'] && name!='bdo-${STAGE}-demo-plan'].id | [0]" --output text)
+API_KEY_ID=$(aws apigateway get-usage-plan-keys --usage-plan-id "${USAGE_PLAN_ID}" \
+  --query 'items[0].id' --output text)
+API_KEY=$(aws apigateway get-api-key --api-key "${API_KEY_ID}" --include-value \
+  --query 'value' --output text)
+
+# Swagger UI + spec are key-less; use their dedicated output
+DOCS_URL=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] | [?OutputKey=='DocsUrl'].OutputValue | [0]" \
+  --output text)
+
+# Test the key-required API (ApiUrl already includes the stage path)
+curl -H "x-api-key: ${API_KEY}" "${API_URL}/v1/items" | head -20
+curl -s "${DOCS_URL}" | grep -q "swagger-ui" && echo "Swagger UI OK"
+
+# Check CloudWatch Logs for errors (last 10 minutes)
+aws logs tail /aws/lambda/bdo-${STAGE}-market-query --since 10m --follow
+```
+
+Optional (dev / fresh-table only): smoke-test the tracked-index Query path. Skip
+on prod — this registers a real tracked item.
+
+```bash
+# Registering an item validates the id against arsha.io and writes it via
+# put_item, which stamps the sparse marker (t="1") because it is tracked -- so
+# it must appear in the tracked-index the ETL's retrieveItems now queries.
+curl -s -X POST "${API_URL}/v1/items" -H "x-api-key: ${API_KEY}" \
+  -H "Content-Type: application/json" -d '{"id": 12094}' | head -20
+# Confirm the item is present in the sparse tracked-index (Count >= 1)
+aws dynamodb query --table-name bdo-${STAGE}-items --index-name tracked-index \
+  --key-condition-expression "t = :t" \
+  --expression-attribute-values '{":t": {"S": "1"}}' \
+  --query 'Count'
+```
+
+### Running migrations
+
+Routine schema migrations run **from inside the VPC** — no bastion or tunnel
+needed. The CI deploy job invokes the migrator Lambda (`bdo-<stage>-migrator`)
+after `sam deploy`; the function connects to RDS as `lambda_migrator` via IAM
+auth and runs `alembic upgrade head`. A GitHub runner cannot reach the private
+RDS directly, so it drives the migration through this Lambda (control-plane
+invoke). Trigger it by hand for dev:
+
+```sh
+make migrate-lambda STAGE=dev
+```
+
+(The very first migration on a fresh database is different — the roles don't
+exist yet; see [First-time role bootstrap](#first-time-role-bootstrap).)
+
+### Backfill the tracked-index marker (one-time, when adding the GSI)
+
+The `tracked-index` GSI is keyed on a marker attribute (`t`) written only on
+tracked items. When the deployment that *adds* the GSI first goes out, items
+registered earlier lack the marker and are invisible to the ETL's tracked-item
+query. Run the backfill once, right after that deploy and before the next
+hourly ETL run, so the tracked set repopulates the index:
+
+```bash
+# Preview first, then apply. DynamoDB is reachable via the AWS API (no bastion).
+uv run python scripts/backfill_tracked_marker.py --target-table bdo-dev-items --dry-run
+uv run python scripts/backfill_tracked_marker.py --target-table bdo-dev-items
+```
+
+This is only needed the one time the GSI is introduced; afterwards the marker
+is maintained automatically on registration and tracked/untracked changes.
+
+On a fresh or empty table the backfill reports `0 tracked items found` — that is
+expected (there is nothing to migrate), not an error. To smoke-test the Query
+path on such a table, register one item (see
+[Post-deploy verification (dev)](#post-deploy-verification-dev)): the API write
+path stamps the marker automatically, so the item lands in the `tracked-index`
+immediately.
 
 ### Prod deployment (CI/CD)
 
@@ -479,7 +581,7 @@ gh run list --workflow ci.yml --branch main --limit 1
 # (see "Post-deploy verification (prod)" section above)
 ```
 
-**Note:** Rollbacks are safe for data — ETL writes are idempotent on `(region, item_id, sid, snapshot_at)`. If you rolled back past a schema migration, you may need to manually run `REVOKE` commands on your RDS roles; see the bootstrap note in "Database access via bastion" for details.
+**Note:** Rollbacks are safe for data — ETL writes are idempotent on `(region, item_id, sid, snapshot_at)`. If you rolled back past a schema migration, you may need to manually run `REVOKE` commands on your RDS roles; see [First-time role bootstrap](#first-time-role-bootstrap) for details.
 
 ### Breaking changes
 
@@ -491,106 +593,13 @@ If you make a breaking change (new required field, schema incompatibility, etc.)
 4. **Update API consumers** before removing old behavior
 5. **Consider a canary approach** if possible — deploy to dev/staging first, then prod after a soak period
 
-## Database access via bastion
+## Feature toggles
 
-### Prerequisites
+Optional, opt-in capabilities that are off by default. Each is a plain
+`make deploy` flag; remember the full-state rule in
+[Deployment notes](#deployment-notes).
 
-- AWS CLI v2 (with a local `ssh` binary on `PATH`)
-- IAM permissions for EICE: `ec2-instance-connect:OpenTunnel`,
-  `ec2-instance-connect:SendSSHPublicKey`, `ec2:DescribeInstances`,
-  `ec2:DescribeInstanceConnectEndpoints`
-- pgAdmin or `psql` (optional; `make migrate` uses the bundled `alembic`)
-
-### Flow
-
-The bastion has **no public IP** (ADR-0009). Access is brokered by the EC2
-Instance Connect Endpoint (EICE), so you never SSH to it directly — the
-`db-tunnel-up` target tunnels through the EICE with `--connection-type eice`.
-
-1. Ensure the bastion is deployed. If your stack was deployed with
-   `EnableBastion=false` (the default), redeploy with it on. The bastion is a
-   transient toggle, but the deploy re-declares full stack state, so include the
-   stage's persistent flags (demo key, domain) too if it has them (see
-   [Deployment notes](#deployment-notes)):
-
-   ```sh
-   make deploy STAGE=dev ENABLE_BASTION=true
-   ```
-
-2. `make db-tunnel-up STAGE=<dev|prod>` — opens the EICE tunnel to RDS on
-   `localhost:5432`. Leave it running; open a second terminal for the next
-   steps. Ctrl-C (or `make db-tunnel-down`) closes it.
-3. Connect pgAdmin (or psql) to `localhost:5432` using the `dba` role.
-   Credentials are in the `bdo-<stage>-dba-credentials` Secrets Manager secret.
-
-### First-time role bootstrap
-
-(Run once, via the bastion.) The Postgres roles themselves are cluster-level
-objects created by migrations `0002`/`0003` and need privileges the
-`lambda_migrator` role does not hold:
-
-- `0002_bootstrap_roles` — `lambda_rds_user` (runtime, IAM auth) and
-  `dba` (human login; created only when `DBA_PASSWORD` is set).
-- `0003_migrator_role` — `lambda_migrator` (IAM auth) used by the migrator
-  Lambda (see [Running migrations](#running-migrations) below); also grants it
-  DML on `alembic_version`.
-
-Apply the full chain (`0001`–`0003`) **once** as the RDS master user
-through the bastion tunnel. With the tunnel open (step 2 above), in a second
-terminal:
-
-```sh
-STAGE=dev
-
-# dba password (so 0002 creates the dba login role):
-export DBA_PASSWORD="$(aws secretsmanager get-secret-value \
-  --secret-id bdo-${STAGE}-dba-credentials \
-  --query SecretString --output text \
-  | python -c 'import json,sys; print(json.load(sys.stdin)["password"])')"
-
-# master password from the RDS-managed master secret (NOT the dba secret):
-MASTER_SECRET_ARN=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] \
-           | [?OutputKey=='MasterSecretArn'].OutputValue | [0]" --output text)
-MASTER_PW=$(aws secretsmanager get-secret-value --secret-id "$MASTER_SECRET_ARN" \
-  --query SecretString --output text \
-  | python -c 'import json,sys; print(json.load(sys.stdin)["password"])')
-
-# env.py normalizes the driver to +psycopg (this project ships psycopg v3
-# only), so a plain postgresql:// URL now works too; the explicit form is fine.
-export DATABASE_URL="postgresql+psycopg://postgres:${MASTER_PW}@localhost:5432/bdo"
-
-make migrate
-uv run alembic -c migrations/alembic.ini current   # expect: 0003 (head)
-make db-tunnel-down
-```
-
-After this one-time bootstrap, all later schema changes go through
-`make migrate-lambda` (or the CI deploy step) — no tunnel required. Drop the
-bastion again once you're done (`make deploy STAGE=dev ENABLE_BASTION=false`).
-
-> Migrations `0002`/`0003` end with `REVOKE … FROM CURRENT_USER` so the master
-> keeps password login; without it the master becomes a transitive `rds_iam`
-> member and RDS routes it to PAM auth (`FATAL: PAM authentication failed for
-> user "postgres"`). See [ADR-0008](adr/0008-iam-database-authentication.md) for
-> the mechanism. If you are ever locked out this way, connect once with an IAM
-> token (the master now holds `rds_iam`, so IAM auth works) and run
-> `REVOKE lambda_rds_user FROM postgres; REVOKE lambda_migrator FROM postgres;`.
-
-### Running migrations
-
-Thereafter, routine schema migrations run **from inside the VPC** — no bastion
-or tunnel needed. The CI deploy job invokes the migrator Lambda
-(`bdo-<stage>-migrator`) after `sam deploy`; the function connects to RDS as
-`lambda_migrator` via IAM auth and runs `alembic upgrade head`. A GitHub runner
-cannot reach the private RDS directly, so it drives the migration through this
-Lambda (control-plane invoke). Trigger it by hand for dev:
-
-```sh
-make migrate-lambda STAGE=dev
-```
-
-## Custom API domain
+### Custom API domain
 
 The API custom domain is opt-in and off by default (ADR-0013). The hostname and
 hosted zone are **not** stored in committed config (account-specific). They are
@@ -606,7 +615,7 @@ supplied two ways:
 Use `{service}.{env}.example.com`: `api.example.com` for prod,
 `api.dev.example.com` for dev.
 
-### Prerequisites
+#### Prerequisites
 
 - The parent domain's hosted zone exists in Route 53 (shared infra; **not**
   created by this stack). Get its ID:
@@ -620,7 +629,7 @@ Use `{service}.{env}.example.com`: `api.example.com` for prod,
 - IAM permissions to create ACM certificates, API Gateway domain names, and
   Route 53 record sets.
 
-### Enable (prod example)
+#### Enable (prod example)
 
 Set the CI secrets once so every tagged release preserves the domain:
 
@@ -652,7 +661,7 @@ aws cloudformation describe-stacks --stack-name bdo-market-prod \
 curl -H "x-api-key: <KEY>" https://api.example.com/v1/items
 ```
 
-### Disable
+#### Disable
 
 Unset the CI secrets (so releases stop re-adding it), then redeploy the full
 state without the domain vars — the domain reverts to empty, removing the cert,
@@ -664,7 +673,7 @@ gh secret delete PROD_HOSTED_ZONE_ID
 make deploy STAGE=prod ENABLE_DEMO_KEY=true   # no domain vars -> domain removed
 ```
 
-## Public demo API key
+### Public demo API key
 
 A public, **read-only** API key for "try the API" links (e.g. a published
 Postman workspace). Opt-in and off by default. It runs on a tight usage plan
@@ -673,7 +682,7 @@ Postman workspace). Opt-in and off by default. It runs on a tight usage plan
 `itemRegistry` handler (API Gateway keys can't be scoped to specific methods).
 Never publish the privileged stage key — only this demo key.
 
-### Enable
+#### Enable
 
 Add `ENABLE_DEMO_KEY=true` to a full-state deploy (see
 [Deployment notes](#deployment-notes)). For **prod** the demo key should persist
@@ -698,7 +707,7 @@ make deploy STAGE=dev ENABLE_DEMO_KEY=true
 > so the "API Stage not found" race on a fresh-create deploy is handled.
 > Enabling it on an existing stack (the usual prod case) is a plain update.
 
-### Retrieve the key value
+#### Retrieve the key value
 
 The value is generated by API Gateway and is **never** stored in the repo.
 Fetch it by the key name (`bdo-<stage>-demo`):
@@ -712,7 +721,7 @@ Put the value into the published Postman environment's `apiKey` variable (and
 set `baseUrl` to the stage's base URL). To rotate, disable then re-enable (a
 new key is created); the usage-plan caps limit abuse in the meantime.
 
-### Verify (read-only)
+#### Verify (read-only)
 
 Confirm the demo key can read but not write. Resolve the base URL and the demo
 key, then check a read (`200`) and a write (`403`):
@@ -734,7 +743,7 @@ Expected: `GET items -> 200` and `POST items -> 403`. Swap `dev` for `prod` in
 the names/stage to verify prod. (A fresh stack returns an empty item list on the
 read, which is fine — only the status codes matter here.)
 
-### Disable
+#### Disable
 
 Run a full-state deploy with the demo key off (omit `ENABLE_DEMO_KEY`, which
 defaults to false) — this removes the demo key, its usage plan, and the
@@ -748,6 +757,45 @@ make deploy STAGE=prod \
 > For prod, the CI deploy sets `EnableDemoKey=true`, so a manual disable is
 > reverted by the next tagged release. To disable it permanently, flip
 > `EnableDemoKey=true` to `false` in the deploy step of `.github/workflows/ci.yml`.
+
+## Database access via bastion
+
+Reach Postgres directly for ad-hoc inspection or recovery (connect
+pgAdmin/psql, run one-off SQL, recover from a lockout). The one-time role setup
+for a fresh database lives in
+[First-time bring-up → First-time role bootstrap](#first-time-role-bootstrap);
+routine schema migrations don't use the bastion at all (see
+[Running migrations](#running-migrations)).
+
+### Prerequisites
+
+- AWS CLI v2 (with a local `ssh` binary on `PATH`)
+- IAM permissions for EICE: `ec2-instance-connect:OpenTunnel`,
+  `ec2-instance-connect:SendSSHPublicKey`, `ec2:DescribeInstances`,
+  `ec2:DescribeInstanceConnectEndpoints`
+- pgAdmin or `psql` (optional; `make migrate` uses the bundled `alembic`)
+
+### Flow
+
+The bastion has **no public IP** (ADR-0009). Access is brokered by the EC2
+Instance Connect Endpoint (EICE), so you never SSH to it directly — the
+`db-tunnel-up` target tunnels through the EICE with `--connection-type eice`.
+
+1. Ensure the bastion is deployed. If your stack was deployed with
+   `EnableBastion=false` (the default), redeploy with it on. The bastion is a
+   transient toggle, but the deploy re-declares full stack state, so include the
+   stage's persistent flags (demo key, domain) too if it has them (see
+   [Deployment notes](#deployment-notes)):
+
+   ```sh
+   make deploy STAGE=dev ENABLE_BASTION=true
+   ```
+
+2. `make db-tunnel-up STAGE=<dev|prod>` — opens the EICE tunnel to RDS on
+   `localhost:5432`. Leave it running; open a second terminal for the next
+   steps. Ctrl-C (or `make db-tunnel-down`) closes it.
+3. Connect pgAdmin (or psql) to `localhost:5432` using the `dba` role.
+   Credentials are in the `bdo-<stage>-dba-credentials` Secrets Manager secret.
 
 ## Market Insights: dev evaluation
 
@@ -769,7 +817,7 @@ make deploy STAGE=dev ENABLE_BASTION=true   # if the bastion isn't already deplo
 make db-tunnel-up STAGE=dev        # leave running; use a second terminal below
 
 # In the second terminal: a DB URL with write access over the tunnel. The RDS
-# master (see the bootstrap section) always works; dba works if it has been
+# master (see First-time role bootstrap) always works; dba works if it has been
 # granted table privileges. The script accepts the +psycopg form too.
 export DATABASE_URL="postgresql://postgres:<MASTER_PW>@localhost:5432/bdo"
 uv run python scripts/seed_market_dev.py --dry-run   # preview
@@ -785,7 +833,7 @@ aws stepfunctions start-execution --state-machine-arn "$SM_ARN" \
   --input '{"region":"tw","period":"weekly"}'
 
 # 3. Read the narration back (resolve API_URL + API_KEY as in
-#    "Post-Deploy Verification (Dev)" above).
+#    "Post-deploy verification (dev)" above).
 curl -s -H "x-api-key: ${API_KEY}" "${API_URL}/v1/insights?region=tw&period=daily"  | jq .
 curl -s -H "x-api-key: ${API_KEY}" "${API_URL}/v1/insights?region=tw&period=weekly" | jq .
 
@@ -801,13 +849,15 @@ make deploy STAGE=dev ENABLE_BASTION=false   # optional, saves the bastion cost
 > populated, just not LLM-written. Check `model_id` in the response to tell
 > which path produced it.
 
-## Cleanup and teardown
+## Recovery & teardown
+
+### Cleanup and teardown
 
 Two levels: reverting a temporary test setup (non-destructive), and deleting a
 whole stack (destructive). The legacy pre-v3 decommission is a separate,
 one-time exercise -- see `docs/cleanup-tasks.md`.
 
-### Revert a test setup (non-destructive)
+#### Revert a test setup (non-destructive)
 
 After a dev evaluation, undo the opt-in pieces without touching the stack:
 
@@ -823,7 +873,7 @@ make deploy STAGE=dev ENABLE_BASTION=false   # remove the bastion + EICE (saves 
 make clean                       # local build artifacts (.aws-sam/, etc.)
 ```
 
-### Delete a whole stack (destructive)
+#### Delete a whole stack (destructive)
 
 Deleting `bdo-market-<stage>` tears down the root stack and the nested stacks it
 still owns (network, data, ETL, API, insights, observability). Stacks orphaned by
@@ -854,7 +904,7 @@ remove any orphaned nested stacks" below). Know what goes with it:
   aws s3api delete-bucket --bucket bdo-dev-icons
   ```
 
-#### Dev
+##### Dev
 
 Dev RDS has no deletion protection (`DeletionProtection: !If [IsProd, true,
 false]` in `infra/data.yaml`), so the stack deletes directly:
@@ -864,7 +914,7 @@ sam delete --stack-name bdo-market-dev --region us-east-1
 # prompts for confirmation; add --no-prompts to skip
 ```
 
-#### Prod
+##### Prod
 
 Prod RDS sets `DeletionProtection: true`, so `sam delete` will FAIL (the DB
 lands in `DELETE_FAILED`) until you disable it. This is irreversible -- take a
@@ -890,7 +940,7 @@ aws rds modify-db-instance --region us-east-1 \
 sam delete --stack-name bdo-market-prod --region us-east-1
 ```
 
-#### Verify, and remove any orphaned nested stacks
+##### Verify, and remove any orphaned nested stacks
 
 `sam delete` removes the root stack and cascades to the nested stacks it
 **currently owns**. Nested stacks detached by an earlier failed or rolled-back
@@ -926,7 +976,7 @@ ENIs -- delete the remaining compute/data stacks, then retry Network.
 > Irreversible. If others may depend on the stack, prefer the staged
 > disable -> observe -> delete approach documented in `docs/cleanup-tasks.md`.
 
-## Recreating a stack from scratch
+### Recreating a stack from scratch
 
 Use this when a stack was deleted, or a first-time create failed and left it in
 `ROLLBACK_COMPLETE` (that state can only be deleted, not updated). A few
@@ -934,7 +984,7 @@ fixed-name resources survive a delete/rollback and will fail the fresh CREATE
 with "already exists", so clear them first, then rebuild the data. Commands show
 `dev`; swap `dev` -> `prod` as needed.
 
-### Clear orphaned resources
+#### Clear orphaned resources
 
 ```sh
 # Lambda-auto-created log groups. ObservabilityStack declares each Lambda's log
@@ -964,7 +1014,7 @@ aws logs describe-log-groups --log-group-name-prefix /aws/lambda/bdo-dev- \
 aws s3 ls | grep bdo-dev-icons
 ```
 
-### Deploy the empty stack
+#### Deploy the empty stack
 
 ```sh
 make deploy STAGE=dev
@@ -973,21 +1023,12 @@ make deploy STAGE=dev
 If it still fails with "already exists", that named resource needs the same
 delete-then-retry -- see [Troubleshooting](#troubleshooting).
 
-### Rebuild the data
+#### Rebuild the data
 
-RDS and DynamoDB come back empty (neither is retained), so run the first-time
-data path in order:
-
-1. [First-time role bootstrap](#first-time-role-bootstrap) -- the fresh RDS has
-   no roles or schema. The bootstrap applies migrations `0001`–`0003` (schema +
-   roles) as the master through the bastion, in one pass; no separate migration
-   step is needed.
-2. [Backfill the item catalog](#backfill-the-item-catalog-one-time) -- seeds the
-   catalog (retries flaky `util/db`, but cannot work around an arsha outage).
-3. [Seed the tracked set](#seed-the-tracked-set-one-time), then run an ETL cycle
-   (see [Daily operations](#daily-operations)).
-4. [Item icons](#item-icons) materialize on the next daily `iconSync` run, or
-   invoke it asynchronously to materialize immediately.
+RDS and DynamoDB come back empty (neither is retained), so rebuild them by
+following [First-time bring-up](#first-time-bring-up): role bootstrap → catalog
+→ tracked set → icons → verify. Nothing else is needed — the bring-up path is
+the same one used for any new stack.
 
 ## Troubleshooting
 
@@ -998,7 +1039,7 @@ data path in order:
 | ETL timeout | Check arsha.io status page; verify Lambda timeout config in `template.yaml`. |
 | RDS connection failures | Check security group rules; verify IAM auth token generation; confirm RDS instance status. |
 | `make db-tunnel-up`: "Unable to connect to target" | EICE can't reach the bastion on :22. Confirm the bastion SG has a self-referencing port-22 egress rule (`BastionSshEgress`) and that the EICE is `available`. |
-| Master login: "PAM authentication failed for user postgres" | Master became a (transitive) member of `rds_iam`. See the bootstrap note above — IAM-auth in and `REVOKE` the role memberships. |
+| Master login: "PAM authentication failed for user postgres" | Master became a (transitive) member of `rds_iam`. See [First-time role bootstrap](#first-time-role-bootstrap) — IAM-auth in and `REVOKE` the role memberships. |
 | `make migrate-lambda`: "permission denied for table alembic_version" | `lambda_migrator` lacks DML on `alembic_version`. Re-run the `0003` grant, or one-off as master: `GRANT SELECT, INSERT, UPDATE, DELETE ON alembic_version TO lambda_migrator;`. |
 | API 5xx spike | Filter CloudWatch logs by `correlation_id`; look for connection pool exhaustion or query timeouts. |
 | Custom-domain deploy hangs at `CREATE_IN_PROGRESS` on the certificate | ACM is waiting for DNS validation. Confirm `HostedZoneId` is the correct zone for `ApiDomainName`, and that the zone is the authoritative one for the domain (NS records at the registrar point to it). Validation usually completes within minutes. |
