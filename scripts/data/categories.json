@@ -1,0 +1,12 @@
+{
+  "_comment": "Maps BDO market taxonomy codes to the coarse category stored on each item. seed_items.py fetches GetWorldMarketList for each mainCategory/subCategory below to derive an item's category. 'category' is the coarse label the insights pipeline groups on (must match a registered handler, e.g. 'accessory'); 'sub_categories' are informational labels for the sub codes.",
+  "20": {
+    "category": "accessory",
+    "sub_categories": {
+      "1": "ring",
+      "2": "necklace",
+      "3": "earring",
+      "4": "belt"
+    }
+  }
+}
