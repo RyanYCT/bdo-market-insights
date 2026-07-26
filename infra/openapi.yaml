@@ -50,6 +50,93 @@ components:
       - id
       title: ItemCreate
       type: object
+    ItemListResponse:
+      description: 'Response body for ``GET /v1/items``: the matching items plus a
+        count.'
+      properties:
+        count:
+          title: Count
+          type: integer
+        items:
+          items:
+            $ref: '#/components/schemas/ItemResponse'
+          title: Items
+          type: array
+      required:
+      - items
+      - count
+      title: ItemListResponse
+      type: object
+    ItemResponse:
+      description: 'Public shape of a registry item.
+
+
+        A curated view of the stored :class:`Item` for API consumers: the internal
+
+        ETL routing fields (``model_id``, ``cron_table``) are intentionally omitted
+
+        from the contract.'
+      properties:
+        category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category
+        created_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Created At
+        grade:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Grade
+        icon_status:
+          default: unset
+          enum:
+          - unset
+          - stored
+          - missing
+          title: Icon Status
+          type: string
+        id:
+          title: Id
+          type: integer
+        main_category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Main Category
+        name:
+          title: Name
+          type: string
+        names:
+          additionalProperties:
+            type: string
+          title: Names
+          type: object
+        sub_category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Sub Category
+        tracked:
+          default: true
+          title: Tracked
+          type: boolean
+        updated_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Updated At
+      required:
+      - id
+      - name
+      title: ItemResponse
+      type: object
     ItemUpdate:
       description: Request body for ``PATCH /v1/items/{id}`` (all fields optional).
       properties:
@@ -214,9 +301,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: true
-                title: Return
-                type: object
+                $ref: '#/components/schemas/ItemListResponse'
           description: Successful Response
         '422':
           content:
@@ -238,9 +323,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: true
-                title: Return
-                type: object
+                $ref: '#/components/schemas/ItemResponse'
           description: Successful Response
         '422':
           content:
@@ -289,9 +372,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: true
-                title: Return
-                type: object
+                $ref: '#/components/schemas/ItemResponse'
           description: Successful Response
         '422':
           content:
@@ -320,9 +401,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties: true
-                title: Return
-                type: object
+                $ref: '#/components/schemas/ItemResponse'
           description: Successful Response
         '422':
           content:

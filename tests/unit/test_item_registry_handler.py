@@ -66,7 +66,17 @@ def test_list_items_filters(
 
     def fake_list(**kwargs: Any) -> list[Item]:
         captured.update(kwargs)
-        return [Item(id=12094, name="Deboreka Ring", category="ring", tracked=True)]
+        return [
+            Item(
+                id=12094,
+                name="Deboreka Ring",
+                names={"tw": "\u5fb7\u6ce2\u96f7\u5361\u6212\u6307"},
+                grade=4,
+                category="ring",
+                tracked=True,
+                icon_status="stored",
+            )
+        ]
 
     monkeypatch.setattr(mod.dynamo, "list_items", fake_list)
     resp = mod.handler(
@@ -76,7 +86,15 @@ def test_list_items_filters(
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])
     assert body["count"] == 1
-    assert body["items"][0]["id"] == 12094
+    item = body["items"][0]
+    assert item["id"] == 12094
+    # Catalog fields (ADR-0018) are part of the documented response contract.
+    assert item["grade"] == 4
+    assert item["names"] == {"tw": "\u5fb7\u6ce2\u96f7\u5361\u6212\u6307"}
+    assert item["icon_status"] == "stored"
+    # Internal ETL routing fields are omitted from the public contract.
+    assert "model_id" not in item
+    assert "cron_table" not in item
     assert captured == {"category": "ring", "tracked": True}
 
 
@@ -84,11 +102,21 @@ def test_get_item_found(
     mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        mod.dynamo, "get_item", lambda item_id: Item(id=item_id, name="Deboreka Ring")
+        mod.dynamo,
+        "get_item",
+        lambda item_id: Item(id=item_id, name="Deboreka Ring", grade=4, icon_status="stored"),
     )
     resp = mod.handler(_event("GET", "/v1/items/12094"), lambda_context)
     assert resp["statusCode"] == 200
-    assert json.loads(resp["body"])["id"] == 12094
+    body = json.loads(resp["body"])
+    assert body["id"] == 12094
+    # Catalog fields (ADR-0018) are part of the documented response contract.
+    assert body["grade"] == 4
+    assert body["icon_status"] == "stored"
+    assert body["names"] == {}
+    # Internal ETL routing fields are omitted from the public contract.
+    assert "model_id" not in body
+    assert "cron_table" not in body
 
 
 def test_get_item_404(
@@ -116,6 +144,13 @@ def test_create_item_validates_via_arsha(
     assert created[0].id == 12094
     assert created[0].name == "Deboreka Ring"  # taken from arsha
     assert created[0].cron_table == "b"
+    # 201 body serializes the created item (incl. the ADR-0018 catalog fields),
+    # projected onto the public contract (no internal ETL routing fields).
+    created_body = json.loads(resp["body"])
+    assert created_body["id"] == 12094
+    assert created_body["icon_status"] == "unset"
+    assert "cron_table" not in created_body  # dropped from the public shape
+    assert "model_id" not in created_body
 
 
 def test_create_item_rejects_unknown_id(
