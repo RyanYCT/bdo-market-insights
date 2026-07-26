@@ -62,6 +62,13 @@ class ItemUpdate(BaseModel):
     tracked: bool | None = None
 
 
+class ItemListResponse(BaseModel):
+    """Response body for ``GET /v1/items``: the matching items plus a count."""
+
+    items: list[Item]
+    count: int
+
+
 def _parse_bool(value: str | None) -> bool | None:
     """Parse a query-string flag into a tri-state bool (None = unset)."""
     if value is None:
@@ -94,27 +101,27 @@ def _reject_demo_writes() -> None:
 
 
 @app.get("/v1/items")
-def list_items() -> dict[str, Any]:
+def list_items() -> ItemListResponse:
     """FR-8: list items, optionally filtered by ``category`` and ``tracked``."""
     category = app.current_event.get_query_string_value(name="category", default_value=None)
     tracked = _parse_bool(
         app.current_event.get_query_string_value(name="tracked", default_value=None)
     )
     items = dynamo.list_items(category=category, tracked=tracked)
-    return {"items": [item.model_dump(mode="json") for item in items], "count": len(items)}
+    return ItemListResponse(items=items, count=len(items))
 
 
 @app.get("/v1/items/<item_id>")
-def get_item(item_id: int) -> dict[str, Any]:
+def get_item(item_id: int) -> Item:
     """FR-9: return one item, or 404."""
     item = dynamo.get_item(item_id)
     if item is None:
         raise NotFoundError(f"item {item_id} not found")
-    return item.model_dump(mode="json")
+    return item
 
 
 @app.post("/v1/items")
-def create_item(body: ItemCreate) -> Response[dict[str, Any]]:
+def create_item(body: ItemCreate) -> Response[Item]:
     """FR-10: validate the id against arsha.io, then register in DynamoDB."""
     _reject_demo_writes()
     settings = get_settings()
@@ -136,12 +143,12 @@ def create_item(body: ItemCreate) -> Response[dict[str, Any]]:
     return Response(
         status_code=201,
         content_type=content_types.APPLICATION_JSON,
-        body=item.model_dump(mode="json"),
+        body=item,
     )
 
 
 @app.patch("/v1/items/<item_id>")
-def update_item(item_id: int, body: ItemUpdate) -> dict[str, Any]:
+def update_item(item_id: int, body: ItemUpdate) -> Item:
     """FR-11: update metadata (incl. ``tracked``) in DynamoDB."""
     _reject_demo_writes()
     if dynamo.get_item(item_id) is None:
@@ -152,7 +159,7 @@ def update_item(item_id: int, body: ItemUpdate) -> dict[str, Any]:
     refreshed = dynamo.get_item(item_id)
     if refreshed is None:  # pragma: no cover - concurrent delete
         raise NotFoundError(f"item {item_id} not found")
-    return refreshed.model_dump(mode="json")
+    return refreshed
 
 
 @app.delete("/v1/items/<item_id>")
