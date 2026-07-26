@@ -1,0 +1,8 @@
+{
+  "_comment": "Maps BDO market taxonomy 'mainCategory:subCategory' to the coarse category stored on each tracked item. seed_items.py fetches GetWorldMarketList for each entry below and assigns its 'category' to any tracked item found there. 'category' must match a registered insights handler (e.g. accessory, buff); 'type' is an informational sub-type label. Keyed per (main, sub) because a main category can be mixed (e.g. 55 holds costumes, pets, and buff consumables).",
+  "20:1": { "category": "accessory", "type": "ring" },
+  "20:2": { "category": "accessory", "type": "necklace" },
+  "20:3": { "category": "accessory", "type": "earring" },
+  "20:4": { "category": "accessory", "type": "belt" },
+  "55:6": { "category": "buff", "type": "consumable" }
+}
