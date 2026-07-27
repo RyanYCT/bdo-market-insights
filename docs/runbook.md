@@ -201,13 +201,15 @@ tracked first with the toggle below. Everything here is offline; only
 
 **1. (Optional) change what's tracked.** Use the preset toggle rather than
 hand-editing the list. It **adds** the selection to the current tracked set by
-default (pass `--replace` to overwrite instead):
+default (pass `--replace` to overwrite instead). Pick several presets at once —
+comma-separated numbers in `make track` (e.g. `9,10`), or `--preset a,b` — and
+their selections are unioned:
 
 ```bash
-make track                                   # interactive preset menu
+make track                                   # interactive menu (accepts e.g. 9,10)
 # ...or scripted (adds by default; --replace to overwrite, --force for broad sets):
+uv run python scripts/select_tracked.py --preset deboreka,buffs --out scripts/data/tracked_items.json
 uv run python scripts/select_tracked.py --preset ring --out scripts/data/tracked_items.json
-uv run python scripts/select_tracked.py --preset deboreka --out scripts/data/tracked_items.json
 ```
 
 Presets (`scripts/data/presets.json` + `scripts/data/track_sets.json`): `all`
