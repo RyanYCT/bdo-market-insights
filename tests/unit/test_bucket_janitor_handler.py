@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from types import ModuleType
 from typing import Any
@@ -124,3 +125,68 @@ class TestHandler:
         called.assert_not_called()
         mod._send_response.assert_called_once()
         assert mod._send_response.call_args[0][2] == "SUCCESS"
+
+
+class TestSendResponse:
+    """Exercise the CloudFormation response PUT itself (not mocked here).
+
+    This is the path that hangs a whole stack operation if it is malformed,
+    so it gets direct coverage: correct verb, the empty Content-Type the S3
+    pre-signed URL requires, and the required response-body keys.
+    """
+
+    @pytest.fixture
+    def raw_mod(self, load_handler: Callable[[str], ModuleType]) -> ModuleType:
+        # NOTE: unlike the `mod` fixture, this does NOT patch _send_response.
+        return load_handler("bucket_janitor")
+
+    def test_puts_wellformed_success_response(
+        self, raw_mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_urlopen = MagicMock()
+        monkeypatch.setattr(raw_mod.urllib.request, "urlopen", mock_urlopen)
+
+        event = _cfn_event("Delete")
+        event["PhysicalResourceId"] = "IconsBucketJanitor"
+        raw_mod._send_response(event, lambda_context, "SUCCESS")
+
+        mock_urlopen.assert_called_once()
+        req = mock_urlopen.call_args[0][0]
+        # Verb + target must match the pre-signed URL contract.
+        assert req.get_method() == "PUT"
+        assert req.full_url == event["ResponseURL"]
+        # Empty Content-Type: prevents urllib defaulting to
+        # application/x-www-form-urlencoded, which would break the S3 signature.
+        assert req.headers.get("Content-type") == ""
+        body = json.loads(req.data.decode("utf-8"))
+        assert body["Status"] == "SUCCESS"
+        assert body["PhysicalResourceId"] == "IconsBucketJanitor"
+        assert body["StackId"] == event["StackId"]
+        assert body["RequestId"] == event["RequestId"]
+        assert body["LogicalResourceId"] == event["LogicalResourceId"]
+
+    def test_physical_id_falls_back_to_logical_id(
+        self, raw_mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_urlopen = MagicMock()
+        monkeypatch.setattr(raw_mod.urllib.request, "urlopen", mock_urlopen)
+
+        # A Create event carries no PhysicalResourceId.
+        event = _cfn_event("Create")
+        raw_mod._send_response(event, lambda_context, "SUCCESS")
+
+        req = mock_urlopen.call_args[0][0]
+        body = json.loads(req.data.decode("utf-8"))
+        assert body["PhysicalResourceId"] == event["LogicalResourceId"]
+
+    def test_never_raises_when_put_fails(
+        self, raw_mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A failure to signal CloudFormation must be swallowed (logged), not
+        # raised -- raising here would leave the stack op waiting on a response.
+        monkeypatch.setattr(
+            raw_mod.urllib.request,
+            "urlopen",
+            MagicMock(side_effect=OSError("network down")),
+        )
+        raw_mod._send_response(_cfn_event("Delete"), lambda_context, "SUCCESS")
