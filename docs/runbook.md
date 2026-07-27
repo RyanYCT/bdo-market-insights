@@ -891,18 +891,21 @@ remove any orphaned nested stacks" below). Know what goes with it:
   recovery window); the RDS-managed master secret is removed with the DB.
 - Lambda-created CloudWatch log groups can remain orphaned -- delete separately
   if desired. The shared SAM deploy bucket is not part of the stack and stays.
-- **The `bdo-<stage>-icons` S3 bucket is *retained*** (`DeletionPolicy: Retain`
-  in `infra/icons.yaml`), so it and its objects survive teardown. Its fixed name
-  also makes a later fresh deploy fail to *re-create* it (`IconsStack` ->
-  `CREATE_FAILED`, because the bucket already exists). To fully remove it -- or
-  to unblock a clean recreate -- purge and delete it (swap `dev` -> `prod` as
-  needed; icons are re-fetchable from the Pearl Abyss CDN, so the next iconSync
-  run just re-materializes them):
+- **The `bdo-<stage>-icons` S3 bucket's fate depends on stage** (ADR-0019):
+  - **Prod** *retains* the bucket (`DeletionPolicy: Retain`), so it and its
+    objects survive teardown. Its fixed name also makes a later fresh deploy
+    fail to *re-create* it (`IconsStack` -> `CREATE_FAILED`, bucket already
+    exists) until you purge and delete it by hand (icons are re-fetchable from
+    the Pearl Abyss CDN, so the next iconSync run just re-materializes them):
 
-  ```sh
-  aws s3 rm s3://bdo-dev-icons --recursive   # purge objects first
-  aws s3api delete-bucket --bucket bdo-dev-icons
-  ```
+    ```sh
+    aws s3 rm s3://bdo-prod-icons --recursive   # purge objects first
+    aws s3api delete-bucket --bucket bdo-prod-icons
+    ```
+  - **Dev** deletes the bucket automatically: `IconsBucketJanitor` (a
+    CloudFormation custom resource, non-prod only) empties it during the stack
+    delete, then CloudFormation deletes the (non-retaining) bucket itself. No
+    manual step, and a later fresh deploy does not collide.
 
 ##### Dev
 
@@ -995,23 +998,22 @@ for lg in $(aws logs describe-log-groups \
   aws logs delete-log-group --log-group-name "$lg"
 done
 
-# Icons bucket: DeletionPolicy: Retain with a fixed name, so it survives
-# teardown/rollback (and is re-created + retained again by a partial deploy).
-# Icons are re-fetchable from the Pearl Abyss CDN.
-aws s3 rm s3://bdo-dev-icons --recursive
-aws s3api delete-bucket --bucket bdo-dev-icons
-
 # The dba secret may sit in a 30-day deletion recovery window (fixed name).
 aws secretsmanager delete-secret --secret-id bdo-dev-dba-credentials \
   --force-delete-without-recovery
 ```
 
-Confirm nothing lingers (both should be empty):
+> Icons bucket: on **dev**, `IconsBucketJanitor` empties it and the (non-retaining)
+> bucket goes with the stack delete, so no manual step is needed here
+> (ADR-0019). On **prod** it is still `Retain` with a fixed name, so it survives
+> teardown/rollback and needs the same purge-and-delete as above (swap
+> `dev` -> `prod` in the "Delete a whole stack" section).
+
+Confirm nothing lingers:
 
 ```sh
 aws logs describe-log-groups --log-group-name-prefix /aws/lambda/bdo-dev- \
   --query 'logGroups[].logGroupName'
-aws s3 ls | grep bdo-dev-icons
 ```
 
 #### Deploy the empty stack
@@ -1046,7 +1048,7 @@ the same one used for any new stack.
 | Custom domain returns 403 "Forbidden" | Base-path mapping or DNS not resolved yet, or the request omits `x-api-key`. Confirm the A-alias resolves to the regional API domain and include the API key. |
 | Missed ETL runs | Safe to re-execute - writes are idempotent on `(region, item_id, sid, snapshot_at)`. |
 | CI deploy: "Could not load credentials from any providers" | The `AWS_DEPLOY_ROLE_ARN` secret (and its OIDC role) is not set up. See "CI/CD deploy role (GitHub OIDC) bootstrap". |
-| `IconsStack` `CREATE_FAILED` ("Validation failure detected") on deploy | The retained `bdo-<stage>-icons` bucket (fixed name) survives an earlier teardown/rollback, so a fresh CREATE collides with the existing bucket. Purge + delete it (see "Cleanup and teardown"), then redeploy. |
+| `IconsStack` `CREATE_FAILED` ("Validation failure detected") on deploy | Only expected on **prod** (dev's icons bucket is non-retaining since ADR-0019, and `IconsBucketJanitor` empties it on teardown). The retained `bdo-<stage>-icons` bucket (fixed name) survives an earlier teardown/rollback, so a fresh CREATE collides with the existing bucket. Purge + delete it (see "Cleanup and teardown"), then redeploy. |
 
 ### Insights
 
