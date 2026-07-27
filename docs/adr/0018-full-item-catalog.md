@@ -94,8 +94,8 @@ Each writer touches a disjoint set of attributes, all through partial
 | Writer         | Writes                                             | Never writes                                  |
 | -------------- | -------------------------------------------------- | --------------------------------------------- |
 | catalog backfill (empty table) | whole row via `BatchWriteItem`        | — (nothing pre-exists)                        |
-| catalog sync (weekly)          | `name`, `names`, `grade`, `updated_at`, `created_at` (once) | `tracked`, `model_id`, `cron_table`, `icon_status` |
-| `item_registry` (promotion)    | tracked marker, `model_id`, `cron_table` | `name`, `grade`, `names`                     |
+| catalog sync (weekly)          | `name`, `names`, `grade`, `updated_at`, `created_at` (once) | `tracked`, `model_id`, `cron_profile`, `icon_status` |
+| `item_registry` (promotion)    | tracked marker, `model_id`, `cron_profile` | `name`, `grade`, `names`                     |
 | `ensureIcon` (ETL)             | `icon_status`                          | everything else                               |
 
 Conditional expressions are used only to stamp first-seen

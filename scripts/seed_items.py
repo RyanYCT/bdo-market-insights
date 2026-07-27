@@ -1,13 +1,19 @@
 """Seed the tracked-item set into bdo-<stage>-items from the curated list.
 
 Fully offline. Reads ``scripts/data/tracked_items.json`` (the items to track),
-``scripts/data/full_item_list.json`` (the committed market snapshot) and
-``scripts/data/categories.json`` (``main:sub`` -> coarse category), and writes
-``tracked=true`` + the sparse tracked-index marker + ``cron_table`` +
+``scripts/data/full_item_list.json`` (the committed market snapshot),
+``scripts/data/categories.json`` (``main:sub`` -> coarse category) and
+``scripts/data/track_sets.json`` (named series), and writes ``tracked=true`` +
+the sparse tracked-index marker + ``cron_profile`` +
 ``main_category``/``sub_category``/``category`` as a **partial upsert** -- so the
 catalog-owned fields (``name``/``grade``/``names``) that ``seed_catalog`` /
 ``catalogSync`` populate are preserved (ADR-0018). No arsha calls; regenerate
 the snapshot occasionally with ``build_market_catalog.py``.
+
+``cron_profile`` is derived **programmatically** from series membership: an item
+that belongs to a named set declaring a ``cron_profile`` (e.g. the ``deboreka``
+series) gets that profile; everything else defaults to ``"standard"``. It is not
+hand-entered per item.
 
 Build or change ``tracked_items.json`` with ``select_tracked.py`` (the
 preset-driven toggle). By default seeding is **additive** (it only marks the
@@ -33,6 +39,7 @@ _DATA_DIR = Path(__file__).parent / "data"
 _TRACKED_ITEMS_FILE = _DATA_DIR / "tracked_items.json"
 _CATALOG_FILE = _DATA_DIR / "full_item_list.json"
 _CATEGORIES_FILE = _DATA_DIR / "categories.json"
+_SETS_FILE = _DATA_DIR / "track_sets.json"
 
 
 def _load_json(path: Path) -> Any:
@@ -56,9 +63,9 @@ def _export(dynamo: Any, path: Path) -> None:
     items = dynamo.list_tracked_items()
     records: list[dict[str, Any]] = []
     for item in sorted(items, key=lambda i: i.id):
+        # cron_profile is derived from series membership (track_sets.json), not
+        # stored per entry, so the exported list stays a pure id/name list.
         rec: dict[str, Any] = {"id": item.id, "name": item.name}
-        if item.cron_table != "a":
-            rec["cron_table"] = item.cron_table
         if item.model_id != "accessory_v1":
             rec["model_id"] = item.model_id
         records.append(rec)
@@ -94,6 +101,12 @@ def main() -> None:
         help="Taxonomy map for category derivation (default: scripts/data/categories.json)",
     )
     parser.add_argument(
+        "--sets-file",
+        type=Path,
+        default=_SETS_FILE,
+        help="Named series for cron_profile derivation (default: scripts/data/track_sets.json)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print the derived updates without writing to the table",
@@ -122,6 +135,8 @@ def main() -> None:
     catalog = tracking.parse_catalog(_load_json(args.catalog_file))
     index = tracking.catalog_index(catalog)
     category_map = _category_map(_load_json(args.categories_file))
+    # id -> cron_profile from any series (track_sets.json) that declares one.
+    cron_by_id = tracking.cron_overrides(_load_json(args.sets_file))
     print(
         f"Loaded {len(entries)} tracked items; deriving categories offline "
         f"from {args.catalog_file.name} ({len(catalog)} items)..."
@@ -134,7 +149,7 @@ def main() -> None:
         selected.add(item_id)
         updates, classified = tracking.build_tracked_updates(
             item_id,
-            cron_table=entry.get("cron_table", "a"),
+            cron_profile=cron_by_id.get(item_id, "standard"),
             index=index,
             category_map=category_map,
             model_id=entry.get("model_id"),

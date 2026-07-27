@@ -1,10 +1,15 @@
 {
-  "_comment": "Named, self-defined item sets for select_tracked.py, referenced by presets in presets.json. Each set is a list of item ids; an optional 'cron_table' assigns those items to an ETL cron table (default 'a'), applied as a cross-cutting override so the items keep that assignment no matter which preset selects them (e.g. the Deboreka series stays on table 'b' even when picked via the broad 'accessories' preset).",
+  "_comment": "Named, self-defined item sets for select_tracked.py, referenced by presets in presets.json. Each set is a list of item ids; an optional 'cron_profile' assigns those items an enhancement cron-stone cost profile (default 'standard'), applied as a cross-cutting override so the items keep that profile no matter which preset selects them (e.g. the Deboreka series stays 'deboreka' even when picked via the broad 'accessories' preset). 'cron_profile' is currently metadata for a future calibrated enhancement-cost model (not yet consumed); series that consume cron stones differently (Deboreka, Apeiron) each get their own profile.",
   "deboreka": {
-    "cron_table": "b",
+    "cron_profile": "deboreka",
     "ids": [12094, 11653, 11882, 12276]
   },
-  "pearl": {
+  "apeiron": {
+    "_note": "Placeholder for the upcoming Apeiron accessory series. Fill in ids once the patch adds them to arsha (rebuild the snapshot with make market-catalog first); items then get cron_profile 'apeiron' automatically via series membership.",
+    "cron_profile": "apeiron",
+    "ids": []
+  },
+  "buffs": {
     "ids": [17081, 17646, 18927, 47688, 601204]
   }
 }

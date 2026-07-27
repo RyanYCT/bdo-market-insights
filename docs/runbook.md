@@ -185,7 +185,7 @@ make seed-data STAGE=dev
 ```
 
 It partial-upserts `tracked=true` + the sparse tracked-index marker +
-`cron_table`/`category`/`main_category`/`sub_category`, preserving the
+`cron_profile`/`category`/`main_category`/`sub_category`, preserving the
 catalog-owned `name`/`grade`/`names` (run after the catalog backfill so names are
 present). Because it stamps the marker, no separate tracked-index backfill is
 needed for seeded items. Seeding is **additive** by default; add `--reconcile`

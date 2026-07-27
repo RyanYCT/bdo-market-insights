@@ -18,12 +18,9 @@ components:
           - type: string
           - type: 'null'
           title: Category
-        cron_table:
-          default: a
-          enum:
-          - a
-          - b
-          title: Cron Table
+        cron_profile:
+          default: standard
+          title: Cron Profile
           type: string
         id:
           title: Id
@@ -73,9 +70,9 @@ components:
 
         A curated view of the stored :class:`Item` for API consumers: the internal
 
-        ETL routing fields (``model_id``, ``cron_table``) are intentionally omitted
+        fields (``model_id``, ``cron_profile``) are intentionally omitted from the
 
-        from the contract.'
+        contract.'
       properties:
         category:
           anyOf:
@@ -145,14 +142,11 @@ components:
           - type: string
           - type: 'null'
           title: Category
-        cron_table:
+        cron_profile:
           anyOf:
-          - enum:
-            - a
-            - b
-            type: string
+          - type: string
           - type: 'null'
-          title: Cron Table
+          title: Cron Profile
         main_category:
           anyOf:
           - type: string

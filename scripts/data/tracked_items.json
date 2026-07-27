@@ -3,10 +3,10 @@
   { "id": 12061, "name": "Tungrad Ring" },
   { "id": 12068, "name": "Ominous Ring" },
   { "id": 12091, "name": "Ocean Haze Ring" },
-  { "id": 12094, "name": "Deboreka Ring", "cron_table": "b" },
+  { "id": 12094, "name": "Deboreka Ring" },
 
   { "id": 11629, "name": "Tungrad Necklace" },
-  { "id": 11653, "name": "Deboreka Necklace", "cron_table": "b" },
+  { "id": 11653, "name": "Deboreka Necklace" },
   { "id": 11662, "name": "Revived River Necklace" },
   { "id": 11663, "name": "Revived Lunar Necklace" },
   { "id": 11688, "name": "Asadal Necklace" },
@@ -17,12 +17,12 @@
   { "id": 11855, "name": "Dawn Earring" },
   { "id": 11856, "name": "Ethereal Earring" },
   { "id": 11875, "name": "Vaha's Dawn" },
-  { "id": 11882, "name": "Deboreka Earring", "cron_table": "b" },
+  { "id": 11882, "name": "Deboreka Earring" },
 
   { "id": 12229, "name": "Centaurus Belt" },
   { "id": 12237, "name": "Tungrad Belt" },
   { "id": 12257, "name": "Turo's Belt" },
-  { "id": 12276, "name": "Deboreka Belt", "cron_table": "b" },
+  { "id": 12276, "name": "Deboreka Belt" },
   { "id": 12282, "name": "Taebaek's Belt" },
   { "id": 12285, "name": "Asadal Belt" },
 

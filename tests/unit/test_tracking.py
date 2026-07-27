@@ -78,12 +78,12 @@ class TestBuildTrackedUpdates:
 
     def test_classified(self) -> None:
         updates, classified = tracking.build_tracked_updates(
-            1, cron_table="b", index=self.index, category_map=self.category_map
+            1, cron_profile="deboreka", index=self.index, category_map=self.category_map
         )
         assert classified is True
         assert updates == {
             "tracked": "true",
-            "cron_table": "b",
+            "cron_profile": "deboreka",
             "main_category": "20",
             "sub_category": "1",
             "category": "accessory",
@@ -91,14 +91,14 @@ class TestBuildTrackedUpdates:
 
     def test_missing_from_snapshot_is_unclassified(self) -> None:
         updates, classified = tracking.build_tracked_updates(
-            404, cron_table="a", index=self.index, category_map=self.category_map
+            404, cron_profile="standard", index=self.index, category_map=self.category_map
         )
         assert classified is False
-        assert updates == {"tracked": "true", "cron_table": "a"}
+        assert updates == {"tracked": "true", "cron_profile": "standard"}
 
     def test_known_codes_without_label_is_unclassified(self) -> None:
         updates, classified = tracking.build_tracked_updates(
-            9, cron_table="a", index=self.index, category_map=self.category_map
+            9, cron_profile="standard", index=self.index, category_map=self.category_map
         )
         assert classified is False
         assert updates["main_category"] == "99"
@@ -106,19 +106,23 @@ class TestBuildTrackedUpdates:
 
     def test_model_id_passthrough(self) -> None:
         updates, _ = tracking.build_tracked_updates(
-            1, cron_table="a", index=self.index, category_map=self.category_map, model_id="buff_v1"
+            1,
+            cron_profile="standard",
+            index=self.index,
+            category_map=self.category_map,
+            model_id="buff_v1",
         )
         assert updates["model_id"] == "buff_v1"
 
 
 class TestCronOverrides:
-    def test_only_sets_with_cron_table(self) -> None:
+    def test_only_sets_with_cron_profile(self) -> None:
         sets = {
             "_comment": "ignored",
-            "deboreka": {"cron_table": "b", "ids": [12094, 11653]},
-            "pearl": {"ids": [17081]},
+            "deboreka": {"cron_profile": "deboreka", "ids": [12094, 11653]},
+            "buffs": {"ids": [17081]},
         }
-        assert tracking.cron_overrides(sets) == {12094: "b", 11653: "b"}
+        assert tracking.cron_overrides(sets) == {12094: "deboreka", 11653: "deboreka"}
 
 
 class TestReconcile:

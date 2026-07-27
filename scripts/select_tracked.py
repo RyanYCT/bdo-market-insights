@@ -99,17 +99,17 @@ def _interactive_preset(presets: dict[str, Any]) -> str:
     return names[int(choice) - 1]
 
 
-def _build_records(
-    selected: list[int], catalog_by_id: dict[int, Any], crons: dict[int, str]
-) -> list[dict[str, Any]]:
-    """Build the tracked_items.json records, sorted by (main, sub, id)."""
+def _build_records(selected: list[int], catalog_by_id: dict[int, Any]) -> list[dict[str, Any]]:
+    """Build the tracked_items.json records ({id, name}), sorted by (main, sub, id).
+
+    ``cron_profile`` is intentionally NOT written here: it is derived at seed
+    time from series membership (track_sets.json), so tracked_items.json stays a
+    pure id/name list.
+    """
     triples = []
     for item_id in selected:
         entry = catalog_by_id[item_id]
         record: dict[str, Any] = {"id": item_id, "name": entry.name}
-        cron = crons.get(item_id, "a")
-        if cron != "a":
-            record["cron_table"] = cron
         triples.append((entry.main_category, entry.sub_category, record))
     triples.sort(key=lambda t: (t[0], t[1], t[2]["id"]))
     return [record for _, _, record in triples]
@@ -146,12 +146,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    from bdo_common.tracking import (
-        catalog_index,
-        cron_overrides,
-        needs_confirmation,
-        select_ids,
-    )
+    from bdo_common.tracking import catalog_index, needs_confirmation, select_ids
 
     catalog = _load_catalog(args.catalog)
     presets = _load_json(args.presets)
@@ -185,7 +180,7 @@ def main() -> None:
         elif not args.force:
             _fail(f"{warning} Re-run with --force to proceed.")
 
-    records = _build_records(selected, catalog_index(catalog), cron_overrides(sets))
+    records = _build_records(selected, catalog_index(catalog))
 
     if args.out is None:
         print(f"Preview only ({len(records)} items). Re-run with --out to write the list.")

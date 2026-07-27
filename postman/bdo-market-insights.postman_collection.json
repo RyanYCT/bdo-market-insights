@@ -147,7 +147,7 @@
             "description": "POST /v1/items",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"id\": 0,\n  \"category\": \"\",\n  \"main_category\": \"\",\n  \"sub_category\": \"\",\n  \"model_id\": \"accessory_v1\",\n  \"cron_table\": \"a\",\n  \"tracked\": true\n}",
+              "raw": "{\n  \"id\": 0,\n  \"category\": \"\",\n  \"main_category\": \"\",\n  \"sub_category\": \"\",\n  \"model_id\": \"accessory_v1\",\n  \"cron_profile\": \"standard\",\n  \"tracked\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -222,7 +222,7 @@
             "description": "PATCH /v1/items/{item_id}",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"\",\n  \"category\": \"\",\n  \"main_category\": \"\",\n  \"sub_category\": \"\",\n  \"model_id\": \"\",\n  \"cron_table\": \"\",\n  \"tracked\": \"\"\n}",
+              "raw": "{\n  \"name\": \"\",\n  \"category\": \"\",\n  \"main_category\": \"\",\n  \"sub_category\": \"\",\n  \"model_id\": \"\",\n  \"cron_profile\": \"\",\n  \"tracked\": \"\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

@@ -106,7 +106,7 @@ def category_label(main: int, sub: int, category_map: dict[str, str]) -> str | N
 def build_tracked_updates(
     item_id: int,
     *,
-    cron_table: str,
+    cron_profile: str,
     index: dict[int, MarketListItem],
     category_map: dict[str, str],
     model_id: str | None = None,
@@ -118,7 +118,7 @@ def build_tracked_updates(
     classified)``; ``classified`` is False when the id is absent from the
     snapshot or its ``(main, sub)`` has no coarse label (tracked but ungrouped).
     """
-    updates: dict[str, str] = {"tracked": "true", "cron_table": cron_table}
+    updates: dict[str, str] = {"tracked": "true", "cron_profile": cron_profile}
     if model_id is not None:
         updates["model_id"] = model_id
 
@@ -136,20 +136,22 @@ def build_tracked_updates(
 
 
 def cron_overrides(sets: Mapping[str, Any]) -> dict[int, str]:
-    """Map ``id -> cron_table`` from any named set that declares a ``cron_table``.
+    """Map ``id -> cron_profile`` from any named set that declares a ``cron_profile``.
 
-    Applied as a cross-cutting layer so an item keeps its ETL cron assignment
-    (e.g. the Deboreka series on table ``b``) regardless of how it was selected.
+    Applied as a cross-cutting layer so an item keeps its series cron-stone
+    profile (e.g. the Deboreka series -> ``"deboreka"``) regardless of which
+    preset selected it. Sets without a ``cron_profile`` contribute nothing (the
+    items fall back to the default ``"standard"``).
     """
     out: dict[int, str] = {}
     for spec in sets.values():
         if not isinstance(spec, dict):
             continue
-        cron = spec.get("cron_table")
-        if not cron:
+        profile = spec.get("cron_profile")
+        if not profile:
             continue
         for item_id in spec.get("ids", []):
-            out[int(item_id)] = str(cron)
+            out[int(item_id)] = str(profile)
     return out
 
 
