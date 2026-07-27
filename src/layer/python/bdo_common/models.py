@@ -102,7 +102,11 @@ class Item(BaseModel):
     sub_category: str | None = None
     tracked: bool = True
     model_id: str = "accessory_v1"
-    cron_table: Literal["a", "b"] = "a"
+    # Enhancement cron-stone cost profile, driven by the item's series (e.g.
+    # "standard", "deboreka", "apeiron"). Open-ended (no closed enum) so a new
+    # series needs no code change. Currently metadata for a future calibrated
+    # enhancement-cost model -- not yet consumed by pricing or the ETL.
+    cron_profile: str = "standard"
     icon_status: Literal["unset", "stored", "missing"] = "unset"  # S3 icon materialization state
     created_at: datetime | None = None
     updated_at: datetime | None = None

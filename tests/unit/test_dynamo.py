@@ -146,7 +146,7 @@ class TestUpsertCatalogItem:
                 name="Old Name",
                 tracked=True,
                 model_id="accessory_cron_v1",
-                cron_table="b",
+                cron_profile="deboreka",
                 icon_status="stored",
             )
         )
@@ -161,7 +161,7 @@ class TestUpsertCatalogItem:
         # ETL-owned fields untouched
         assert item.tracked is True
         assert item.model_id == "accessory_cron_v1"
-        assert item.cron_table == "b"
+        assert item.cron_profile == "deboreka"
         assert item.icon_status == "stored"
 
     def test_created_at_set_once(self, dynamodb_table: Any) -> None:
@@ -231,7 +231,7 @@ class TestBulkUpsertCatalogItems:
                 name="Old Name",
                 tracked=True,
                 model_id="accessory_cron_v1",
-                cron_table="b",
+                cron_profile="deboreka",
                 icon_status="stored",
             )
         )
@@ -257,7 +257,7 @@ class TestBulkUpsertCatalogItems:
         # ETL-owned fields untouched
         assert existing.tracked is True
         assert existing.model_id == "accessory_cron_v1"
-        assert existing.cron_table == "b"
+        assert existing.cron_profile == "deboreka"
         assert existing.icon_status == "stored"
 
         created = get_item(99999)

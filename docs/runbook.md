@@ -14,7 +14,6 @@ access, insights evaluation, recovery/teardown, and troubleshooting.
   - [Deployment notes](#deployment-notes)
   - [Dev deployment (manual)](#dev-deployment-manual)
   - [Running migrations](#running-migrations)
-  - [Backfill the tracked-index marker](#backfill-the-tracked-index-marker-one-time-when-adding-the-gsi)
   - [Prod deployment (CI/CD)](#prod-deployment-cicd)
   - [Rollback](#rollback)
   - [Breaking changes](#breaking-changes)
@@ -171,24 +170,67 @@ aws logs tail /aws/lambda/bdo-dev-catalog-sync --since 10m --follow
 
 ### Seed the tracked set (one-time)
 
-The ETL polls only *tracked* items. Seed the curated set from
-`scripts/data/tracked_items.json` (a list of item ids); each item's category is
-derived from the live BDO taxonomy via `scripts/data/categories.json` and
-arsha's `GetWorldMarketList`:
+The offline pipeline that decides **which items are tracked**. Only the
+occasional snapshot build (`make market-catalog`) touches arsha; selection and
+seeding are fully offline:
+
+```mermaid
+flowchart LR
+    arsha([arsha.io<br/>GetWorldMarketList]) -->|make market-catalog<br/>occasional| snap[(full_items.json<br/>market snapshot)]
+    presets[(presets.json)] --> toggle
+    sets[(track_sets.json)] --> toggle
+    snap --> toggle{{select_tracked.py<br/>preset / main+sub / set}}
+    toggle --> tracked[(tracked_items.json<br/>id + name)]
+    snap --> seed[seed_items.py]
+    cats[(categories.json)] --> seed
+    tracked --> seed
+    sets -.->|cron_profile by series| seed
+    seed -->|tracked + category + cron_profile| ddb[(DynamoDB<br/>items table)]
+
+    subgraph offline [Fully offline, no arsha]
+        toggle
+        tracked
+        seed
+    end
+```
+
+The ETL polls only *tracked* items. The tracked set lives in
+`scripts/data/tracked_items.json` (a list of item ids). Seeding is **fully
+offline**: each item's category is derived from the committed market snapshot
+`scripts/data/full_items.json` + `scripts/data/categories.json`
+(`main:sub` -> coarse label) — no arsha call at seed time.
 
 ```bash
 uv run python scripts/seed_items.py --target-table bdo-dev-items --dry-run
 uv run python scripts/seed_items.py --target-table bdo-dev-items
+# ...or run the catalog backfill + tracked seed together, in the correct order:
+make seed-data STAGE=dev
 ```
 
 It partial-upserts `tracked=true` + the sparse tracked-index marker +
-`cron_table`/`category`/`main_category`/`sub_category`, preserving the
+`cron_profile`/`category`/`main_category`/`sub_category`, preserving the
 catalog-owned `name`/`grade`/`names` (run after the catalog backfill so names are
 present). Because it stamps the marker, no separate tracked-index backfill is
-needed for seeded items. Edit the JSON to curate a different set, or regenerate
-it from a running stage with `--export`. An item whose category is not covered by
-`categories.json` is still tracked but left ungrouped — extend the map to
-classify it.
+needed for seeded items. Seeding is **additive** by default; add `--reconcile`
+(or `RECONCILE=1` with make) to also untrack items no longer in the list. An
+item whose `(main:sub)` is not in `categories.json` is still tracked but left
+ungrouped — extend the map to classify it.
+
+**Changing what's tracked.** Build `tracked_items.json` with the preset-driven
+toggle rather than editing by hand:
+
+```bash
+make track                                   # interactive preset menu
+# ...or scripted (broad selections need --force):
+uv run python scripts/select_tracked.py --preset accessories --out scripts/data/tracked_items.json
+uv run python scripts/select_tracked.py --main 20 --sub 1 --out scripts/data/tracked_items.json
+```
+
+Presets: `all` (guarded), `accessories`, `ring`, `necklace`, `earring`, `belt`,
+`buff`, `deboreka`, `pearl` (defined in `scripts/data/presets.json` /
+`scripts/data/track_sets.json`). The offline snapshot is regenerated occasionally
+(e.g. after a BDO patch adds items) with `make market-catalog`, then committed —
+that is the only step that calls arsha.
 
 ### Item icons
 
@@ -465,30 +507,6 @@ make migrate-lambda STAGE=dev
 
 (The very first migration on a fresh database is different — the roles don't
 exist yet; see [First-time role bootstrap](#first-time-role-bootstrap).)
-
-### Backfill the tracked-index marker (one-time, when adding the GSI)
-
-The `tracked-index` GSI is keyed on a marker attribute (`t`) written only on
-tracked items. When the deployment that *adds* the GSI first goes out, items
-registered earlier lack the marker and are invisible to the ETL's tracked-item
-query. Run the backfill once, right after that deploy and before the next
-hourly ETL run, so the tracked set repopulates the index:
-
-```bash
-# Preview first, then apply. DynamoDB is reachable via the AWS API (no bastion).
-uv run python scripts/backfill_tracked_marker.py --target-table bdo-dev-items --dry-run
-uv run python scripts/backfill_tracked_marker.py --target-table bdo-dev-items
-```
-
-This is only needed the one time the GSI is introduced; afterwards the marker
-is maintained automatically on registration and tracked/untracked changes.
-
-On a fresh or empty table the backfill reports `0 tracked items found` — that is
-expected (there is nothing to migrate), not an error. To smoke-test the Query
-path on such a table, register one item (see
-[Post-deploy verification (dev)](#post-deploy-verification-dev)): the API write
-path stamps the marker automatically, so the item lands in the `tracked-index`
-immediately.
 
 ### Prod deployment (CI/CD)
 
@@ -1030,7 +1048,8 @@ delete-then-retry -- see [Troubleshooting](#troubleshooting).
 RDS and DynamoDB come back empty (neither is retained), so rebuild them by
 following [First-time bring-up](#first-time-bring-up): role bootstrap → catalog
 → tracked set → icons → verify. Nothing else is needed — the bring-up path is
-the same one used for any new stack.
+the same one used for any new stack. The two DynamoDB steps (catalog backfill +
+tracked seed) run together, in the correct order, via `make seed-data STAGE=<stage>`.
 
 ## Troubleshooting
 

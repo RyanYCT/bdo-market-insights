@@ -47,7 +47,7 @@ class ItemCreate(BaseModel):
     main_category: str | None = None
     sub_category: str | None = None
     model_id: str = "accessory_v1"
-    cron_table: Literal["a", "b"] = "a"
+    cron_profile: str = "standard"
     tracked: bool = True
 
 
@@ -59,7 +59,7 @@ class ItemUpdate(BaseModel):
     main_category: str | None = None
     sub_category: str | None = None
     model_id: str | None = None
-    cron_table: Literal["a", "b"] | None = None
+    cron_profile: str | None = None
     tracked: bool | None = None
 
 
@@ -67,8 +67,8 @@ class ItemResponse(BaseModel):
     """Public shape of a registry item.
 
     A curated view of the stored :class:`Item` for API consumers: the internal
-    ETL routing fields (``model_id``, ``cron_table``) are intentionally omitted
-    from the contract.
+    fields (``model_id``, ``cron_profile``) are intentionally omitted from the
+    contract.
     """
 
     id: int
@@ -177,7 +177,7 @@ def create_item(body: ItemCreate) -> Response[ItemResponse]:
         sub_category=body.sub_category,
         tracked=body.tracked,
         model_id=body.model_id,
-        cron_table=body.cron_table,
+        cron_profile=body.cron_profile,
     )
     dynamo.put_item(item)
     logger.info("registered item", extra={"item_id": body.id})

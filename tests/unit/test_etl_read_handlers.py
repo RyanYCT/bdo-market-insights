@@ -43,8 +43,8 @@ class TestRetrieveItems:
     ) -> None:
         mod = load_handler("retrieve_items")
         items = [
-            Item(id=1, name="A", category="ring", cron_table="a"),
-            Item(id=2, name="B", category="ring", cron_table="b"),
+            Item(id=1, name="A", category="ring", cron_profile="standard"),
+            Item(id=2, name="B", category="ring", cron_profile="deboreka"),
             Item(id=3, name="C", category="necklace"),
         ]
         monkeypatch.setattr(mod.dynamo, "list_tracked_items", lambda: items)
@@ -64,7 +64,7 @@ class TestRetrieveItems:
         assert first["region"] == "tw"
         assert first["snapshot_at"] == "2026-06-01T05:00:00+00:00"
         assert [i["id"] for i in first["items"]] == [1, 2]
-        assert first["items"][1]["cron_table"] == "b"
+        assert first["items"][1]["cron_profile"] == "deboreka"
         assert result["batches"][1]["items"][0]["id"] == 3
 
     def test_midnight_run_flags_day_first(

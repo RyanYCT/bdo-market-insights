@@ -1,0 +1,13 @@
+{
+  "_comment": "Track presets for select_tracked.py. Each maps a name to a selector resolved against the committed market snapshot (full_items.json): 'all' selects every marketable item (guarded -- confirmation required); 'main' selects a whole main category; 'main'+'sub' selects one sub-category; 'set' selects a named set from track_sets.json. Names are official-faithful per node (Central Market label per node): main categories keep their collective label (accessories = main 20; pearl = main 55 'Pearl Items'), sub-categories use the singular leaf label (ring 20:1, necklace 20:2, earring 20:3, belt 20:4, functional 55:6).",
+  "all": { "all": true },
+  "accessories": { "main": 20 },
+  "ring": { "main": 20, "sub": 1 },
+  "necklace": { "main": 20, "sub": 2 },
+  "earring": { "main": 20, "sub": 3 },
+  "belt": { "main": 20, "sub": 4 },
+  "pearl": { "main": 55 },
+  "functional": { "main": 55, "sub": 6 },
+  "deboreka": { "set": "deboreka" },
+  "buffs": { "set": "buffs" }
+}

@@ -46,7 +46,7 @@ def _item_to_model(raw: dict[str, Any]) -> Item:
         sub_category=raw.get("sub_category"),
         tracked=raw.get("tracked", "true") == "true",
         model_id=raw.get("model_id", "accessory_v1"),
-        cron_table=raw.get("cron_table", "a"),
+        cron_profile=raw.get("cron_profile", "standard"),
         icon_status=raw.get("icon_status", "unset"),
         created_at=raw.get("created_at"),
         updated_at=raw.get("updated_at"),
@@ -116,7 +116,7 @@ def put_item(item: Item) -> None:
         "name": item.name,
         "tracked": str(item.tracked).lower(),
         "model_id": item.model_id,
-        "cron_table": item.cron_table,
+        "cron_profile": item.cron_profile,
         "icon_status": item.icon_status,
     }
     # Sparse tracked-index marker: present only when tracked (omitted otherwise
@@ -199,7 +199,7 @@ def _catalog_update_kwargs(
     ``"false"`` on newly created rows but preserved on existing ones (also via
     ``if_not_exists``), so a catalog-created item is untracked by default while
     the polled subset is never clobbered. The remaining ETL-owned attributes
-    (``model_id``/``cron_table``/``icon_status``) are left untouched (ADR-0018).
+    (``model_id``/``cron_profile``/``icon_status``) are left untouched (ADR-0018).
     ``ReturnValues`` is ``ALL_OLD`` so callers can detect a newly created item
     (empty old image).
     """

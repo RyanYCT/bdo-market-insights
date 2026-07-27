@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy db-tunnel-up db-tunnel-down migrate migrate-lambda seed clean
+.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy db-tunnel-up db-tunnel-down migrate migrate-lambda market-catalog track seed-catalog seed-tracked seed-data seed clean
 
 STAGE ?= dev
 AWS_REGION ?= us-east-1
@@ -120,8 +120,34 @@ migrate-lambda:
 		/tmp/bdo-$(STAGE)-migrate.json >/dev/null && \
 		cat /tmp/bdo-$(STAGE)-migrate.json && echo
 
-seed:
-	uv run python scripts/seed_items.py
+# Regenerate the offline market snapshot (scripts/data/full_items.json) by
+# enumerating the arsha.io market taxonomy. This is the ONLY step that calls
+# arsha; run it occasionally (e.g. after a BDO patch adds items), then commit.
+market-catalog:
+	uv run python scripts/build_market_catalog.py
+
+# Interactive, preset-driven track selection -> scripts/data/tracked_items.json.
+# For scripted use call the script directly (e.g. --preset accessories --out ...);
+# broad selections are guarded (need confirmation or --force). Fully offline.
+track:
+	uv run python scripts/select_tracked.py
+
+# Full item catalog backfill (id/name/grade from arsha util/db) into the table.
+seed-catalog:
+	uv run python scripts/seed_catalog.py --target-table bdo-$(STAGE)-items
+
+# Seed the tracked set from tracked_items.json + the committed snapshot (offline,
+# no arsha). Add RECONCILE=1 to also untrack items no longer in the list.
+seed-tracked:
+	uv run python scripts/seed_items.py --target-table bdo-$(STAGE)-items $(if $(RECONCILE),--reconcile,)
+
+# Rebuild all DynamoDB item data in the correct order: catalog first (so
+# names/grades exist), then the tracked set. This is the "seed" entry point.
+seed-data: seed-catalog seed-tracked
+
+# Back-compat alias. Was tracked-only (a footgun: seeding the tracked set before
+# the catalog left items without name/grade). Now runs the full ordered rebuild.
+seed: seed-data
 
 clean:
 	rm -rf .aws-sam/ build/ dist/ *.egg-info

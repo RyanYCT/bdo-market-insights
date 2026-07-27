@@ -43,7 +43,7 @@ def _item_meta(item: Item) -> dict[str, Any]:
         "main_category": item.main_category,
         "sub_category": item.sub_category,
         "model_id": item.model_id,
-        "cron_table": item.cron_table,
+        "cron_profile": item.cron_profile,
     }
 
 
