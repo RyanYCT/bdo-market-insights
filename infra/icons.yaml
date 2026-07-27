@@ -29,6 +29,13 @@ Parameters:
       every tracked item's icon is stored/missing; new tracked items get an icon
       by the next run.
 
+Conditions:
+  # See ADR-0019: prod keeps materialized icons across a stack delete (Retain);
+  # dev is disposable, so a stack delete also removes the bucket (Delete),
+  # unblocking a later fresh CREATE with the same fixed bucket name.
+  IsProd: !Equals [!Ref Stage, 'prod']
+  IsNotProd: !Not [!Equals [!Ref Stage, 'prod']]
+
 Globals:
   Function:
     Runtime: python3.12
@@ -50,10 +57,14 @@ Resources:
   # ──────────────────────────────────────────────
   IconsBucket:
     Type: AWS::S3::Bucket
-    # Retain on stack delete so materialized icons survive teardown/recreate;
-    # they are re-fetchable from the CDN but keeping them avoids a re-scrape.
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
+    # Prod retains materialized icons across a stack delete (re-fetchable from
+    # the CDN, but keeping them avoids a re-scrape of the whole tracked set).
+    # Dev is disposable: Delete lets the bucket actually go away on teardown,
+    # so a later fresh CREATE with this same fixed name does not collide with
+    # a retained leftover (ADR-0019). S3 refuses to delete a non-empty bucket,
+    # so IconsBucketJanitor (below, non-prod only) empties it first.
+    DeletionPolicy: !If [IsProd, Retain, Delete]
+    UpdateReplacePolicy: !If [IsProd, Retain, Delete]
     Properties:
       BucketName: !Sub 'bdo-${Stage}-icons'
       PublicAccessBlockConfiguration:
@@ -93,6 +104,40 @@ Resources:
           Properties:
             Schedule: !Ref IconSyncSchedule
             Description: Daily icon materialization for tracked items (icon_status=unset)
+
+  # ──────────────────────────────────────────────
+  # iconsBucketJanitor — non-prod only. Empties IconsBucket on stack Delete so
+  # CloudFormation's own (non-retaining) bucket delete can succeed; S3 refuses
+  # to delete a non-empty bucket. See ADR-0019.
+  # ──────────────────────────────────────────────
+  IconsBucketJanitorFunction:
+    Type: AWS::Serverless::Function
+    Condition: IsNotProd
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-icons-bucket-janitor'
+      CodeUri: ../src/functions/bucket_janitor
+      Handler: app.handler
+      Timeout: 300
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !Sub 'arn:aws:s3:::bdo-${Stage}-icons'
+            - Effect: Allow
+              Action:
+                - s3:DeleteObject
+                - s3:DeleteObjectVersion
+              Resource: !Sub 'arn:aws:s3:::bdo-${Stage}-icons/*'
+
+  IconsBucketJanitor:
+    Type: Custom::IconsBucketJanitor
+    Condition: IsNotProd
+    Properties:
+      ServiceToken: !GetAtt IconsBucketJanitorFunction.Arn
+      # !Ref on the bucket also creates the dependency that makes
+      # CloudFormation invoke this custom resource's Delete *before* it
+      # attempts to delete IconsBucket -- the ordering the janitor relies on.
+      BucketName: !Ref IconsBucket
 
 Outputs:
   IconsBucketName:
