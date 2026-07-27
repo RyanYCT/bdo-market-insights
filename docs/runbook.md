@@ -14,7 +14,6 @@ access, insights evaluation, recovery/teardown, and troubleshooting.
   - [Deployment notes](#deployment-notes)
   - [Dev deployment (manual)](#dev-deployment-manual)
   - [Running migrations](#running-migrations)
-  - [Backfill the tracked-index marker](#backfill-the-tracked-index-marker-one-time-when-adding-the-gsi)
   - [Prod deployment (CI/CD)](#prod-deployment-cicd)
   - [Rollback](#rollback)
   - [Breaking changes](#breaking-changes)
@@ -508,30 +507,6 @@ make migrate-lambda STAGE=dev
 
 (The very first migration on a fresh database is different — the roles don't
 exist yet; see [First-time role bootstrap](#first-time-role-bootstrap).)
-
-### Backfill the tracked-index marker (one-time, when adding the GSI)
-
-The `tracked-index` GSI is keyed on a marker attribute (`t`) written only on
-tracked items. When the deployment that *adds* the GSI first goes out, items
-registered earlier lack the marker and are invisible to the ETL's tracked-item
-query. Run the backfill once, right after that deploy and before the next
-hourly ETL run, so the tracked set repopulates the index:
-
-```bash
-# Preview first, then apply. DynamoDB is reachable via the AWS API (no bastion).
-uv run python scripts/backfill_tracked_marker.py --target-table bdo-dev-items --dry-run
-uv run python scripts/backfill_tracked_marker.py --target-table bdo-dev-items
-```
-
-This is only needed the one time the GSI is introduced; afterwards the marker
-is maintained automatically on registration and tracked/untracked changes.
-
-On a fresh or empty table the backfill reports `0 tracked items found` — that is
-expected (there is nothing to migrate), not an error. To smoke-test the Query
-path on such a table, register one item (see
-[Post-deploy verification (dev)](#post-deploy-verification-dev)): the API write
-path stamps the marker automatically, so the item lands in the `tracked-index`
-immediately.
 
 ### Prod deployment (CI/CD)
 
