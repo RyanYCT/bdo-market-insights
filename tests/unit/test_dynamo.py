@@ -286,3 +286,40 @@ class TestScanCatalogFingerprints:
         assert fps[1] == ("A", 4, {})
         assert fps[2] == ("C", None, {})
         assert fps[3] == ("B", 3, {"tw": "乙"})
+
+
+class TestBulkUpdateItems:
+    """bulk_update_items applies partial updates concurrently, marker in sync."""
+
+    def test_parallel_partial_update_and_marker_sync(self, dynamodb_table: Any) -> None:
+        from bdo_common.dynamo import bulk_update_items, get_item, list_tracked_items, put_item
+
+        put_item(Item(id=1, name="A", grade=4, tracked=False))
+        put_item(Item(id=2, name="B", grade=2, tracked=False))
+
+        seen: list[tuple[int, int]] = []
+        applied = bulk_update_items(
+            [
+                (1, {"tracked": "true", "category": "ring", "cron_profile": "standard"}),
+                (2, {"category": "necklace"}),
+            ],
+            progress=lambda done, total: seen.append((done, total)),
+        )
+
+        assert applied == 2
+        assert seen[-1] == (2, 2)  # progress reported completion
+
+        item1 = get_item(1)
+        assert item1 is not None
+        assert item1.tracked is True  # flipped tracked
+        assert item1.category == "ring"
+        assert item1.cron_profile == "standard"
+        assert item1.grade == 4  # catalog-owned field untouched by the partial update
+
+        # tracked=true stamped the sparse marker, so item 1 is in the tracked index.
+        assert [i.id for i in list_tracked_items()] == [1]
+
+    def test_empty_is_noop(self, dynamodb_table: Any) -> None:
+        from bdo_common.dynamo import bulk_update_items
+
+        assert bulk_update_items([]) == 0

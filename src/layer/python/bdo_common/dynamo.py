@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from collections.abc import Iterable
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from typing import Any
 
@@ -140,15 +140,13 @@ def put_item(item: Item) -> None:
     table.put_item(Item=data)
 
 
-def update_item(item_id: int, updates: dict[str, Any]) -> None:
-    """Partially update an item's attributes.
+def _update_item_kwargs(item_id: int, updates: dict[str, Any]) -> dict[str, Any] | None:
+    """Build ``update_item`` kwargs for a partial update, or None if a no-op.
 
-    When ``tracked`` is among the updates, the sparse tracked-index marker is
-    kept in lockstep: set when ``tracked`` becomes ``"true"`` and removed when
-    it becomes ``"false"``, so the ``tracked-index`` GSI always contains exactly
-    the tracked items (ADR-0018).
+    Keeps the sparse tracked-index marker in lockstep with ``tracked``: set when
+    it becomes ``"true"`` and removed when it becomes ``"false"``, so the
+    ``tracked-index`` GSI always holds exactly the tracked items (ADR-0018).
     """
-    table = _get_table()
     set_parts: list[str] = []
     remove_parts: list[str] = []
     attr_names: dict[str, str] = {}
@@ -171,7 +169,7 @@ def update_item(item_id: int, updates: dict[str, Any]) -> None:
             remove_parts.append("#tmark")
 
     if not set_parts and not remove_parts:
-        return
+        return None
 
     clauses: list[str] = []
     if set_parts:
@@ -186,7 +184,48 @@ def update_item(item_id: int, updates: dict[str, Any]) -> None:
     }
     if attr_values:
         kwargs["ExpressionAttributeValues"] = attr_values
-    table.update_item(**kwargs)
+    return kwargs
+
+
+def update_item(item_id: int, updates: dict[str, Any]) -> None:
+    """Partially update an item's attributes (see :func:`_update_item_kwargs`)."""
+    kwargs = _update_item_kwargs(item_id, updates)
+    if kwargs is not None:
+        _get_table().update_item(**kwargs)
+
+
+def bulk_update_items(
+    items: list[tuple[int, dict[str, Any]]],
+    *,
+    max_workers: int = 16,
+    progress: Callable[[int, int], None] | None = None,
+) -> int:
+    """Apply many partial updates concurrently; return the count applied.
+
+    Each item uses the same partial ``UpdateItem`` as :func:`update_item` (the
+    tracked-index marker is kept in sync), run on a bounded thread pool with a
+    per-thread Table resource. No-op updates are skipped. ``progress(done,
+    total)`` is invoked as each write completes, when provided.
+    """
+    work = [
+        (item_id, kwargs)
+        for item_id, updates in items
+        if (kwargs := _update_item_kwargs(item_id, updates)) is not None
+    ]
+    total = len(work)
+    if total == 0:
+        return 0
+
+    def _one(job: tuple[int, dict[str, Any]]) -> None:
+        _thread_local_table().update_item(**job[1])
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for _ in as_completed([executor.submit(_one, job) for job in work]):
+            done += 1
+            if progress is not None:
+                progress(done, total)
+    return total
 
 
 def _catalog_update_kwargs(
@@ -268,7 +307,10 @@ def _thread_local_table() -> Any:
 
 
 def bulk_upsert_catalog_items(
-    items: Iterable[MergedCatalogItem], *, max_workers: int = 16
+    items: Iterable[MergedCatalogItem],
+    *,
+    max_workers: int = 16,
+    progress: Callable[[int, int], None] | None = None,
 ) -> tuple[int, int]:
     """Concurrently partial-upsert many catalog items; return (total, newly_created).
 
@@ -277,6 +319,7 @@ def bulk_upsert_catalog_items(
     run on a bounded thread pool (each thread with its own Table resource) to
     stay well within a single Lambda invocation for the full ~tens-of-thousands
     catalog. ``newly_created`` counts items whose old image was empty.
+    ``progress(done, total)`` is invoked as each write completes, when provided.
     """
     item_list = list(items)
     if not item_list:
@@ -288,9 +331,17 @@ def bulk_upsert_catalog_items(
         )
         return "Attributes" not in response
 
+    total = len(item_list)
+    created = 0
+    done = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        created = sum(executor.map(_one, item_list))
-    return (len(item_list), created)
+        for future in as_completed([executor.submit(_one, item) for item in item_list]):
+            if future.result():
+                created += 1
+            done += 1
+            if progress is not None:
+                progress(done, total)
+    return (total, created)
 
 
 def _collect_fingerprints(

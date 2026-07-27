@@ -104,9 +104,11 @@ class Item(BaseModel):
     model_id: str = "accessory_v1"
     # Enhancement cron-stone cost profile, driven by the item's series (e.g.
     # "standard", "deboreka", "apeiron"). Open-ended (no closed enum) so a new
-    # series needs no code change. Currently metadata for a future calibrated
-    # enhancement-cost model -- not yet consumed by pricing or the ETL.
-    cron_profile: str = "standard"
+    # series needs no code change. Defaults to "none" (not enhanceable -- most
+    # of the catalog); seeding sets "standard"/<series> for tracked accessories.
+    # Currently metadata for a future calibrated enhancement-cost model -- not
+    # yet consumed by pricing or the ETL.
+    cron_profile: str = "none"
     icon_status: Literal["unset", "stored", "missing"] = "unset"  # S3 icon materialization state
     created_at: datetime | None = None
     updated_at: datetime | None = None

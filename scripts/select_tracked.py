@@ -5,17 +5,20 @@ preset definitions (``presets.json``) and named sets (``track_sets.json``),
 resolves the chosen selection to a list of item ids, and writes the tracked-item
 list (``tracked_items.json``) that ``seed_items.py`` consumes. No arsha calls.
 
-Selection is one of: a named ``--preset``, an ad-hoc ``--main``/``--sub`` market
-category, or a named ``--set``. With no selection flag it shows an interactive
-preset menu. Broad selections (the ``all`` preset, or more than
-``MAX_UNGUARDED_SELECTION`` items) require confirmation (interactive) or
-``--force`` (non-interactive), because tracking a whole category can add
-hundreds of items to the hourly ETL.
+Selection is a named ``--preset`` (one or more, comma-separated), an ad-hoc
+``--main``/``--sub`` market category, or a named ``--set``. With no selection
+flag it shows an interactive menu that also accepts several comma-separated
+numbers (e.g. ``9,10``); multiple presets are unioned. The selection is
+**added** to the current tracked list by default (so picking a preset never
+silently drops what you already track); pass ``--replace`` to overwrite the list
+instead. Broad *resulting* sets (the ``all`` preset, or more than
+``MAX_UNGUARDED_SELECTION`` tracked items) require confirmation (interactive) or
+``--force`` (non-interactive).
 
-    uv run python scripts/select_tracked.py                       # interactive menu
-    uv run python scripts/select_tracked.py --preset accessories  # preview (add --out to write)
-    uv run python scripts/select_tracked.py --main 20 --sub 1
-    uv run python scripts/select_tracked.py --preset all --force --out <path>
+    uv run python scripts/select_tracked.py                          # interactive menu
+    uv run python scripts/select_tracked.py --preset deboreka,buffs  # union, adds to current
+    uv run python scripts/select_tracked.py --preset ring --out scripts/data/tracked_items.json
+    uv run python scripts/select_tracked.py --preset all --replace --force --out <path>
 """
 
 from __future__ import annotations
@@ -45,26 +48,51 @@ def _load_catalog(path: Path) -> list[Any]:
     return parse_catalog(_load_json(path))
 
 
-def _selection_kwargs(
-    args: argparse.Namespace, presets: dict[str, Any], sets: dict[str, Any]
-) -> tuple[dict[str, Any], str]:
-    """Translate CLI args into select_ids kwargs plus a human-readable label."""
+def _preset_kwargs(
+    name: str, presets: dict[str, Any], sets: dict[str, Any]
+) -> tuple[dict[str, Any], bool]:
+    """select_ids kwargs for one preset name; second element is True for 'all'."""
+    if name not in presets or name.startswith("_"):
+        _fail(f"unknown preset {name!r}; choose from: {_preset_names(presets)}")
+    spec = presets[name]
+    if spec.get("all"):
+        return {"select_all": True}, True
+    if "set" in spec:
+        return {"ids": _set_ids(sets, spec["set"])}, False
+    return {"main": spec.get("main"), "sub": spec.get("sub")}, False
+
+
+def _resolve_selection(
+    args: argparse.Namespace, presets: dict[str, Any], sets: dict[str, Any], catalog: list[Any]
+) -> tuple[list[int], str, bool]:
+    """Resolve the CLI selection into (sorted ids, label, select_all).
+
+    ``--preset`` accepts one or more comma-separated names whose selections are
+    unioned; ``--set`` and ``--main``/``--sub`` are single ad-hoc selectors.
+    """
+    from bdo_common.tracking import select_ids
+
     if args.preset:
-        if args.preset not in presets or args.preset.startswith("_"):
-            _fail(f"unknown preset {args.preset!r}; choose from: {_preset_names(presets)}")
-        spec = presets[args.preset]
-        if spec.get("all"):
-            return {"select_all": True}, f"preset '{args.preset}' (ALL items)"
-        if "set" in spec:
-            return {
-                "ids": _set_ids(sets, spec["set"])
-            }, f"preset '{args.preset}' (set {spec['set']})"
-        return {"main": spec.get("main"), "sub": spec.get("sub")}, f"preset '{args.preset}'"
+        names = [n.strip() for n in args.preset.split(",") if n.strip()]
+        if not names:
+            _fail("no preset given")
+        ids: set[int] = set()
+        select_all = False
+        for name in names:
+            kwargs, is_all = _preset_kwargs(name, presets, sets)
+            select_all = select_all or is_all
+            ids.update(select_ids(catalog, **kwargs))
+        label = f"preset {names[0]}" if len(names) == 1 else f"presets {', '.join(names)}"
+        return sorted(ids), label, select_all
     if args.set:
-        return {"ids": _set_ids(sets, args.set)}, f"set '{args.set}'"
+        return (
+            sorted(select_ids(catalog, ids=_set_ids(sets, args.set))),
+            f"set '{args.set}'",
+            False,
+        )
     if args.main is not None:
         label = f"main {args.main}" + (f" sub {args.sub}" if args.sub is not None else "")
-        return {"main": args.main, "sub": args.sub}, label
+        return sorted(select_ids(catalog, main=args.main, sub=args.sub)), label, False
     _fail("no selection given; use --preset / --main[/--sub] / --set, or run with no flags")
 
 
@@ -87,46 +115,79 @@ def _fail(message: str) -> Any:
     raise SystemExit(2)
 
 
-def _interactive_preset(presets: dict[str, Any]) -> str:
-    """Show a numbered preset menu and return the chosen preset name."""
+def _interactive_presets(presets: dict[str, Any]) -> str:
+    """Show a numbered preset menu; return the chosen name(s), comma-joined.
+
+    Accepts one or more numbers, comma-separated (e.g. ``9,10``); duplicates are
+    collapsed, order preserved.
+    """
     names = _preset_names(presets)
-    print("Select a track preset:")
+    print("Select track preset(s):")
     for i, name in enumerate(names, start=1):
         print(f"  {i}. {name}")
-    choice = input("Enter number: ").strip()
-    if not choice.isdigit() or not (1 <= int(choice) <= len(names)):
-        _fail("invalid choice")
-    return names[int(choice) - 1]
+    raw = input("Enter number(s), comma-separated (e.g. 9,10): ").strip()
+    chosen: list[str] = []
+    for token in raw.split(","):
+        token = token.strip()
+        if not token.isdigit() or not (1 <= int(token) <= len(names)):
+            _fail(f"invalid choice: {token!r}")
+        name = names[int(token) - 1]
+        if name not in chosen:
+            chosen.append(name)
+    if not chosen:
+        _fail("no choice given")
+    return ",".join(chosen)
 
 
-def _build_records(selected: list[int], catalog_by_id: dict[int, Any]) -> list[dict[str, Any]]:
-    """Build the tracked_items.json records ({id, name}), sorted by (main, sub, id).
+def _sort_records(
+    records: list[dict[str, Any]], catalog_by_id: dict[int, Any]
+) -> list[dict[str, Any]]:
+    """Sort records by (main, sub, id); ids absent from the snapshot sort last."""
 
-    ``cron_profile`` is intentionally NOT written here: it is derived at seed
-    time from series membership (track_sets.json), so tracked_items.json stays a
-    pure id/name list.
+    def key(rec: dict[str, Any]) -> tuple[int, int, int]:
+        entry = catalog_by_id.get(int(rec["id"]))
+        if entry is None:
+            return (10**9, 10**9, int(rec["id"]))
+        return (entry.main_category, entry.sub_category, int(rec["id"]))
+
+    return sorted(records, key=key)
+
+
+def _merge_records(
+    existing: list[dict[str, Any]],
+    selected: list[int],
+    catalog_by_id: dict[int, Any],
+    *,
+    replace: bool,
+) -> list[dict[str, Any]]:
+    """Merge the selection into the current list (default), or replace it.
+
+    Existing entries are preserved as-is (keeping any manual fields); only newly
+    selected ids are appended. ``cron_profile`` is intentionally not written --
+    it is derived at seed time from series membership (track_sets.json), so
+    tracked_items.json stays a pure id/name list.
     """
-    triples = []
+    base = [] if replace else list(existing)
+    have = {int(record["id"]) for record in base}
     for item_id in selected:
-        entry = catalog_by_id[item_id]
-        record: dict[str, Any] = {"id": item_id, "name": entry.name}
-        triples.append((entry.main_category, entry.sub_category, record))
-    triples.sort(key=lambda t: (t[0], t[1], t[2]["id"]))
-    return [record for _, _, record in triples]
+        if item_id not in have:
+            base.append({"id": item_id, "name": catalog_by_id[item_id].name})
+            have.add(item_id)
+    return _sort_records(base, catalog_by_id)
 
 
-def _print_diff(selected: set[int], out_path: Path) -> None:
-    """Print the added/removed diff of this selection vs the existing out file."""
-    existing: set[int] = set()
-    if out_path.exists():
-        existing = {int(e["id"]) for e in _load_json(out_path)}
-    added = sorted(selected - existing)
-    removed = sorted(existing - selected)
-    print(f"Selected {len(selected)} items (was {len(existing)} in {out_path.name}).")
-    print(f"  + {len(added)} added, - {len(removed)} removed (vs current file)")
+def _print_summary(existing_ids: set[int], final_ids: set[int], *, replace: bool) -> None:
+    """Print the add/replace outcome vs the current tracked list."""
+    added = final_ids - existing_ids
+    removed = existing_ids - final_ids
+    unchanged = existing_ids & final_ids
+    mode = "replace" if replace else "add"
+    print(f"  mode: {mode}  |  current {len(existing_ids)} tracked -> new {len(final_ids)}")
+    print(f"  + {len(added)} added, {len(unchanged)} unchanged, - {len(removed)} removed")
     if removed:
-        print(f"  removed ids: {removed[:20]}{' ...' if len(removed) > 20 else ''}")
-        print("  NOTE: seeding is additive; use seed_items.py --reconcile to untrack these.")
+        rem = sorted(removed)
+        print(f"  removed ids: {rem[:20]}{' ...' if len(rem) > 20 else ''}")
+        print("  (these stop being tracked; run seed_items.py --reconcile to untrack in DynamoDB)")
 
 
 def main() -> None:
@@ -142,11 +203,16 @@ def main() -> None:
     parser.add_argument("--presets", type=Path, default=_PRESETS_FILE, help="presets file")
     parser.add_argument("--sets", type=Path, default=_SETS_FILE, help="named-sets file")
     parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="overwrite the tracked list with the selection (default: add to it)",
+    )
+    parser.add_argument(
         "--force", action="store_true", help="bypass the broad-selection guard (non-interactive)"
     )
     args = parser.parse_args()
 
-    from bdo_common.tracking import catalog_index, needs_confirmation, select_ids
+    from bdo_common.tracking import catalog_index, needs_confirmation
 
     catalog = _load_catalog(args.catalog)
     presets = _load_json(args.presets)
@@ -156,23 +222,32 @@ def main() -> None:
     # curated tracked list (still requires a final y/N to write).
     interactive = not (args.preset or args.set or args.main is not None)
     if interactive:
-        args.preset = _interactive_preset(presets)
+        args.preset = _interactive_presets(presets)
         if args.out is None:
             args.out = _TRACKED_ITEMS_FILE
 
-    kwargs, label = _selection_kwargs(args, presets, sets)
-    selected = select_ids(catalog, **kwargs)
+    selected, label, select_all = _resolve_selection(args, presets, sets, catalog)
     if not selected:
         _fail(f"selection ({label}) matched no items in {args.catalog.name}")
 
-    print(f"Selection: {label}")
     out_path = args.out or _TRACKED_ITEMS_FILE
-    _print_diff(set(selected), out_path)
+    existing_records: list[dict[str, Any]] = _load_json(out_path) if out_path.exists() else []
+    existing_ids = {int(record["id"]) for record in existing_records}
 
-    # Guard broad selections.
-    guarded = needs_confirmation(len(selected), select_all=bool(kwargs.get("select_all")))
+    final_records = _merge_records(
+        existing_records, selected, catalog_index(catalog), replace=args.replace
+    )
+    final_ids = {int(record["id"]) for record in final_records}
+
+    print(f"Selection: {label}")
+    _print_summary(existing_ids, final_ids, replace=args.replace)
+
+    # Guard on the resulting tracked-set size (that is what the ETL polls).
+    guarded = needs_confirmation(len(final_ids), select_all=select_all)
     if guarded:
-        warning = f"This selects {len(selected)} items -- broad; it will enlarge the hourly ETL."
+        warning = (
+            f"This would track {len(final_ids)} items -- broad; it will enlarge the hourly ETL."
+        )
         if interactive:
             if input(f"{warning}\nProceed? [y/N]: ").strip().lower() != "y":
                 print("Aborted.")
@@ -180,21 +255,23 @@ def main() -> None:
         elif not args.force:
             _fail(f"{warning} Re-run with --force to proceed.")
 
-    records = _build_records(selected, catalog_index(catalog))
-
     if args.out is None:
-        print(f"Preview only ({len(records)} items). Re-run with --out to write the list.")
+        print(f"Preview only ({len(final_records)} items). Re-run with --out to write the list.")
         return
 
     if (
         interactive
-        and input(f"Write {len(records)} items to {args.out}? [y/N]: ").strip().lower() != "y"
+        and input(f"Write {len(final_records)} items to {args.out}? [y/N]: ").strip().lower()
+        != "y"
     ):
         print("Aborted.")
         return
 
-    args.out.write_text(json.dumps(records, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"Wrote {len(records)} items to {args.out}. Seed with: make seed-data STAGE=<stage>")
+    args.out.write_text(
+        json.dumps(final_records, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    verb = "replaced with" if args.replace else "now"
+    print(f"{out_path.name} {verb} {len(final_records)} items. Seed: make seed-data STAGE=<stage>")
 
 
 if __name__ == "__main__":

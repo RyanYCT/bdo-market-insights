@@ -72,45 +72,67 @@ class TestSelectIds:
         assert tracking.select_ids(self.catalog) == []
 
 
-class TestBuildTrackedUpdates:
-    index = tracking.catalog_index([_mli(1, 20, 1), _mli(9, 99, 9)])
-    category_map = {"20:1": "accessory"}
+class TestDefaultCronProfile:
+    def test_accessory_is_standard(self) -> None:
+        assert tracking.default_cron_profile("accessory") == "standard"
 
-    def test_classified(self) -> None:
+    def test_non_accessory_is_none(self) -> None:
+        assert tracking.default_cron_profile("buff") == "none"
+
+    def test_unknown_is_none(self) -> None:
+        assert tracking.default_cron_profile(None) == "none"
+
+
+class TestBuildTrackedUpdates:
+    index = tracking.catalog_index([_mli(1, 20, 1), _mli(5, 55, 6), _mli(9, 99, 9)])
+    category_map = {"20:1": "accessory", "55:6": "buff"}
+
+    def test_accessory_defaults_to_standard(self) -> None:
         updates, classified = tracking.build_tracked_updates(
-            1, cron_profile="deboreka", index=self.index, category_map=self.category_map
+            1, index=self.index, category_map=self.category_map
         )
         assert classified is True
         assert updates == {
             "tracked": "true",
-            "cron_profile": "deboreka",
             "main_category": "20",
             "sub_category": "1",
             "category": "accessory",
+            "cron_profile": "standard",
         }
 
-    def test_missing_from_snapshot_is_unclassified(self) -> None:
+    def test_non_accessory_defaults_to_none(self) -> None:
         updates, classified = tracking.build_tracked_updates(
-            404, cron_profile="standard", index=self.index, category_map=self.category_map
+            5, index=self.index, category_map=self.category_map
+        )
+        assert classified is True
+        assert updates["category"] == "buff"
+        assert updates["cron_profile"] == "none"
+
+    def test_series_override_wins_over_category_default(self) -> None:
+        updates, _ = tracking.build_tracked_updates(
+            1, series_profile="deboreka", index=self.index, category_map=self.category_map
+        )
+        assert updates["cron_profile"] == "deboreka"
+
+    def test_missing_from_snapshot_is_unclassified_and_none(self) -> None:
+        updates, classified = tracking.build_tracked_updates(
+            404, index=self.index, category_map=self.category_map
         )
         assert classified is False
-        assert updates == {"tracked": "true", "cron_profile": "standard"}
+        assert updates == {"tracked": "true", "cron_profile": "none"}
 
     def test_known_codes_without_label_is_unclassified(self) -> None:
         updates, classified = tracking.build_tracked_updates(
-            9, cron_profile="standard", index=self.index, category_map=self.category_map
+            9, index=self.index, category_map=self.category_map
         )
         assert classified is False
         assert updates["main_category"] == "99"
         assert "category" not in updates
+        assert updates["cron_profile"] == "none"
 
     def test_model_id_passthrough(self) -> None:
         updates, _ = tracking.build_tracked_updates(
-            1,
-            cron_profile="standard",
-            index=self.index,
-            category_map=self.category_map,
-            model_id="buff_v1",
+            1, index=self.index, category_map=self.category_map, model_id="buff_v1"
         )
         assert updates["model_id"] == "buff_v1"
 

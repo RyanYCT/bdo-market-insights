@@ -47,7 +47,7 @@ class ItemCreate(BaseModel):
     main_category: str | None = None
     sub_category: str | None = None
     model_id: str = "accessory_v1"
-    cron_profile: str = "standard"
+    cron_profile: str = "none"
     tracked: bool = True
 
 

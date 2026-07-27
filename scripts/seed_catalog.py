@@ -13,6 +13,16 @@ from __future__ import annotations
 
 import argparse
 import os
+from collections.abc import Callable
+
+
+def _progress(label: str) -> Callable[[int, int], None]:
+    """Return a callback printing a single-line ``label done/total`` counter."""
+
+    def report(done: int, total: int) -> None:
+        print(f"\r{label} {done}/{total}", end="\n" if done == total else "", flush=True)
+
+    return report
 
 
 def main() -> None:
@@ -59,7 +69,7 @@ def main() -> None:
             print(f"[DRY RUN] sample: {sample!r}")
         return
 
-    total, new = dynamo.bulk_upsert_catalog_items(merged)
+    total, new = dynamo.bulk_upsert_catalog_items(merged, progress=_progress("Upserting"))
     print(f"Done. Upserted {total} items into {args.target_table} ({new} newly created).")
 
 
