@@ -171,24 +171,43 @@ aws logs tail /aws/lambda/bdo-dev-catalog-sync --since 10m --follow
 
 ### Seed the tracked set (one-time)
 
-The ETL polls only *tracked* items. Seed the curated set from
-`scripts/data/tracked_items.json` (a list of item ids); each item's category is
-derived from the live BDO taxonomy via `scripts/data/categories.json` and
-arsha's `GetWorldMarketList`:
+The ETL polls only *tracked* items. The tracked set lives in
+`scripts/data/tracked_items.json` (a list of item ids). Seeding is **fully
+offline**: each item's category is derived from the committed market snapshot
+`scripts/data/full_item_list.json` + `scripts/data/categories.json`
+(`main:sub` -> coarse label) — no arsha call at seed time.
 
 ```bash
 uv run python scripts/seed_items.py --target-table bdo-dev-items --dry-run
 uv run python scripts/seed_items.py --target-table bdo-dev-items
+# ...or run the catalog backfill + tracked seed together, in the correct order:
+make seed-data STAGE=dev
 ```
 
 It partial-upserts `tracked=true` + the sparse tracked-index marker +
 `cron_table`/`category`/`main_category`/`sub_category`, preserving the
 catalog-owned `name`/`grade`/`names` (run after the catalog backfill so names are
 present). Because it stamps the marker, no separate tracked-index backfill is
-needed for seeded items. Edit the JSON to curate a different set, or regenerate
-it from a running stage with `--export`. An item whose category is not covered by
-`categories.json` is still tracked but left ungrouped — extend the map to
-classify it.
+needed for seeded items. Seeding is **additive** by default; add `--reconcile`
+(or `RECONCILE=1` with make) to also untrack items no longer in the list. An
+item whose `(main:sub)` is not in `categories.json` is still tracked but left
+ungrouped — extend the map to classify it.
+
+**Changing what's tracked.** Build `tracked_items.json` with the preset-driven
+toggle rather than editing by hand:
+
+```bash
+make track                                   # interactive preset menu
+# ...or scripted (broad selections need --force):
+uv run python scripts/select_tracked.py --preset accessories --out scripts/data/tracked_items.json
+uv run python scripts/select_tracked.py --main 20 --sub 1 --out scripts/data/tracked_items.json
+```
+
+Presets: `all` (guarded), `accessories`, `ring`, `necklace`, `earring`, `belt`,
+`buff`, `deboreka`, `pearl` (defined in `scripts/data/presets.json` /
+`scripts/data/track_sets.json`). The offline snapshot is regenerated occasionally
+(e.g. after a BDO patch adds items) with `make market-catalog`, then committed —
+that is the only step that calls arsha.
 
 ### Item icons
 
@@ -1030,7 +1049,8 @@ delete-then-retry -- see [Troubleshooting](#troubleshooting).
 RDS and DynamoDB come back empty (neither is retained), so rebuild them by
 following [First-time bring-up](#first-time-bring-up): role bootstrap → catalog
 → tracked set → icons → verify. Nothing else is needed — the bring-up path is
-the same one used for any new stack.
+the same one used for any new stack. The two DynamoDB steps (catalog backfill +
+tracked seed) run together, in the correct order, via `make seed-data STAGE=<stage>`.
 
 ## Troubleshooting
 
