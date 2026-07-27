@@ -120,7 +120,7 @@ migrate-lambda:
 		/tmp/bdo-$(STAGE)-migrate.json >/dev/null && \
 		cat /tmp/bdo-$(STAGE)-migrate.json && echo
 
-# Regenerate the offline market snapshot (scripts/data/full_item_list.json) by
+# Regenerate the offline market snapshot (scripts/data/full_items.json) by
 # enumerating the arsha.io market taxonomy. This is the ONLY step that calls
 # arsha; run it occasionally (e.g. after a BDO patch adds items), then commit.
 market-catalog:

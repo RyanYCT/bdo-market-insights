@@ -51,7 +51,7 @@ def enumerate_taxonomy(
 
 
 def parse_catalog(rows: list[dict[str, Any]]) -> list[MarketListItem]:
-    """Parse ``full_item_list.json`` rows (``{id, name, main, sub}``) into models."""
+    """Parse ``full_items.json`` rows (``{id, name, main, sub}``) into models."""
     return [
         MarketListItem(
             item_id=int(row["id"]),

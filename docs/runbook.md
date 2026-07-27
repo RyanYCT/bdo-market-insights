@@ -171,10 +171,34 @@ aws logs tail /aws/lambda/bdo-dev-catalog-sync --since 10m --follow
 
 ### Seed the tracked set (one-time)
 
+The offline pipeline that decides **which items are tracked**. Only the
+occasional snapshot build (`make market-catalog`) touches arsha; selection and
+seeding are fully offline:
+
+```mermaid
+flowchart LR
+    arsha([arsha.io<br/>GetWorldMarketList]) -->|make market-catalog<br/>occasional| snap[(full_items.json<br/>market snapshot)]
+    presets[(presets.json)] --> toggle
+    sets[(track_sets.json)] --> toggle
+    snap --> toggle{{select_tracked.py<br/>preset / main+sub / set}}
+    toggle --> tracked[(tracked_items.json<br/>id + name)]
+    snap --> seed[seed_items.py]
+    cats[(categories.json)] --> seed
+    tracked --> seed
+    sets -.->|cron_profile by series| seed
+    seed -->|tracked + category + cron_profile| ddb[(DynamoDB<br/>items table)]
+
+    subgraph offline [Fully offline, no arsha]
+        toggle
+        tracked
+        seed
+    end
+```
+
 The ETL polls only *tracked* items. The tracked set lives in
 `scripts/data/tracked_items.json` (a list of item ids). Seeding is **fully
 offline**: each item's category is derived from the committed market snapshot
-`scripts/data/full_item_list.json` + `scripts/data/categories.json`
+`scripts/data/full_items.json` + `scripts/data/categories.json`
 (`main:sub` -> coarse label) — no arsha call at seed time.
 
 ```bash

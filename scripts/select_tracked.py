@@ -1,6 +1,6 @@
 """Toggle which items are tracked -- resolve a preset/selection into the seed list.
 
-Fully offline. Reads the committed market snapshot (``full_item_list.json``),
+Fully offline. Reads the committed market snapshot (``full_items.json``),
 preset definitions (``presets.json``) and named sets (``track_sets.json``),
 resolves the chosen selection to a list of item ids, and writes the tracked-item
 list (``tracked_items.json``) that ``seed_items.py`` consumes. No arsha calls.
@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 _DATA_DIR = Path(__file__).parent / "data"
-_CATALOG_FILE = _DATA_DIR / "full_item_list.json"
+_CATALOG_FILE = _DATA_DIR / "full_items.json"
 _PRESETS_FILE = _DATA_DIR / "presets.json"
 _SETS_FILE = _DATA_DIR / "track_sets.json"
 _TRACKED_ITEMS_FILE = _DATA_DIR / "tracked_items.json"
@@ -39,7 +39,7 @@ def _load_json(path: Path) -> Any:
 
 
 def _load_catalog(path: Path) -> list[Any]:
-    """Load full_item_list.json into MarketListItem objects."""
+    """Load full_items.json into MarketListItem objects."""
     from bdo_common.tracking import parse_catalog
 
     return parse_catalog(_load_json(path))

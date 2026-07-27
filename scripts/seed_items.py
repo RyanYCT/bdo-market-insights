@@ -1,7 +1,7 @@
 """Seed the tracked-item set into bdo-<stage>-items from the curated list.
 
 Fully offline. Reads ``scripts/data/tracked_items.json`` (the items to track),
-``scripts/data/full_item_list.json`` (the committed market snapshot),
+``scripts/data/full_items.json`` (the committed market snapshot),
 ``scripts/data/categories.json`` (``main:sub`` -> coarse category) and
 ``scripts/data/track_sets.json`` (named series), and writes ``tracked=true`` +
 the sparse tracked-index marker + ``cron_profile`` +
@@ -37,7 +37,7 @@ from typing import Any
 
 _DATA_DIR = Path(__file__).parent / "data"
 _TRACKED_ITEMS_FILE = _DATA_DIR / "tracked_items.json"
-_CATALOG_FILE = _DATA_DIR / "full_item_list.json"
+_CATALOG_FILE = _DATA_DIR / "full_items.json"
 _CATEGORIES_FILE = _DATA_DIR / "categories.json"
 _SETS_FILE = _DATA_DIR / "track_sets.json"
 
@@ -92,7 +92,7 @@ def main() -> None:
         "--catalog-file",
         type=Path,
         default=_CATALOG_FILE,
-        help="Committed market snapshot (default: scripts/data/full_item_list.json)",
+        help="Committed market snapshot (default: scripts/data/full_items.json)",
     )
     parser.add_argument(
         "--categories-file",

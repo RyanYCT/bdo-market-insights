@@ -1,4 +1,4 @@
-"""Build ``scripts/data/full_item_list.json`` -- the offline market snapshot.
+"""Build ``scripts/data/full_items.json`` -- the offline market snapshot.
 
 Enumerates arsha.io ``GetWorldMarketList`` across the whole market taxonomy and
 writes a flat, de-duplicated list of ``{id, name, main, sub}``: the "full item
@@ -17,12 +17,12 @@ import json
 import time
 from pathlib import Path
 
-_OUT_DEFAULT = Path(__file__).parent / "data" / "full_item_list.json"
+_OUT_DEFAULT = Path(__file__).parent / "data" / "full_items.json"
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Enumerate the arsha.io market taxonomy into full_item_list.json"
+        description="Enumerate the arsha.io market taxonomy into full_items.json"
     )
     parser.add_argument("--region", default="tw", help="arsha region path segment (default: tw)")
     parser.add_argument(
