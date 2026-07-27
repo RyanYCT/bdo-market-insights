@@ -194,11 +194,28 @@ flowchart LR
     end
 ```
 
-The ETL polls only *tracked* items. The tracked set lives in
-`scripts/data/tracked_items.json` (a list of item ids). Seeding is **fully
-offline**: each item's category is derived from the committed market snapshot
-`scripts/data/full_items.json` + `scripts/data/categories.json`
-(`main:sub` -> coarse label) — no arsha call at seed time.
+The ETL polls only *tracked* items. A **curated default tracked set ships** in
+`scripts/data/tracked_items.json` — you can seed it as-is, or adjust what's
+tracked first with the toggle below. Everything here is offline; only
+`make market-catalog` (regenerating the snapshot) touches arsha.
+
+**1. (Optional) change what's tracked.** Use the preset toggle rather than
+hand-editing the list. It **adds** the selection to the current tracked set by
+default (pass `--replace` to overwrite instead):
+
+```bash
+make track                                   # interactive preset menu
+# ...or scripted (adds by default; --replace to overwrite, --force for broad sets):
+uv run python scripts/select_tracked.py --preset ring --out scripts/data/tracked_items.json
+uv run python scripts/select_tracked.py --preset deboreka --out scripts/data/tracked_items.json
+```
+
+Presets (`scripts/data/presets.json` + `scripts/data/track_sets.json`): `all`
+(guarded), `accessories`, `ring`, `necklace`, `earring`, `belt`, `pearl`,
+`functional`, `deboreka`, `buffs`.
+
+**2. Seed it.** Write the tracked markers to DynamoDB. Category comes from the
+snapshot + `categories.json`; `cron_profile` from series membership — no arsha:
 
 ```bash
 uv run python scripts/seed_items.py --target-table bdo-dev-items --dry-run
@@ -215,22 +232,6 @@ needed for seeded items. Seeding is **additive** by default; add `--reconcile`
 (or `RECONCILE=1` with make) to also untrack items no longer in the list. An
 item whose `(main:sub)` is not in `categories.json` is still tracked but left
 ungrouped — extend the map to classify it.
-
-**Changing what's tracked.** Build `tracked_items.json` with the preset-driven
-toggle rather than editing by hand:
-
-```bash
-make track                                   # interactive preset menu
-# ...or scripted (broad selections need --force):
-uv run python scripts/select_tracked.py --preset accessories --out scripts/data/tracked_items.json
-uv run python scripts/select_tracked.py --main 20 --sub 1 --out scripts/data/tracked_items.json
-```
-
-Presets: `all` (guarded), `accessories`, `ring`, `necklace`, `earring`, `belt`,
-`buff`, `deboreka`, `pearl` (defined in `scripts/data/presets.json` /
-`scripts/data/track_sets.json`). The offline snapshot is regenerated occasionally
-(e.g. after a BDO patch adds items) with `make market-catalog`, then committed —
-that is the only step that calls arsha.
 
 ### Item icons
 

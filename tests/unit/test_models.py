@@ -82,7 +82,7 @@ class TestItem:
     def test_defaults(self) -> None:
         item = Item(id=11608, name="Deboreka Ring")
         assert item.model_id == "accessory_v1"
-        assert item.cron_profile == "standard"
+        assert item.cron_profile == "none"
         assert item.tracked is True
         assert item.category is None
 

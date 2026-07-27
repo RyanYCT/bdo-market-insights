@@ -20,6 +20,12 @@ from bdo_common.models import MarketListItem
 #: the hourly ETL, so broad selects are guarded (never silent).
 MAX_UNGUARDED_SELECTION = 100
 
+#: Coarse categories whose items are enhanceable (consume cron stones), so they
+#: default to the ``standard`` cron profile. Everything else defaults to
+#: ``none`` (not enhanceable, e.g. pearl/functional consumables). Named series
+#: (track_sets.json) still override this with their own profile.
+ENHANCEABLE_CATEGORIES = frozenset({"accessory"})
+
 #: A ``fetch(main, sub) -> items`` callable; an empty list marks a nonexistent
 #: (or empty) combination -- the enumeration stop signal.
 FetchMarketList = Callable[[int, int], list[MarketListItem]]
@@ -103,10 +109,20 @@ def category_label(main: int, sub: int, category_map: dict[str, str]) -> str | N
     return category_map.get(f"{main}:{sub}")
 
 
+def default_cron_profile(category: str | None) -> str:
+    """Cron profile for an item with no explicit series override.
+
+    Enhanceable items (see ``ENHANCEABLE_CATEGORIES``) use the ``standard``
+    accessory profile; everything else -- including unclassified items and
+    non-enhanceable consumables (pearl/functional) -- is ``none``.
+    """
+    return "standard" if category in ENHANCEABLE_CATEGORIES else "none"
+
+
 def build_tracked_updates(
     item_id: int,
     *,
-    cron_profile: str,
+    series_profile: str | None = None,
     index: dict[int, MarketListItem],
     category_map: dict[str, str],
     model_id: str | None = None,
@@ -114,25 +130,28 @@ def build_tracked_updates(
     """Build the DynamoDB partial-update for one tracked id, fully offline.
 
     ``main``/``sub`` come from the committed catalog snapshot and the coarse
-    ``category`` from ``category_map`` -- no arsha. Returns ``(updates,
-    classified)``; ``classified`` is False when the id is absent from the
-    snapshot or its ``(main, sub)`` has no coarse label (tracked but ungrouped).
+    ``category`` from ``category_map`` -- no arsha. ``cron_profile`` is the
+    item's series override (``series_profile``) if it belongs to a series that
+    declares one, else the category default (accessory -> ``standard``, else
+    ``none``). Returns ``(updates, classified)``; ``classified`` is False when
+    the id is absent from the snapshot or its ``(main, sub)`` has no coarse
+    label (tracked but ungrouped).
     """
-    updates: dict[str, str] = {"tracked": "true", "cron_profile": cron_profile}
+    updates: dict[str, str] = {"tracked": "true"}
     if model_id is not None:
         updates["model_id"] = model_id
 
     entry = index.get(item_id)
-    if entry is None:
-        return updates, False
+    label: str | None = None
+    if entry is not None:
+        updates["main_category"] = str(entry.main_category)
+        updates["sub_category"] = str(entry.sub_category)
+        label = category_label(entry.main_category, entry.sub_category, category_map)
+        if label is not None:
+            updates["category"] = label
 
-    updates["main_category"] = str(entry.main_category)
-    updates["sub_category"] = str(entry.sub_category)
-    label = category_label(entry.main_category, entry.sub_category, category_map)
-    if label is None:
-        return updates, False
-    updates["category"] = label
-    return updates, True
+    updates["cron_profile"] = series_profile or default_cron_profile(label)
+    return updates, entry is not None and label is not None
 
 
 def cron_overrides(sets: Mapping[str, Any]) -> dict[int, str]:

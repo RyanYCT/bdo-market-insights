@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,15 @@ def _load_json(path: Path) -> Any:
     """Load and parse a JSON file."""
     with path.open(encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def _progress(label: str) -> Callable[[int, int], None]:
+    """Return a callback printing a single-line ``label done/total`` counter."""
+
+    def report(done: int, total: int) -> None:
+        print(f"\r{label} {done}/{total}", end="\n" if done == total else "", flush=True)
+
+    return report
 
 
 def _category_map(categories: dict[str, Any]) -> dict[str, str]:
@@ -144,39 +154,50 @@ def main() -> None:
 
     unclassified: list[int] = []
     selected: set[int] = set()
+    plan: list[tuple[int, dict[str, Any]]] = []
     for entry in entries:
         item_id = int(entry["id"])
         selected.add(item_id)
         updates, classified = tracking.build_tracked_updates(
             item_id,
-            cron_profile=cron_by_id.get(item_id, "standard"),
+            series_profile=cron_by_id.get(item_id),
             index=index,
             category_map=category_map,
             model_id=entry.get("model_id"),
         )
         if not classified:
             unclassified.append(item_id)
-        label = updates.get("category", "?")
+        plan.append((item_id, updates))
         if args.dry_run:
-            print(f"[DRY RUN] {item_id} ({entry.get('name', '')}) [{label}] <- {updates}")
-        else:
-            dynamo.update_item(item_id, updates)
-            print(f"Seeded {item_id} ({entry.get('name', '')}) [{label}]")
+            label = updates.get("category", "?")
+            print(
+                f"[DRY RUN] {item_id} ({entry.get('name', '')}) "
+                f"[{label} / {updates['cron_profile']}] <- {updates}"
+            )
 
-    action = "previewed" if args.dry_run else "seeded"
-    print(f"Done. {len(entries)} items {action}.")
+    if args.dry_run:
+        print(f"Done. {len(plan)} items previewed.")
+    else:
+        # Writes run concurrently (partial UpdateItem can't use BatchWriteItem
+        # without clobbering catalog-owned fields).
+        written = dynamo.bulk_update_items(plan, progress=_progress("Seeding"))
+        print(f"Done. Seeded {written} items into {args.target_table}.")
 
     if args.reconcile:
         current = {item.id for item in dynamo.list_tracked_items()}
         stale = tracking.ids_to_untrack(current, selected)
-        for item_id in stale:
-            if args.dry_run:
+        if args.dry_run:
+            for item_id in stale:
                 print(f"[DRY RUN] untrack {item_id} (tracked but not in list)")
-            else:
-                dynamo.update_item(item_id, {"tracked": "false"})
-                print(f"Untracked {item_id} (no longer in list)")
-        verb = "would untrack" if args.dry_run else "untracked"
-        print(f"Reconcile: {verb} {len(stale)} item(s) no longer in the list.")
+            print(f"Reconcile: would untrack {len(stale)} item(s) no longer in the list.")
+        elif stale:
+            dynamo.bulk_update_items(
+                [(item_id, {"tracked": "false"}) for item_id in stale],
+                progress=_progress("Untracking"),
+            )
+            print(f"Reconcile: untracked {len(stale)} item(s) no longer in the list.")
+        else:
+            print("Reconcile: nothing to untrack.")
 
     if unclassified:
         print(

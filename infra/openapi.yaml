@@ -19,7 +19,7 @@ components:
           - type: 'null'
           title: Category
         cron_profile:
-          default: standard
+          default: none
           title: Cron Profile
           type: string
         id:

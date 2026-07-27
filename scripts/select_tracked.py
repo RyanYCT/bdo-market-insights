@@ -7,15 +7,16 @@ list (``tracked_items.json``) that ``seed_items.py`` consumes. No arsha calls.
 
 Selection is one of: a named ``--preset``, an ad-hoc ``--main``/``--sub`` market
 category, or a named ``--set``. With no selection flag it shows an interactive
-preset menu. Broad selections (the ``all`` preset, or more than
-``MAX_UNGUARDED_SELECTION`` items) require confirmation (interactive) or
-``--force`` (non-interactive), because tracking a whole category can add
-hundreds of items to the hourly ETL.
+preset menu. The selection is **added** to the current tracked list by default
+(so picking a preset never silently drops what you already track); pass
+``--replace`` to overwrite the list instead. Broad *resulting* sets (the ``all``
+preset, or more than ``MAX_UNGUARDED_SELECTION`` tracked items) require
+confirmation (interactive) or ``--force`` (non-interactive).
 
     uv run python scripts/select_tracked.py                       # interactive menu
-    uv run python scripts/select_tracked.py --preset accessories  # preview (add --out to write)
-    uv run python scripts/select_tracked.py --main 20 --sub 1
-    uv run python scripts/select_tracked.py --preset all --force --out <path>
+    uv run python scripts/select_tracked.py --preset deboreka     # preview (adds to current)
+    uv run python scripts/select_tracked.py --preset ring --out scripts/data/tracked_items.json
+    uv run python scripts/select_tracked.py --preset all --replace --force --out <path>
 """
 
 from __future__ import annotations
@@ -99,34 +100,55 @@ def _interactive_preset(presets: dict[str, Any]) -> str:
     return names[int(choice) - 1]
 
 
-def _build_records(selected: list[int], catalog_by_id: dict[int, Any]) -> list[dict[str, Any]]:
-    """Build the tracked_items.json records ({id, name}), sorted by (main, sub, id).
+def _sort_records(
+    records: list[dict[str, Any]], catalog_by_id: dict[int, Any]
+) -> list[dict[str, Any]]:
+    """Sort records by (main, sub, id); ids absent from the snapshot sort last."""
 
-    ``cron_profile`` is intentionally NOT written here: it is derived at seed
-    time from series membership (track_sets.json), so tracked_items.json stays a
-    pure id/name list.
+    def key(rec: dict[str, Any]) -> tuple[int, int, int]:
+        entry = catalog_by_id.get(int(rec["id"]))
+        if entry is None:
+            return (10**9, 10**9, int(rec["id"]))
+        return (entry.main_category, entry.sub_category, int(rec["id"]))
+
+    return sorted(records, key=key)
+
+
+def _merge_records(
+    existing: list[dict[str, Any]],
+    selected: list[int],
+    catalog_by_id: dict[int, Any],
+    *,
+    replace: bool,
+) -> list[dict[str, Any]]:
+    """Merge the selection into the current list (default), or replace it.
+
+    Existing entries are preserved as-is (keeping any manual fields); only newly
+    selected ids are appended. ``cron_profile`` is intentionally not written --
+    it is derived at seed time from series membership (track_sets.json), so
+    tracked_items.json stays a pure id/name list.
     """
-    triples = []
+    base = [] if replace else list(existing)
+    have = {int(record["id"]) for record in base}
     for item_id in selected:
-        entry = catalog_by_id[item_id]
-        record: dict[str, Any] = {"id": item_id, "name": entry.name}
-        triples.append((entry.main_category, entry.sub_category, record))
-    triples.sort(key=lambda t: (t[0], t[1], t[2]["id"]))
-    return [record for _, _, record in triples]
+        if item_id not in have:
+            base.append({"id": item_id, "name": catalog_by_id[item_id].name})
+            have.add(item_id)
+    return _sort_records(base, catalog_by_id)
 
 
-def _print_diff(selected: set[int], out_path: Path) -> None:
-    """Print the added/removed diff of this selection vs the existing out file."""
-    existing: set[int] = set()
-    if out_path.exists():
-        existing = {int(e["id"]) for e in _load_json(out_path)}
-    added = sorted(selected - existing)
-    removed = sorted(existing - selected)
-    print(f"Selected {len(selected)} items (was {len(existing)} in {out_path.name}).")
-    print(f"  + {len(added)} added, - {len(removed)} removed (vs current file)")
+def _print_summary(existing_ids: set[int], final_ids: set[int], *, replace: bool) -> None:
+    """Print the add/replace outcome vs the current tracked list."""
+    added = final_ids - existing_ids
+    removed = existing_ids - final_ids
+    unchanged = existing_ids & final_ids
+    mode = "replace" if replace else "add"
+    print(f"  mode: {mode}  |  current {len(existing_ids)} tracked -> new {len(final_ids)}")
+    print(f"  + {len(added)} added, {len(unchanged)} unchanged, - {len(removed)} removed")
     if removed:
-        print(f"  removed ids: {removed[:20]}{' ...' if len(removed) > 20 else ''}")
-        print("  NOTE: seeding is additive; use seed_items.py --reconcile to untrack these.")
+        rem = sorted(removed)
+        print(f"  removed ids: {rem[:20]}{' ...' if len(rem) > 20 else ''}")
+        print("  (these stop being tracked; run seed_items.py --reconcile to untrack in DynamoDB)")
 
 
 def main() -> None:
@@ -141,6 +163,11 @@ def main() -> None:
     parser.add_argument("--catalog", type=Path, default=_CATALOG_FILE, help="market snapshot file")
     parser.add_argument("--presets", type=Path, default=_PRESETS_FILE, help="presets file")
     parser.add_argument("--sets", type=Path, default=_SETS_FILE, help="named-sets file")
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="overwrite the tracked list with the selection (default: add to it)",
+    )
     parser.add_argument(
         "--force", action="store_true", help="bypass the broad-selection guard (non-interactive)"
     )
@@ -165,14 +192,24 @@ def main() -> None:
     if not selected:
         _fail(f"selection ({label}) matched no items in {args.catalog.name}")
 
-    print(f"Selection: {label}")
     out_path = args.out or _TRACKED_ITEMS_FILE
-    _print_diff(set(selected), out_path)
+    existing_records: list[dict[str, Any]] = _load_json(out_path) if out_path.exists() else []
+    existing_ids = {int(record["id"]) for record in existing_records}
 
-    # Guard broad selections.
-    guarded = needs_confirmation(len(selected), select_all=bool(kwargs.get("select_all")))
+    final_records = _merge_records(
+        existing_records, selected, catalog_index(catalog), replace=args.replace
+    )
+    final_ids = {int(record["id"]) for record in final_records}
+
+    print(f"Selection: {label}")
+    _print_summary(existing_ids, final_ids, replace=args.replace)
+
+    # Guard on the resulting tracked-set size (that is what the ETL polls).
+    guarded = needs_confirmation(len(final_ids), select_all=bool(kwargs.get("select_all")))
     if guarded:
-        warning = f"This selects {len(selected)} items -- broad; it will enlarge the hourly ETL."
+        warning = (
+            f"This would track {len(final_ids)} items -- broad; it will enlarge the hourly ETL."
+        )
         if interactive:
             if input(f"{warning}\nProceed? [y/N]: ").strip().lower() != "y":
                 print("Aborted.")
@@ -180,21 +217,23 @@ def main() -> None:
         elif not args.force:
             _fail(f"{warning} Re-run with --force to proceed.")
 
-    records = _build_records(selected, catalog_index(catalog))
-
     if args.out is None:
-        print(f"Preview only ({len(records)} items). Re-run with --out to write the list.")
+        print(f"Preview only ({len(final_records)} items). Re-run with --out to write the list.")
         return
 
     if (
         interactive
-        and input(f"Write {len(records)} items to {args.out}? [y/N]: ").strip().lower() != "y"
+        and input(f"Write {len(final_records)} items to {args.out}? [y/N]: ").strip().lower()
+        != "y"
     ):
         print("Aborted.")
         return
 
-    args.out.write_text(json.dumps(records, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"Wrote {len(records)} items to {args.out}. Seed with: make seed-data STAGE=<stage>")
+    args.out.write_text(
+        json.dumps(final_records, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    verb = "replaced with" if args.replace else "now"
+    print(f"{out_path.name} {verb} {len(final_records)} items. Seed: make seed-data STAGE=<stage>")
 
 
 if __name__ == "__main__":
