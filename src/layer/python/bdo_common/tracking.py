@@ -57,13 +57,19 @@ def enumerate_taxonomy(
 
 
 def parse_catalog(rows: list[dict[str, Any]]) -> list[MarketListItem]:
-    """Parse ``full_items.json`` rows (``{id, name, main, sub}``) into models."""
+    """Parse ``full_items.json`` rows into models.
+
+    Rows are ``{id, name, main, sub}`` plus an optional ``grade`` (merged from
+    ``util/db`` when the snapshot was built); a missing/null ``grade`` parses to
+    ``None`` so older snapshots without the field still load.
+    """
     return [
         MarketListItem(
             item_id=int(row["id"]),
             name=str(row["name"]),
             main_category=int(row["main"]),
             sub_category=int(row["sub"]),
+            grade=(None if row.get("grade") is None else int(row["grade"])),
         )
         for row in rows
     ]
@@ -81,6 +87,8 @@ def select_ids(
     sub: int | None = None,
     ids: list[int] | None = None,
     select_all: bool = False,
+    min_grade: int | None = None,
+    max_grade: int | None = None,
 ) -> list[int]:
     """Resolve a selection against the catalog into a sorted id list.
 
@@ -88,20 +96,54 @@ def select_ids(
     explicit ``ids`` (intersected with the catalog so a stale id is dropped),
     or a category filter by ``main`` (whole main category) and optionally
     ``sub`` (one category). Passing none returns an empty list.
+
+    When ``min_grade`` and/or ``max_grade`` are given, the resolved selection is
+    additionally filtered to items whose snapshot ``grade`` falls in that
+    (inclusive) band -- e.g. ``min_grade=3`` keeps only high-value items
+    (Gold/Orange/Violet). Items with an unknown grade (``None``) are dropped
+    whenever any grade bound is set.
     """
-    present = {entry.item_id for entry in catalog}
+    index = catalog_index(catalog)
     if select_all:
-        return sorted(present)
-    if ids is not None:
-        return sorted(i for i in ids if i in present)
-    if main is None:
+        candidate = list(index)
+    elif ids is not None:
+        candidate = [i for i in ids if i in index]
+    elif main is not None:
+        candidate = [
+            entry.item_id
+            for entry in catalog
+            if entry.main_category == main and (sub is None or entry.sub_category == sub)
+        ]
+    else:
         return []
-    result = [
-        entry.item_id
-        for entry in catalog
-        if entry.main_category == main and (sub is None or entry.sub_category == sub)
-    ]
-    return sorted(result)
+    return sorted(_filter_by_grade(candidate, index, min_grade=min_grade, max_grade=max_grade))
+
+
+def _filter_by_grade(
+    ids: list[int],
+    index: dict[int, MarketListItem],
+    *,
+    min_grade: int | None,
+    max_grade: int | None,
+) -> list[int]:
+    """Keep ids whose snapshot grade is within [min_grade, max_grade] (inclusive).
+
+    A no-op when both bounds are ``None``. When any bound is set, items with an
+    unknown grade (``None``) are excluded (they cannot be proven high-value).
+    """
+    if min_grade is None and max_grade is None:
+        return ids
+    kept: list[int] = []
+    for item_id in ids:
+        grade = index[item_id].grade
+        if grade is None:
+            continue
+        if min_grade is not None and grade < min_grade:
+            continue
+        if max_grade is not None and grade > max_grade:
+            continue
+        kept.append(item_id)
+    return kept
 
 
 def category_label(main: int, sub: int, category_map: dict[str, str]) -> str | None:

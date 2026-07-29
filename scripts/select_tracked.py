@@ -15,10 +15,18 @@ instead. Broad *resulting* sets (the ``all`` preset, or more than
 ``MAX_UNGUARDED_SELECTION`` tracked items) require confirmation (interactive) or
 ``--force`` (non-interactive).
 
+``--min-grade``/``--max-grade`` further narrow any selection to a grade band
+(grade codes: 0 White, 1 Green, 2 Blue, 3 Gold, 4 Orange, 5 Violet), reading the
+grade baked into the snapshot. A preset may also declare its own ``min_grade``
+default (e.g. ``accessories`` = Gold+); the CLI flags override it (pass
+``--min-grade 0`` to re-include every grade). Items whose grade is unknown in the
+snapshot are dropped whenever a grade bound applies.
+
     uv run python scripts/select_tracked.py                          # interactive menu
     uv run python scripts/select_tracked.py --preset deboreka,buffs  # union, adds to current
     uv run python scripts/select_tracked.py --preset ring --out scripts/data/tracked_items.json
     uv run python scripts/select_tracked.py --preset all --replace --force --out <path>
+    uv run python scripts/select_tracked.py --main 20 --min-grade 3   # high-value accessories
 """
 
 from __future__ import annotations
@@ -51,15 +59,48 @@ def _load_catalog(path: Path) -> list[Any]:
 def _preset_kwargs(
     name: str, presets: dict[str, Any], sets: dict[str, Any]
 ) -> tuple[dict[str, Any], bool]:
-    """select_ids kwargs for one preset name; second element is True for 'all'."""
+    """select_ids kwargs for one preset name; second element is True for 'all'.
+
+    A preset may carry its own ``min_grade``/``max_grade`` default (e.g.
+    ``accessories`` limited to high-value items); those are folded into the
+    kwargs here and can be overridden per-run by the ``--min-grade`` /
+    ``--max-grade`` CLI flags.
+    """
     if name not in presets or name.startswith("_"):
         _fail(f"unknown preset {name!r}; choose from: {_preset_names(presets)}")
     spec = presets[name]
+    grade: dict[str, Any] = {}
+    if spec.get("min_grade") is not None:
+        grade["min_grade"] = int(spec["min_grade"])
+    if spec.get("max_grade") is not None:
+        grade["max_grade"] = int(spec["max_grade"])
     if spec.get("all"):
-        return {"select_all": True}, True
+        return {"select_all": True, **grade}, True
     if "set" in spec:
-        return {"ids": _set_ids(sets, spec["set"])}, False
-    return {"main": spec.get("main"), "sub": spec.get("sub")}, False
+        return {"ids": _set_ids(sets, spec["set"]), **grade}, False
+    return {"main": spec.get("main"), "sub": spec.get("sub"), **grade}, False
+
+
+def _apply_grade_override(kwargs: dict[str, Any], args: argparse.Namespace) -> None:
+    """Override any preset grade default with the CLI flags, in place.
+
+    ``--min-grade``/``--max-grade`` always win when given (e.g. ``--min-grade 0``
+    re-includes everything a preset would otherwise have limited to high grades).
+    """
+    if args.min_grade is not None:
+        kwargs["min_grade"] = args.min_grade
+    if args.max_grade is not None:
+        kwargs["max_grade"] = args.max_grade
+
+
+def _grade_suffix(kwargs: dict[str, Any]) -> str:
+    """Human-readable ' (grade ...)' suffix describing the applied grade band."""
+    lo, hi = kwargs.get("min_grade"), kwargs.get("max_grade")
+    if lo is None and hi is None:
+        return ""
+    if lo is not None and hi is not None:
+        return f" (grade {lo}-{hi})"
+    return f" (grade >= {lo})" if lo is not None else f" (grade <= {hi})"
 
 
 def _resolve_selection(
@@ -78,21 +119,27 @@ def _resolve_selection(
             _fail("no preset given")
         ids: set[int] = set()
         select_all = False
+        suffixes: set[str] = set()
         for name in names:
             kwargs, is_all = _preset_kwargs(name, presets, sets)
+            _apply_grade_override(kwargs, args)
             select_all = select_all or is_all
             ids.update(select_ids(catalog, **kwargs))
-        label = f"preset {names[0]}" if len(names) == 1 else f"presets {', '.join(names)}"
+            suffixes.add(_grade_suffix(kwargs))
+        base = f"preset {names[0]}" if len(names) == 1 else f"presets {', '.join(names)}"
+        # One shared suffix when every preset resolved to the same grade band.
+        label = base + (suffixes.pop() if len(suffixes) == 1 else "")
         return sorted(ids), label, select_all
     if args.set:
-        return (
-            sorted(select_ids(catalog, ids=_set_ids(sets, args.set))),
-            f"set '{args.set}'",
-            False,
-        )
+        kwargs = {"ids": _set_ids(sets, args.set)}
+        _apply_grade_override(kwargs, args)
+        label = f"set '{args.set}'{_grade_suffix(kwargs)}"
+        return sorted(select_ids(catalog, **kwargs)), label, False
     if args.main is not None:
-        label = f"main {args.main}" + (f" sub {args.sub}" if args.sub is not None else "")
-        return sorted(select_ids(catalog, main=args.main, sub=args.sub)), label, False
+        kwargs = {"main": args.main, "sub": args.sub}
+        _apply_grade_override(kwargs, args)
+        base = f"main {args.main}" + (f" sub {args.sub}" if args.sub is not None else "")
+        return sorted(select_ids(catalog, **kwargs)), base + _grade_suffix(kwargs), False
     _fail("no selection given; use --preset / --main[/--sub] / --set, or run with no flags")
 
 
@@ -202,6 +249,19 @@ def main() -> None:
     parser.add_argument("--catalog", type=Path, default=_CATALOG_FILE, help="market snapshot file")
     parser.add_argument("--presets", type=Path, default=_PRESETS_FILE, help="presets file")
     parser.add_argument("--sets", type=Path, default=_SETS_FILE, help="named-sets file")
+    parser.add_argument(
+        "--min-grade",
+        type=int,
+        dest="min_grade",
+        help="keep only items with grade >= N (e.g. 3 = high-value Gold+); "
+        "overrides any per-preset default. Pass 0 to include all grades.",
+    )
+    parser.add_argument(
+        "--max-grade",
+        type=int,
+        dest="max_grade",
+        help="keep only items with grade <= N; overrides any per-preset default",
+    )
     parser.add_argument(
         "--replace",
         action="store_true",

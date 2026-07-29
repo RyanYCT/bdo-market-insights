@@ -69,6 +69,11 @@ class MarketListItem(BaseModel):
     ``GetWorldMarketList?mainCategory=<m>&subCategory=<s>`` lists every item in a
     market category, each carrying its ``mainCategory``/``subCategory`` codes.
     Used to derive an item's category from the live BDO taxonomy.
+
+    ``grade`` is not returned by ``GetWorldMarketList``; it is merged in from
+    ``util/db`` when the committed snapshot (``full_items.json``) is built, so
+    the offline track toggle can filter by grade. It stays ``None`` when parsing
+    a live ``GetWorldMarketList`` response (grade absent there).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -77,6 +82,9 @@ class MarketListItem(BaseModel):
     name: str  # arsha "name"
     main_category: int  # arsha "mainCategory"
     sub_category: int  # arsha "subCategory"
+    # BDO grade code (0=White, 1=Green, 2=Blue, 3=Gold, 4=Orange, 5=Violet, ...),
+    # merged from util/db into the snapshot. Open-ended; None when unknown.
+    grade: int | None = None
 
 
 class Item(BaseModel):

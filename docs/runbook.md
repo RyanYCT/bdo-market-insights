@@ -181,7 +181,7 @@ seeding are fully offline:
 
 ```mermaid
 flowchart LR
-    arsha([arsha.io<br/>GetWorldMarketList]) -->|make market-catalog<br/>occasional| snap[(full_items.json<br/>market snapshot)]
+    arsha([arsha.io<br/>GetWorldMarketList + util/db grade]) -->|make market-catalog<br/>occasional| snap[(full_items.json<br/>id, name, main, sub, grade)]
     presets[(presets.json)] --> toggle
     sets[(track_sets.json)] --> toggle
     snap --> toggle{{select_tracked.py<br/>preset / main+sub / set}}
@@ -215,11 +215,21 @@ make track                                   # interactive menu (accepts e.g. 9,
 # ...or scripted (adds by default; --replace to overwrite, --force for broad sets):
 uv run python scripts/select_tracked.py --preset deboreka,buffs --out scripts/data/tracked_items.json
 uv run python scripts/select_tracked.py --preset ring --out scripts/data/tracked_items.json
+# grade filter: keep only high-value items (grade codes 0 White..3 Gold,4 Orange,5 Violet)
+uv run python scripts/select_tracked.py --main 20 --min-grade 3 --out scripts/data/tracked_items.json
 ```
 
 Presets (`scripts/data/presets.json` + `scripts/data/track_sets.json`): `all`
-(guarded), `accessories`, `ring`, `necklace`, `earring`, `belt`, `pearl`,
-`functional`, `deboreka`, `buffs`.
+(guarded), `high-value` (guarded; every item grade ≥ 3), `accessories`, `ring`,
+`necklace`, `earring`, `belt`, `pearl`, `functional`, `deboreka`, `buffs`.
+
+**Grade filter.** The snapshot carries each item's BDO `grade` (0 White, 1
+Green, 2 Blue, 3 Gold, 4 Orange, 5 Violet), so a selection can be narrowed to a
+grade band with `--min-grade` / `--max-grade`. The accessory presets
+(`accessories`, `ring`, `necklace`, `earring`, `belt`) and `high-value` default
+to grade ≥ 3 (this project targets valuable items); the CLI flags override that
+default — pass `--min-grade 0` to re-include every grade. Items whose grade is
+unknown in the snapshot are dropped whenever a grade bound applies.
 
 **2. Seed it.** Write the tracked markers to DynamoDB. Category comes from the
 snapshot + `categories.json`; `cron_profile` from series membership — no arsha:
