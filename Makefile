@@ -108,6 +108,10 @@ db-tunnel-down:
 # secret exists only while the bastion is up and gets a fresh password each
 # time, so run this once per bastion session (after make db-tunnel-up) to let
 # pgAdmin log in as dba. Requires an open tunnel + ENABLE_BASTION=true.
+# Kept separate from `make deploy` by necessity: it needs a live DB connection
+# over the tunnel, which needs a bastion that only exists after the deploy
+# finishes -- so it is inherently a post-deploy step (and a no-op on the common
+# ENABLE_BASTION=false deploy, where no dba secret exists).
 dba-password:
 	uv run python scripts/set_dba_password.py --stage $(STAGE) --region $(AWS_REGION) \
 		--port $(LOCAL_DB_PORT)

@@ -829,6 +829,12 @@ Instance Connect Endpoint (EICE), so you never SSH to it directly — the
    The dba secret is recreated each time the bastion comes up (generated name,
    so no recovery-window collision), so its stored value won't match the role
    until you run this once per session. The tunnel from step 2 must be up.
+
+   > This is a separate step (not folded into `make deploy`) on purpose: it
+   > needs a live DB connection over the tunnel, and the tunnel needs a bastion
+   > that only exists *after* the deploy finishes — so the sync is inherently a
+   > post-deploy action. It also has nothing to do on the common
+   > `ENABLE_BASTION=false` deploy, where no dba secret exists.
 4. Connect pgAdmin (or psql) to `localhost:5432` using the `dba` role. The
    secret has a generated name and exists only while the bastion is up, so
    resolve its value from the `DbaSecretArn` stack output:
