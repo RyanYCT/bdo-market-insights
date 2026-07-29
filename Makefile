@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy db-tunnel-up db-tunnel-down migrate migrate-lambda market-catalog track seed-catalog seed-tracked seed-data seed clean
+.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy db-tunnel-up db-tunnel-down dba-password migrate migrate-lambda market-catalog track seed-catalog seed-tracked seed-data seed clean
 
 STAGE ?= dev
 AWS_REGION ?= us-east-1
@@ -103,6 +103,18 @@ db-tunnel-up:
 
 db-tunnel-down:
 	@pkill -f "ec2-instance-connect ssh" && echo "Tunnel closed." || echo "No active tunnel."
+
+# Re-sync the dba role password to the current dba secret (ADR-0020). The dba
+# secret exists only while the bastion is up and gets a fresh password each
+# time, so run this once per bastion session (after make db-tunnel-up) to let
+# pgAdmin log in as dba. Requires an open tunnel + ENABLE_BASTION=true.
+# Kept separate from `make deploy` by necessity: it needs a live DB connection
+# over the tunnel, which needs a bastion that only exists after the deploy
+# finishes -- so it is inherently a post-deploy step (and a no-op on the common
+# ENABLE_BASTION=false deploy, where no dba secret exists).
+dba-password:
+	uv run python scripts/set_dba_password.py --stage $(STAGE) --region $(AWS_REGION) \
+		--port $(LOCAL_DB_PORT)
 
 # Requires an open tunnel (make db-tunnel-up) and DATABASE_URL pointing at
 # localhost:$(LOCAL_DB_PORT). See docs/runbook.md for the full flow.

@@ -109,7 +109,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the subsystem diagrams (E
 
 ## Design decisions
 
-- **Passwordless database access.** Every Lambda connects to Postgres using **IAM database authentication** — short-lived tokens, no secrets to rotate or leak. A separate `dba` role (Secrets Manager) exists only for human access. *(ADR-0008)*
+- **Passwordless database access.** Every Lambda connects to Postgres using **IAM database authentication** — short-lived tokens, no secrets to rotate or leak. A separate `dba` role has a Secrets Manager password, created only while the bastion is up (generated name, per-session sync) so it costs nothing when idle. *(ADR-0008, ADR-0020)*
 - **No-NAT private networking.** DB-touching Lambdas run in a VPC; a DynamoDB **Gateway Endpoint** gives in-VPC access with zero NAT cost. Human DBA access goes through an **EC2 Instance Connect Endpoint** + a `t4g.nano` bastion with **no public IP**. *(ADR-0006, ADR-0009)*
 - **Resilient ingestion.** The arsha.io client normalizes five polymorphic JSON shapes, caps URL length, auto-splits oversized ID batches, and bounds concurrency/rate; retries, tracing, and structured logging come from AWS Lambda Powertools rather than hand-rolled code *(ADR-0007)*.
 - **Idempotent, transactional writes.** `storeData` upserts `item`/`item_sid` and bulk-inserts snapshots in a single transaction, keyed on `(region, item_id, sid, snapshot_at)` — so a missed or re-run ETL execution is always safe. *(NFR-4)*

@@ -101,9 +101,14 @@ make db-tunnel-up STAGE=dev                 # leave running; use a second termin
 ```sh
 STAGE=dev
 
-# dba password (so 0002 creates the dba login role):
+# dba password (so 0002 creates the dba login role). The dba secret is created
+# only while the bastion is up and has a generated name, so resolve it from the
+# DbaSecretArn stack output rather than a fixed secret id:
+DBA_SECRET_ARN=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] \
+           | [?OutputKey=='DbaSecretArn'].OutputValue | [0]" --output text)
 export DBA_PASSWORD="$(aws secretsmanager get-secret-value \
-  --secret-id bdo-${STAGE}-dba-credentials \
+  --secret-id "$DBA_SECRET_ARN" \
   --query SecretString --output text \
   | python -c 'import json,sys; print(json.load(sys.stdin)["password"])')"
 
@@ -815,8 +820,32 @@ Instance Connect Endpoint (EICE), so you never SSH to it directly — the
 2. `make db-tunnel-up STAGE=<dev|prod>` — opens the EICE tunnel to RDS on
    `localhost:5432`. Leave it running; open a second terminal for the next
    steps. Ctrl-C (or `make db-tunnel-down`) closes it.
-3. Connect pgAdmin (or psql) to `localhost:5432` using the `dba` role.
-   Credentials are in the `bdo-<stage>-dba-credentials` Secrets Manager secret.
+3. Sync the `dba` role password to the current secret value:
+
+   ```sh
+   make dba-password STAGE=<dev|prod>
+   ```
+
+   The dba secret is recreated each time the bastion comes up (generated name,
+   so no recovery-window collision), so its stored value won't match the role
+   until you run this once per session. The tunnel from step 2 must be up.
+
+   > This is a separate step (not folded into `make deploy`) on purpose: it
+   > needs a live DB connection over the tunnel, and the tunnel needs a bastion
+   > that only exists *after* the deploy finishes — so the sync is inherently a
+   > post-deploy action. It also has nothing to do on the common
+   > `ENABLE_BASTION=false` deploy, where no dba secret exists.
+4. Connect pgAdmin (or psql) to `localhost:5432` using the `dba` role. The
+   secret has a generated name and exists only while the bastion is up, so
+   resolve its value from the `DbaSecretArn` stack output:
+
+   ```sh
+   DBA_SECRET_ARN=$(aws cloudformation describe-stacks \
+     --query "Stacks[?starts_with(StackName,'bdo-market-<dev|prod>')].Outputs[] \
+              | [?OutputKey=='DbaSecretArn'].OutputValue | [0]" --output text)
+   aws secretsmanager get-secret-value --secret-id "$DBA_SECRET_ARN" \
+     --query SecretString --output text
+   ```
 
 ## Market Insights: dev evaluation
 
@@ -908,8 +937,11 @@ remove any orphaned nested stacks" below). Know what goes with it:
   (`aws rds delete-db-snapshot`).
 - **The `bdo-<stage>-items` DynamoDB table is deleted** -- the tracked-items
   list is lost. Export it first if you need it.
-- The `bdo-<stage>-dba-credentials` secret is scheduled for deletion (default
-  recovery window); the RDS-managed master secret is removed with the DB.
+- The `dba` secret exists only if the bastion was up (generated name). If
+  present it is scheduled for deletion on its default recovery window; secrets
+  in a recovery window are not billed, and the generated name means a later
+  bastion bring-up won't collide with it. The RDS-managed master secret is
+  removed with the DB.
 - Lambda-created CloudWatch log groups can remain orphaned -- delete separately
   if desired. The shared SAM deploy bucket is not part of the stack and stays.
 - **The `bdo-<stage>-icons` S3 bucket's fate depends on stage** (ADR-0019):
@@ -1018,10 +1050,6 @@ for lg in $(aws logs describe-log-groups \
   --query 'logGroups[].logGroupName' --output text); do
   aws logs delete-log-group --log-group-name "$lg"
 done
-
-# The dba secret may sit in a 30-day deletion recovery window (fixed name).
-aws secretsmanager delete-secret --secret-id bdo-dev-dba-credentials \
-  --force-delete-without-recovery
 ```
 
 > Icons bucket: on **dev**, `IconsBucketJanitor` empties it and the (non-retaining)

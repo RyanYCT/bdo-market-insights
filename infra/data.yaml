@@ -29,6 +29,17 @@ Parameters:
     # Reserved for the deferred RDS Proxy resource (ADR-0002). Wired
     # through from the root template so the toggle exists; no Proxy
     # resource is created until traffic justifies the ~$15/month cost.
+  EnableBastion:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: >
+      When 'true' (a bastion/DBA session is up), create the dba-role Secrets
+      Manager secret for human pgAdmin access. Off by default so the secret --
+      and its ~$0.40/month cost -- exists only during a bastion session
+      (ADR-0020).
   PrivateSubnetA:
     Type: AWS::EC2::Subnet::Id
   PrivateSubnetB:
@@ -40,6 +51,7 @@ Parameters:
 
 Conditions:
   IsProd: !Equals [!Ref Stage, 'prod']
+  DeployBastion: !Equals [!Ref EnableBastion, 'true']
 
 Resources:
   # ──────────────────────────────────────────────
@@ -136,8 +148,12 @@ Resources:
   # ──────────────────────────────────────────────
   DbaSecret:
     Type: AWS::SecretsManager::Secret
+    # Created only while the bastion is up (ADR-0020): the dba secret backs human
+    # pgAdmin access, which requires the bastion. A generated (not fixed) name
+    # avoids the 30-day deletion-recovery-window name collision on re-enable;
+    # callers resolve it via the DbaSecretArn stack output, not a fixed name.
+    Condition: DeployBastion
     Properties:
-      Name: !Sub 'bdo-${Stage}-dba-credentials'
       Description: Credentials for the dba Postgres role
       GenerateSecretString:
         SecretStringTemplate: '{"username":"dba"}'
@@ -233,6 +249,7 @@ Outputs:
       Name: !Sub '${AWS::StackName}-DynamoDbTableArn'
 
   DbaSecretArn:
+    Condition: DeployBastion
     Value: !Ref DbaSecret
     Export:
       Name: !Sub '${AWS::StackName}-DbaSecretArn'
