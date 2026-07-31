@@ -113,10 +113,42 @@ def test_get_item_found(
     # Catalog fields (ADR-0018) are part of the documented response contract.
     assert body["grade"] == 4
     assert body["icon_status"] == "stored"
+    # icon_url is null unless a public delivery base is configured for the stage.
+    assert body["icon_url"] is None
     assert body["names"] == {}
     # Internal fields are omitted from the public contract.
     assert "model_id" not in body
     assert "cron_profile" not in body
+
+
+def test_get_item_icon_url_when_base_configured(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stored icon resolves to a public URL once ICON_BASE_URL is set."""
+    monkeypatch.setattr(mod, "ICON_BASE_URL", "https://icons.example.com")
+    monkeypatch.setattr(
+        mod.dynamo,
+        "get_item",
+        lambda item_id: Item(id=item_id, name="Deboreka Ring", icon_status="stored"),
+    )
+    resp = mod.handler(_event("GET", "/v1/items/12094"), lambda_context)
+    assert resp["statusCode"] == 200
+    assert json.loads(resp["body"])["icon_url"] == "https://icons.example.com/icons/12094.png"
+
+
+def test_get_item_icon_url_none_when_not_stored(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unmaterialized icon stays null even with a delivery base configured."""
+    monkeypatch.setattr(mod, "ICON_BASE_URL", "https://icons.example.com")
+    monkeypatch.setattr(
+        mod.dynamo,
+        "get_item",
+        lambda item_id: Item(id=item_id, name="Deboreka Ring", icon_status="unset"),
+    )
+    resp = mod.handler(_event("GET", "/v1/items/12094"), lambda_context)
+    assert resp["statusCode"] == 200
+    assert json.loads(resp["body"])["icon_url"] is None
 
 
 def test_get_item_404(
