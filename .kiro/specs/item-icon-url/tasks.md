@@ -13,8 +13,9 @@ half-built. Tests accompany the code change (repo convention).
 - [x] `ruff` + `mypy` + `pytest` + `bandit` + `sam validate --lint` green
 - [x] ADR-0021; `log.md` entry
 
-## Reserved (out of scope)
+## Delivered separately
 
 - Public **CloudFront-OAC distribution** in front of the private icons bucket
-  (the delivery origin `icon_url` points at). Until it lands and `IconBaseUrl`
-  is configured, `icon_url` is `null`. Tracked in `infra/icons.yaml`.
+  (the delivery origin `icon_url` points at) — **ADR-0023** / `infra/icons.yaml`.
+  The distribution's base URL is wired into the API automatically, so `icon_url`
+  resolves once deployed (custom hostname optional via `IconDomainName`).

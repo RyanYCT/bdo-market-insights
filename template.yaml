@@ -62,14 +62,14 @@ Parameters:
     Type: String
     Default: ''
     Description: Route 53 hosted zone ID for the parent domain (shared infra; ADR-0013).
-  IconBaseUrl:
+  IconDomainName:
     Type: String
     Default: ''
     Description: >
-      Public delivery base URL for self-hosted item icons (a CDN in front of the
-      icons bucket), e.g. https://icons.example.com. Empty leaves icon_url null
-      on the /v1/items API. Supplied per stage at deploy time; not stored in
-      committed config.
+      Custom hostname for the icons CDN (e.g. icons.example.com). Empty serves
+      icons on the CloudFront default domain. The icons stack's CloudFront base
+      URL is wired into the API automatically (icon_url), so no separate base
+      parameter is needed. Supplied per stage at deploy time; not committed.
   BedrockModelId:
     Type: String
     Default: 'us.amazon.nova-lite-v1:0'
@@ -195,7 +195,9 @@ Resources:
         LambdaRdsAuthRoleArn: !GetAtt DataStack.Outputs.LambdaRdsAuthRoleArn
         ApiDomainName: !Ref ApiDomainName
         HostedZoneId: !Ref HostedZoneId
-        IconBaseUrl: !Ref IconBaseUrl
+        # CloudFront base URL from the icons stack -> itemRegistry ICON_BASE_URL,
+        # so /v1/items icon_url resolves once deployed (ADR-0023).
+        IconBaseUrl: !GetAtt IconsStack.Outputs.IconBaseUrl
         EnableDemoKey: !Ref EnableDemoKey
     # Ordering after Network/Data/Etl is enforced by the !GetAtt *.Outputs
     # references above (incl. the shared CommonLayerArn); an explicit
@@ -224,6 +226,8 @@ Resources:
         CommonLayerArn: !GetAtt EtlStack.Outputs.CommonLayerArn
         DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
         IconSyncSchedule: !Ref IconSyncSchedule
+        IconDomainName: !Ref IconDomainName
+        HostedZoneId: !Ref HostedZoneId
 
   ObservabilityStack:
     Type: AWS::CloudFormation::Stack
