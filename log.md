@@ -1231,3 +1231,43 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 
 ### Deferred / open questions
 - None for delivery. (Real bid-ask spread remains parked — ADR-0022.)
+
+
+
+## 2026-07-31 — Plan automated environment convergence (deploy redesign)
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `docs/deploy-convergence`
+**Phase:** Post-launch — deploy design
+**Commits:** (this PR)
+
+> Design note for reshaping bring-up from a manual dependency chain into one
+> idempotent command. ADR-0024 + `.kiro/specs/deploy-convergence/`. Docs only.
+
+### Done
+- **ADR-0024** (Accepted, phased): `make deploy STAGE=<env>` converges an
+  environment idempotently. Config (domains/zone/toggles) in SSM resolved by
+  CloudFormation; migrations + role bootstrap run via the in-VPC migrator Lambda
+  behind a custom resource (master secret for bootstrap, IAM after); **no
+  standing bastion** (admin-query Lambda + on-demand ephemeral break-glass);
+  data bootstrap via an idempotent Step Functions auto-run once on first create;
+  deploy ends with a smoke test.
+- **Spec** `.kiro/specs/deploy-convergence/{requirements,design,tasks}.md` with
+  the convergence DAG and a 4-phase plan (P1 SSM config + remove bastion;
+  P2 auto-migrate; P3 bootstrap orchestrator; P4 thin `make deploy` + `verify`).
+
+### Decisions
+- Migrations run **in-deploy** via a custom resource (not a separate manual
+  step); long runs via a migrate Step Functions the CR waits on.
+- Data bootstrap **auto-runs once on first create** (catalog-empty guard) and is
+  re-runnable via `make bootstrap`; never re-backfills on routine deploys.
+- **No standing bastion**: admin-query Lambda for routine SQL; ephemeral access
+  only for true break-glass. Supersedes ADR-0009 and ADR-0020.
+- SSM config supersedes the gitignored `deploy.<stage>.env` approach (that PR is
+  to be closed unmerged).
+
+### Deferred / open questions
+- Aurora Serverless v2 + RDS Data API (would remove VPC DB connectivity) — noted
+  as a future option, not this effort.
+- Implementation is phased and not yet scheduled; this PR is design only.
