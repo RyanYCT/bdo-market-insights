@@ -1,11 +1,12 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  Item-icon materialization for bdo-market-insights: a private S3 bucket for
-  self-hosted icons and a daily Lambda that fetches icons from the Pearl Abyss
-  CDN for tracked items missing them (icon_status=unset), storing them in the
-  bucket. Not in a VPC -- needs the public internet (Pearl CDN), DynamoDB, and
-  S3 only.
+  Item-icon materialization + public delivery for bdo-market-insights: a private
+  S3 bucket for self-hosted icons, a daily Lambda that fetches icons from the
+  Pearl Abyss CDN for tracked items missing them (icon_status=unset), and a
+  CloudFront distribution (Origin Access Control) that serves the private bucket
+  publicly so the API's icon_url resolves (ADR-0023). Not in a VPC -- needs the
+  public internet (Pearl CDN), DynamoDB, and S3 only.
 
 Parameters:
   Stage:
@@ -28,6 +29,19 @@ Parameters:
       Only processes tracked items with icon_status=unset, so it is a no-op once
       every tracked item's icon is stored/missing; new tracked items get an icon
       by the next run.
+  IconDomainName:
+    Type: String
+    Default: ''
+    Description: >
+      Custom hostname for the icons CDN (e.g. icons.example.com). Empty uses the
+      CloudFront default *.cloudfront.net domain. Supplied per stage at deploy
+      time; not stored in committed config (ADR-0013 convention).
+  HostedZoneId:
+    Type: String
+    Default: ''
+    Description: >
+      Route 53 hosted zone ID for the parent domain (shared infra; ADR-0013).
+      Required when IconDomainName is set.
 
 Conditions:
   # See ADR-0019: prod keeps materialized icons across a stack delete (Retain);
@@ -35,6 +49,9 @@ Conditions:
   # unblocking a later fresh CREATE with the same fixed bucket name.
   IsProd: !Equals [!Ref Stage, 'prod']
   IsNotProd: !Not [!Equals [!Ref Stage, 'prod']]
+  # Custom domain is opt-in (ADR-0013): empty IconDomainName -> serve on the
+  # CloudFront default domain, no ACM cert / Route 53 record.
+  HasIconDomain: !Not [!Equals [!Ref IconDomainName, '']]
 
 Globals:
   Function:
@@ -53,7 +70,7 @@ Globals:
 
 Resources:
   # ──────────────────────────────────────────────
-  # Icons bucket — private; served later via CloudFront OAC (follow-up).
+  # Icons bucket — private; served publicly only through CloudFront OAC below.
   # ──────────────────────────────────────────────
   IconsBucket:
     Type: AWS::S3::Bucket
@@ -76,6 +93,99 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
+
+  # ──────────────────────────────────────────────
+  # Icons CDN — CloudFront + Origin Access Control over the private bucket
+  # (ADR-0023). The bucket stays fully private (block-public-access on); only
+  # this distribution can read it, via a SigV4-signed OAC request scoped by
+  # SourceArn in the bucket policy. Object keys are icons/<id>.png, so the API's
+  # icon_url = <IconBaseUrl>/icons/<id>.png resolves through here.
+  # ──────────────────────────────────────────────
+  IconsOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub 'bdo-${Stage}-icons-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  IconsDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub 'bdo-${Stage} item icons'
+        # NA + EU edges only — cheapest tier; icons are small and cache well.
+        PriceClass: PriceClass_100
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        Aliases: !If [HasIconDomain, [!Ref IconDomainName], !Ref 'AWS::NoValue']
+        ViewerCertificate: !If
+          - HasIconDomain
+          - AcmCertificateArn: !Ref IconsCertificate
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
+        Origins:
+          - Id: IconsBucketOrigin
+            DomainName: !GetAtt IconsBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt IconsOriginAccessControl.Id
+            # OAC (not the legacy OAI) -> empty OriginAccessIdentity.
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: IconsBucketOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          # AWS managed "CachingOptimized" policy (honours the bucket's
+          # Cache-Control: public, max-age=604800 on stored icons).
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+
+  # Grant read to only this distribution (OAC + SourceArn). Not a public policy
+  # (service principal, not "*"), so it coexists with block-public-access.
+  IconsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref IconsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontOACRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub 'arn:aws:s3:::bdo-${Stage}-icons/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${IconsDistribution}'
+
+  # Custom domain (opt-in). CloudFront requires the cert in us-east-1; this
+  # stack deploys there (samconfig), so an in-stack cert is valid.
+  IconsCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasIconDomain
+    Properties:
+      DomainName: !Ref IconDomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref IconDomainName
+          HostedZoneId: !Ref HostedZoneId
+
+  IconsDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasIconDomain
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref IconDomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt IconsDistribution.DomainName
+        # Fixed global CloudFront hosted-zone ID (all distributions).
+        HostedZoneId: Z2FDTNDATAQYW2
 
   # ──────────────────────────────────────────────
   # iconSync — daily materializer, not in VPC (Pearl CDN + DynamoDB + S3)
@@ -149,3 +259,18 @@ Outputs:
     Value: !GetAtt IconSyncFunction.Arn
     Export:
       Name: !Sub '${AWS::StackName}-IconSyncFunctionArn'
+
+  # Public delivery base for item icons; the API appends /icons/<id>.png.
+  # Custom domain when set, else the CloudFront default domain. Consumed by the
+  # API stack (itemRegistry ICON_BASE_URL), so icon_url resolves once deployed.
+  IconBaseUrl:
+    Description: Public base URL for item icons (append /icons/<id>.png).
+    Value: !If
+      - HasIconDomain
+      - !Sub 'https://${IconDomainName}'
+      - !Sub 'https://${IconsDistribution.DomainName}'
+
+  IconsDistributionId:
+    Value: !Ref IconsDistribution
+    Export:
+      Name: !Sub '${AWS::StackName}-IconsDistributionId'

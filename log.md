@@ -1193,3 +1193,41 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   gating it: the order book is a **per-item** call (vs the batched SubList poll),
   so the ingestion cadence/scope must be sized against the usage plan (ADR-0005)
   before building. No implementation scheduled.
+
+
+
+## 2026-07-31 — Serve item icons via CloudFront + OAC
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/icons-cdn`
+**Phase:** Post-launch — delivery infra
+**Commits:** (this PR)
+
+> Closes the loop on `icon_url` (ADR-0021): the private icons bucket now has a
+> public delivery path, so the field resolves instead of staying null. ADR-0023.
+
+### Done
+- **CloudFront + OAC** over the private `bdo-<stage>-icons` bucket
+  (`infra/icons.yaml`): OriginAccessControl (SigV4) + a bucket policy granting
+  `s3:GetObject` to `cloudfront.amazonaws.com` scoped by `SourceArn`; bucket
+  keeps block-public-access on. Managed `CachingOptimized` policy,
+  `redirect-to-https`, `PriceClass_100`, HTTP/2+3.
+- **Opt-in custom domain** (mirrors ADR-0013): `IconDomainName` empty → default
+  `*.cloudfront.net`; set → DNS-validated ACM cert (us-east-1) + Aliases +
+  Route 53 A-alias.
+- Stack **outputs `IconBaseUrl`** (custom domain or distribution domain);
+  `template.yaml` wires it into the API stack's `ICON_BASE_URL`, replacing the
+  manual `IconBaseUrl` parameter — so `icon_url` resolves automatically on
+  deploy.
+- Verified: `cfn-lint template.yaml infra/icons.yaml infra/api.yaml` clean. No
+  application code changed (ruff/mypy/pytest/OpenAPI unaffected).
+
+### Decisions
+- Bucket stays private; OAC + principal-scoped bucket policy (not public), so it
+  coexists with block-public-access (ADR-0023).
+- API stack now depends on the icons stack output (first deploy waits on the
+  distribution create ~15-20 min) — accepted for an occasional deploy.
+
+### Deferred / open questions
+- None for delivery. (Real bid-ask spread remains parked — ADR-0022.)
