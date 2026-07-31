@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from bdo_common.models import DailyRow, ItemSid, SnapshotRow
+from bdo_common.models import DailyRow, SnapshotRow
 
 
 def _event(path: str, *, query: dict[str, str] | None = None) -> dict[str, Any]:
@@ -45,17 +45,6 @@ def _snap(sid: int, price: int) -> SnapshotRow:
         total_trades=100,
         last_sold_price=price - 1,
         last_sold_at=datetime(2026, 3, 15, 4, tzinfo=UTC),
-    )
-
-
-def _item_sid(price_min: int, price_max: int) -> ItemSid:
-    return ItemSid(
-        region="tw",
-        item_id=12094,
-        sid=0,
-        max_enhance=5,
-        price_min=price_min,
-        price_max=price_max,
     )
 
 
@@ -145,9 +134,6 @@ def test_analysis_combines_pricing_and_analytics(
     monkeypatch.setattr(
         mod.DailyRepo, "get_daily_window", lambda conn, **kw: [_daily(i) for i in range(7)]
     )
-    monkeypatch.setattr(
-        mod.ItemSidRepo, "get", lambda conn, **kw: _item_sid(100_000_000, 102_300_000)
-    )
 
     resp = mod.handler(_event("/v1/market/items/12094/analysis"), lambda_context)
     assert resp["statusCode"] == 200
@@ -158,8 +144,6 @@ def test_analysis_combines_pricing_and_analytics(
     # Analytics computed (7 daily points >= MIN_POINTS).
     assert body["analytics"]["insufficient_data"] is False
     assert body["sid"] == 0  # default sid
-    # Spread from the item_sid band: (102.3M - 100M) / 100M * 100 = 2.3.
-    assert body["spread_pct"] == pytest.approx(2.3)
 
 
 def test_analysis_insufficient_daily_data(
@@ -171,13 +155,9 @@ def test_analysis_insufficient_daily_data(
     monkeypatch.setattr(
         mod.DailyRepo, "get_daily_window", lambda conn, **kw: [_daily(0), _daily(1)]
     )
-    # No item_sid reference row -> spread is unknown (null), not an error.
-    monkeypatch.setattr(mod.ItemSidRepo, "get", lambda conn, **kw: None)
     resp = mod.handler(_event("/v1/market/items/12094/analysis"), lambda_context)
     assert resp["statusCode"] == 200
-    body = json.loads(resp["body"])
-    assert body["analytics"]["insufficient_data"] is True
-    assert body["spread_pct"] is None
+    assert json.loads(resp["body"])["analytics"]["insufficient_data"] is True
 
 
 def test_snapshots_rejects_invalid_region(

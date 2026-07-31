@@ -1155,7 +1155,9 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 
 
 
-## 2026-07-31 — Expose bid-ask spread + public item icon URL
+
+
+## 2026-07-31 — Public item icon URL (spread withdrawn pre-merge)
 
 **Agent:** Kiro
 **Mode:** Vibe
@@ -1163,34 +1165,31 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 **Phase:** Post-launch — API read-model
 **Commits:** (this PR)
 
-> Two derived read-model fields from data already stored but not yet exposed.
-> Spec: `.kiro/specs/market-spread-and-icons/`; decision: ADR-0021.
+> Originally scoped as two derived fields (spread + icon URL). During review the
+> spread was found to rest on a wrong premise and was **withdrawn before merge**;
+> the icon URL shipped. The real spread is re-scoped to its own (unscheduled)
+> effort.
 
 ### Done
-- **Spread.** `analytics.spread_pct(price_min, price_max)` — canonical
-  `(price_max - price_min)/price_min * 100`, 1 dp, `None` on missing/degenerate
-  inputs. `ItemSidRepo.get` reads the `item_sid` band by primary key; the
-  `market_query` analysis handler adds a top-level `spread_pct` (one indexed
-  read on the warm connection, no new fan-out).
 - **Icon URL.** `icons.public_icon_url` builds `{base}/icons/<id>.png` gated on
   `icon_status == "stored"` + a configured base; `itemRegistry`'s `ItemResponse`
   gains `icon_url`, resolved from a new `ICON_BASE_URL` env. `IconBaseUrl`
   parameter (empty default) threaded `template.yaml → api.yaml → itemRegistry`,
-  mirroring the `ApiDomainName` opt-in.
-- Both fields additive/nullable. Unit tests for all four units + the two
-  handlers. Regenerated `infra/openapi.yaml` (typed `ItemResponse` changed).
-- Verified: `ruff`, `mypy`, `pytest -m "not integration"` (342+), `bandit`,
-  `sam validate --lint`.
+  mirroring the `ApiDomainName` opt-in. Additive/nullable; unit tests; regenerated
+  `infra/openapi.yaml`. Spec: `.kiro/specs/item-icon-url/`; ADR-0021.
 
-### Decisions
-- Spread computed server-side from the `item_sid` price band — one definition
-  (ADR-0021), consumers never re-derive. `null` when unknown, `0.0` only for a
-  genuinely tight band.
-- `icon_url` opt-in via a deploy-time base; the icons bucket stays private and a
-  CloudFront-OAC delivery distribution is a separate follow-up (already noted in
-  `infra/icons.yaml`). `icon_url` is `null` until that lands and a base is set.
+### Withdrawn
+- **`spread_pct` from `item_sid.price_min`/`price_max`.** Those fields are the
+  central market's **enforced price-limit band** (min/max permitted listing
+  price), not a live bid/ask — so `(price_max - price_min)/price_min` is the
+  width of the price cap, not a spread. Removed the field, helper
+  (`analytics.spread_pct`), `ItemSidRepo.get`, and their tests; corrected the
+  mislabeled `price_min`/`price_max` comments on the `Record`/`ItemSid` models.
 
-### Deferred / open questions
-- Public icons-bucket CDN (OAC distribution + `IconBaseUrl` wiring per stage).
-- Order-book best-bid/best-ask inputs for the spread (field already accommodates
-  them).
+### Deferred
+- **Real bid-ask spread from the order book** (`GetItemSellBuyInfo` /
+  `GetBiddingInfoList`: `{price, buyCount, sellCount}` → best bid/ask). Recorded
+  as ADR-0022 (*Proposed*) + `.kiro/specs/market-bid-ask-spread/`. Open question
+  gating it: the order book is a **per-item** call (vs the batched SubList poll),
+  so the ingestion cadence/scope must be sized against the usage plan (ADR-0005)
+  before building. No implementation scheduled.

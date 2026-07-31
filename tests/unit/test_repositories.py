@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from bdo_common.models import DailyRow, ItemSid, SnapshotRow
+from bdo_common.models import DailyRow, SnapshotRow
 from bdo_common.repositories import DailyRepo, ItemRepo, ItemSidRepo, SnapshotRepo
 
 
@@ -77,37 +77,6 @@ class TestItemSidRepo:
         assert "ON CONFLICT" in sql
         assert "%s" in sql
         assert params == ("tw", 11608, 2, 5, 100_000_000, 5_000_000_000)
-
-    def test_get_returns_model(self, mock_conn: MagicMock) -> None:
-        updated = datetime(2024, 5, 30, 8, 0, 0, tzinfo=UTC)
-        mock_result = MagicMock()
-        mock_result.fetchone.return_value = (
-            "tw",
-            11608,
-            2,
-            5,
-            100_000_000,
-            5_000_000_000,
-            updated,
-        )
-        mock_conn.execute.return_value = mock_result
-
-        row = ItemSidRepo.get(mock_conn, region="tw", item_id=11608, sid=2)
-        assert isinstance(row, ItemSid)
-        assert row.item_id == 11608
-        assert row.sid == 2
-        assert row.price_min == 100_000_000
-        assert row.price_max == 5_000_000_000
-        sql, params = mock_conn.execute.call_args[0]
-        assert "FROM item_sid" in sql
-        assert params == ("tw", 11608, 2)
-
-    def test_get_missing_returns_none(self, mock_conn: MagicMock) -> None:
-        mock_result = MagicMock()
-        mock_result.fetchone.return_value = None
-        mock_conn.execute.return_value = mock_result
-
-        assert ItemSidRepo.get(mock_conn, region="tw", item_id=1, sid=0) is None
 
 
 # ---------------------------------------------------------------------------

@@ -28,8 +28,11 @@ class Record(BaseModel):
     last_sold_price: int  # arsha "lastSoldPrice"
     last_sold_at: datetime  # arsha "lastSoldTime" (unix seconds)
     max_enhance: int  # arsha "maxEnhance"
-    price_min: int  # arsha "priceMin" (system bid floor)
-    price_max: int  # arsha "priceMax" (system ask ceiling)
+    # arsha "priceMin"/"priceMax": the central market's enforced price-limit band
+    # (the min/max price the item may be listed/pre-ordered at) -- a regulated
+    # range around the base price, NOT a live best-bid/best-ask.
+    price_min: int  # arsha "priceMin" (price-limit floor)
+    price_max: int  # arsha "priceMax" (price-limit ceiling)
 
 
 class CatalogEntry(BaseModel):
@@ -133,7 +136,11 @@ class Item(BaseModel):
 
 
 class ItemSid(BaseModel):
-    """Per-(region, item, sid) reference row."""
+    """Per-(region, item, sid) reference row.
+
+    ``price_min``/``price_max`` are the central market's enforced price-limit
+    band (the min/max listing price the game permits), not a live bid/ask.
+    """
 
     model_config = ConfigDict(frozen=True)
 

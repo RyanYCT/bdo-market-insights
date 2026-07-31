@@ -43,25 +43,6 @@ def daily_liquidity(volumes: Sequence[float]) -> float:
     return statistics.fmean(volumes) if volumes else 0.0
 
 
-def spread_pct(price_min: float | None, price_max: float | None) -> float | None:
-    """Bid-ask spread as a percentage of the bid floor, rounded to 1 decimal.
-
-        spread_pct = (price_max - price_min) / price_min * 100
-
-    ``price_min``/``price_max`` are the central-market system bid floor and ask
-    ceiling for an ``(item_id, sid)`` (the ``item_sid`` reference row). A wider
-    band means a less liquid market.
-
-    Returns ``None`` when the inputs are missing or degenerate (no floor, or a
-    non-positive floor), so a consumer renders "unknown" rather than a
-    misleading ``0.0``. A well-formed row with ``price_min == price_max`` yields
-    ``0.0`` (a genuinely tight market).
-    """
-    if price_min is None or price_max is None or price_min <= 0:
-        return None
-    return round((price_max - price_min) / price_min * 100, 1)
-
-
 def detect_anomaly(close_prices: Sequence[float]) -> dict[str, Any]:
     """Flag the latest close as anomalous via its z-score over the window.
 
