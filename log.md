@@ -1231,3 +1231,39 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 
 ### Deferred / open questions
 - None for delivery. (Real bid-ask spread remains parked — ADR-0022.)
+
+
+
+## 2026-07-31 — Per-stage deploy config (deploy.<stage>.env)
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/deploy-domain-config`
+**Phase:** Post-launch — deploy tooling
+**Commits:** (this PR)
+
+> Integrate custom-domain config into the deploy process so a full-state
+> `make deploy` can't drop it, and wire the icons CDN domain (ADR-0023) into
+> `make`. ADR-0024. Tooling/docs only.
+
+### Done
+- `Makefile`: `-include deploy.$(STAGE).env` (auto-source per-stage config);
+  added `ICON_DOMAIN_NAME` and `IconDomainName=` to `DEPLOY_PARAMS`; refreshed
+  the deploy comments.
+- `.gitignore`: ignore `deploy.*.env` (account-specific; never committed).
+- `deploy.env.example`: committed template (HOSTED_ZONE_ID, API_DOMAIN_NAME,
+  ICON_DOMAIN_NAME, ENABLE_DEMO_KEY).
+- `docs/runbook.md`: "Deployment notes" now documents the per-stage file as the
+  safe way to carry the custom domain on full-state deploys.
+- Verified with `make -n deploy`: empty by default (icons on the CloudFront
+  domain); picks up `deploy.<stage>.env`; CLI still overrides. `deploy.*.env`
+  ignored, `deploy.env.example` tracked.
+
+### Decisions
+- Persist per-stage domain/zone/toggle config in a gitignored
+  `deploy.<stage>.env` (ADR-0024) rather than committing to samconfig (public
+  repo) or relying on remembering CLI flags. Precedence: CLI > file > env >
+  default. CI keeps injecting from GitHub secrets (file absent in CI).
+
+### Deferred / open questions
+- None.

@@ -18,6 +18,10 @@ dist/
 .env
 .env.*
 
+# Per-stage deploy config (account-specific domains / hosted zone; never
+# committed). deploy.env.example is the committed template (not matched here).
+deploy.*.env
+
 # OS
 .DS_Store
 Thumbs.db

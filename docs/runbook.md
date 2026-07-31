@@ -409,7 +409,12 @@ Two things apply to every `make deploy` below:
 - **`make deploy` re-declares the full stack state.** Every invocation must pass
   the stage's persistent flags (`ENABLE_DEMO_KEY`, the custom-domain vars) or
   they are dropped — even when you are only toggling one option (e.g. the
-  bastion). CI passes them for prod on every tagged release.
+  bastion). To make that safe, put a stage's persistent config in a **gitignored
+  `deploy.<stage>.env`** (copy `deploy.env.example`): `make deploy STAGE=<stage>`
+  auto-sources it, so the custom domain (`API_DOMAIN_NAME`, `ICON_DOMAIN_NAME`,
+  `HOSTED_ZONE_ID`) rides along on every full-state deploy. Command-line vars
+  still override for one-offs. CI passes these from GitHub secrets/variables for
+  prod on every tagged release (the file is not present in CI).
 
 ### Dev deployment (manual)
 

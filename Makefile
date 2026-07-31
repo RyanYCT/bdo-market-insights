@@ -4,21 +4,28 @@ STAGE ?= dev
 AWS_REGION ?= us-east-1
 LOCAL_DB_PORT ?= 5432
 
+# Per-stage deploy config (custom domains, hosted zone, demo key) lives in a
+# gitignored deploy.<stage>.env, auto-sourced here. This keeps a full-state
+# `make deploy` from silently dropping the custom domain by forgetting to pass
+# it, and keeps account-specific hosts out of this (public) repo. Values set the
+# make variables below; the command line still overrides. See deploy.env.example.
+# Missing file is fine (`-include`): CI supplies these via the environment.
+-include deploy.$(STAGE).env
+
 # Full CloudFormation parameter set for `make deploy`. CloudFormation reverts
 # any *unspecified* parameter to its template default (not its previous value),
 # and `sam deploy --parameter-overrides` replaces the whole set rather than
 # merging -- so every deploy must declare the COMPLETE desired state. These
-# variables assemble it; override any on the command line or via the shell
-# environment. Export the (account-specific, never-committed) domain vars once
-# per shell so repeated deploys keep the custom domain:
-#   export API_DOMAIN_NAME=api.example.com HOSTED_ZONE_ID=Z123
+# variables assemble it; override any on the command line, via the shell
+# environment, or (preferred, per stage) in deploy.<stage>.env above.
 BDO_REGION ?= tw
 USE_RDS_PROXY ?= false
 ENABLE_BASTION ?= false
 ENABLE_DEMO_KEY ?= false
 API_DOMAIN_NAME ?=
+ICON_DOMAIN_NAME ?=
 HOSTED_ZONE_ID ?=
-DEPLOY_PARAMS := Stage=$(STAGE) BdoRegion=$(BDO_REGION) UseRdsProxy=$(USE_RDS_PROXY) EnableBastion=$(ENABLE_BASTION) EnableDemoKey=$(ENABLE_DEMO_KEY) ApiDomainName=$(API_DOMAIN_NAME) HostedZoneId=$(HOSTED_ZONE_ID)
+DEPLOY_PARAMS := Stage=$(STAGE) BdoRegion=$(BDO_REGION) UseRdsProxy=$(USE_RDS_PROXY) EnableBastion=$(ENABLE_BASTION) EnableDemoKey=$(ENABLE_DEMO_KEY) ApiDomainName=$(API_DOMAIN_NAME) IconDomainName=$(ICON_DOMAIN_NAME) HostedZoneId=$(HOSTED_ZONE_ID)
 
 # Built layer artifacts (CommonLayer is nested under EtlStack).
 LAYER_PYTHON := .aws-sam/build/EtlStack/CommonLayer/python
@@ -74,14 +81,15 @@ verify-layer:
 # source-only CommonLayer can never reach `sam deploy`. CI deploys prod the same
 # way, supplying the domain from GitHub Actions variables (see docs/runbook.md).
 #
-#   make deploy STAGE=dev
-#   make deploy STAGE=prod ENABLE_DEMO_KEY=true API_DOMAIN_NAME=api.example.com HOSTED_ZONE_ID=Z123
-#   make deploy STAGE=prod ENABLE_BASTION=true ENABLE_DEMO_KEY=true API_DOMAIN_NAME=... HOSTED_ZONE_ID=...
+#   make deploy STAGE=dev                     # dev: defaults (icons on the CloudFront domain)
+#   make deploy STAGE=prod                    # prod: reads deploy.prod.env (domains, demo key)
+#   make deploy STAGE=prod ENABLE_BASTION=true  # one-off toggle on top of deploy.prod.env
 #
+# Persistent per-stage config (custom domains, hosted zone, demo key) belongs in
+# deploy.<stage>.env (gitignored), so the full-state deploy always carries it.
 # The bastion is a transient toggle (bring it up for a DBA session, then deploy
-# again with ENABLE_BASTION=false). Because the whole state is declared each
-# time, keep the persistent flags (demo key, domain) in the command -- exporting
-# the domain vars once per shell makes that a non-issue.
+# again with ENABLE_BASTION=false); pass one-offs on the command line, which
+# override the file.
 deploy: build
 	sam deploy --config-env $(STAGE) --parameter-overrides "$(DEPLOY_PARAMS)"
 
