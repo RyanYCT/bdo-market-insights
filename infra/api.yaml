@@ -58,6 +58,13 @@ Parameters:
       Route 53 hosted zone ID for the parent domain (e.g. example.com). The zone
       is shared infrastructure owned elsewhere; this stack only adds its own
       cert/record, never the zone (ADR-0013). Required when ApiDomainName is set.
+  IconBaseUrl:
+    Type: String
+    Default: ''
+    Description: >
+      Public delivery base URL for self-hosted item icons (CDN in front of the
+      icons bucket). Empty leaves icon_url null on /v1/items. Supplied per stage
+      at deploy time; kept out of the committed config.
   EnableDemoKey:
     Type: String
     Default: 'false'
@@ -217,6 +224,8 @@ Resources:
       Environment:
         Variables:
           DYNAMODB_TABLE: !Ref DynamoDbTableName
+          # Public delivery base for item icons; empty -> icon_url stays null.
+          ICON_BASE_URL: !Ref IconBaseUrl
           # ID of the public demo key (empty unless EnableDemoKey=true). When
           # set, itemRegistry rejects writes made with this key id (read-only).
           DEMO_API_KEY_ID: !If [HasDemoKey, !Ref DemoApiKey, '']

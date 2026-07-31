@@ -103,3 +103,30 @@ def test_market_analytics_uses_only_trailing_window() -> None:
 
 def statistics_mean_last_14() -> float:
     return sum(range(6, 20)) / 14  # closes[-14:] == 6..19
+
+
+# ---------------------------------------------------------------------------
+# spread_pct
+# ---------------------------------------------------------------------------
+
+
+def test_spread_pct_basic() -> None:
+    assert analytics.spread_pct(100, 102) == pytest.approx(2.0)
+
+
+def test_spread_pct_rounds_to_one_decimal() -> None:
+    assert analytics.spread_pct(1_000_000, 1_023_400) == pytest.approx(2.3)
+
+
+def test_spread_pct_equal_band_is_zero() -> None:
+    assert analytics.spread_pct(500, 500) == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize(
+    ("price_min", "price_max"),
+    [(None, 100), (100, None), (0, 100), (-5, 100)],
+)
+def test_spread_pct_missing_or_degenerate_is_none(
+    price_min: float | None, price_max: float | None
+) -> None:
+    assert analytics.spread_pct(price_min, price_max) is None

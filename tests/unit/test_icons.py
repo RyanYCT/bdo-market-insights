@@ -101,3 +101,28 @@ class TestSyncIcons:
             assert s3.get_object(Bucket="test-icons", Key="icons/1.png")["Body"].read() == b"PNG1"
             with pytest.raises(ClientError):
                 s3.get_object(Bucket="test-icons", Key="icons/2.png")
+
+
+class TestPublicIconUrl:
+    """public_icon_url gates on icon_status + a configured delivery base."""
+
+    def test_stored_with_base_returns_url(self) -> None:
+        assert (
+            icons.public_icon_url(12094, icon_status="stored", base="https://icons.example.com")
+            == "https://icons.example.com/icons/12094.png"
+        )
+
+    def test_trailing_slash_stripped(self) -> None:
+        assert (
+            icons.public_icon_url(1, icon_status="stored", base="https://cdn.example.com/")
+            == "https://cdn.example.com/icons/1.png"
+        )
+
+    @pytest.mark.parametrize("status", ["unset", "missing"])
+    def test_not_stored_returns_none(self, status: str) -> None:
+        assert (
+            icons.public_icon_url(1, icon_status=status, base="https://icons.example.com") is None
+        )
+
+    def test_no_base_returns_none(self) -> None:
+        assert icons.public_icon_url(1, icon_status="stored", base="") is None

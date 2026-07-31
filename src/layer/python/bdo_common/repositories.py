@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
-from bdo_common.models import DailyRow, SnapshotRow
+from bdo_common.models import DailyRow, ItemSid, SnapshotRow
 
 if TYPE_CHECKING:
     import psycopg
@@ -67,6 +67,33 @@ class ItemSidRepo:
                 updated_at = NOW()
         """
         conn.execute(sql, (region, item_id, sid, max_enhance, price_min, price_max))
+
+    @staticmethod
+    def get(
+        conn: psycopg.Connection[tuple[Any, ...]],
+        *,
+        region: str,
+        item_id: int,
+        sid: int,
+    ) -> ItemSid | None:
+        """Fetch one ``item_sid`` reference row, or ``None`` if absent."""
+        sql = """
+            SELECT region, item_id, sid, max_enhance, price_min, price_max, updated_at
+            FROM item_sid
+            WHERE region = %s AND item_id = %s AND sid = %s
+        """
+        row = conn.execute(sql, (region, item_id, sid)).fetchone()
+        if row is None:
+            return None
+        return ItemSid(
+            region=row[0],
+            item_id=row[1],
+            sid=row[2],
+            max_enhance=row[3],
+            price_min=row[4],
+            price_max=row[5],
+            updated_at=row[6],
+        )
 
 
 class SnapshotRepo:

@@ -33,7 +33,7 @@ from bdo_common import analytics, db, pricing
 from bdo_common.insights.models import Period
 from bdo_common.insights.repositories import SummaryRepo
 from bdo_common.models import SnapshotRow
-from bdo_common.repositories import DailyRepo, SnapshotRepo
+from bdo_common.repositories import DailyRepo, ItemSidRepo, SnapshotRepo
 
 logger = Logger()
 tracer = Tracer()
@@ -234,7 +234,7 @@ def get_analysis(
         ),
     ] = analytics.WINDOW_DAYS,
 ) -> dict[str, Any]:
-    """FR-15: per-tier expected enhance cost + volatility/liquidity/anomaly."""
+    """FR-15: per-tier expected enhance cost + volatility/liquidity/anomaly + spread."""
     sid_val = sid if sid is not None else 0
 
     with _reading() as conn:
@@ -244,6 +244,7 @@ def get_analysis(
         window = DailyRepo.get_daily_window(
             conn, region=region, item_id=item_id, sid=sid_val, window_days=window_days
         )
+        item_sid = ItemSidRepo.get(conn, region=region, item_id=item_id, sid=sid_val)
 
     prices = _latest_price_by_sid(ladder_rows)
     enhancement = (
@@ -261,11 +262,19 @@ def get_analysis(
     if not market.get("insufficient_data") and market["anomaly"]["is_anomalous"]:
         metrics.add_metric(name="AnomaliesDetected", unit=MetricUnit.Count, value=1)
 
+    # Current bid-ask spread from the item_sid price band (None when there is no
+    # reference row or the floor is degenerate).
+    spread = analytics.spread_pct(
+        item_sid.price_min if item_sid else None,
+        item_sid.price_max if item_sid else None,
+    )
+
     return {
         "item_id": item_id,
         "region": region,
         "sid": sid_val,
         "window_days": window_days,
+        "spread_pct": spread,
         "enhancement": enhancement,
         "analytics": market,
     }

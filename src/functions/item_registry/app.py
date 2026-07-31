@@ -31,7 +31,14 @@ from pydantic import BaseModel, Field
 from bdo_common import dynamo
 from bdo_common.arsha_client import ArshaClient
 from bdo_common.config import get_settings
+from bdo_common.icons import public_icon_url
 from bdo_common.models import Item
+
+#: Public delivery base for self-hosted item icons (a CDN in front of the icons
+#: bucket). Empty unless configured for the stage, in which case ``icon_url`` is
+#: ``None`` for every item (the icon bytes exist in a private bucket but are not
+#: publicly served yet).
+ICON_BASE_URL = os.environ.get("ICON_BASE_URL", "")
 
 logger = Logger()
 tracer = Tracer()
@@ -80,6 +87,9 @@ class ItemResponse(BaseModel):
     sub_category: str | None = None
     tracked: bool = True
     icon_status: Literal["unset", "stored", "missing"] = "unset"
+    # Public icon URL when the icon is materialized and a delivery base is
+    # configured; ``None`` otherwise (see ``icon_status`` for why).
+    icon_url: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -96,6 +106,7 @@ class ItemResponse(BaseModel):
             sub_category=item.sub_category,
             tracked=item.tracked,
             icon_status=item.icon_status,
+            icon_url=public_icon_url(item.id, icon_status=item.icon_status, base=ICON_BASE_URL),
             created_at=item.created_at,
             updated_at=item.updated_at,
         )

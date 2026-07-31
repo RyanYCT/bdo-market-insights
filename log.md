@@ -1152,3 +1152,45 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 
 ### Deferred / open questions
 - None.
+
+
+
+## 2026-07-31 — Expose bid-ask spread + public item icon URL
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/market-spread-and-icons`
+**Phase:** Post-launch — API read-model
+**Commits:** (this PR)
+
+> Two derived read-model fields from data already stored but not yet exposed.
+> Spec: `.kiro/specs/market-spread-and-icons/`; decision: ADR-0021.
+
+### Done
+- **Spread.** `analytics.spread_pct(price_min, price_max)` — canonical
+  `(price_max - price_min)/price_min * 100`, 1 dp, `None` on missing/degenerate
+  inputs. `ItemSidRepo.get` reads the `item_sid` band by primary key; the
+  `market_query` analysis handler adds a top-level `spread_pct` (one indexed
+  read on the warm connection, no new fan-out).
+- **Icon URL.** `icons.public_icon_url` builds `{base}/icons/<id>.png` gated on
+  `icon_status == "stored"` + a configured base; `itemRegistry`'s `ItemResponse`
+  gains `icon_url`, resolved from a new `ICON_BASE_URL` env. `IconBaseUrl`
+  parameter (empty default) threaded `template.yaml → api.yaml → itemRegistry`,
+  mirroring the `ApiDomainName` opt-in.
+- Both fields additive/nullable. Unit tests for all four units + the two
+  handlers. Regenerated `infra/openapi.yaml` (typed `ItemResponse` changed).
+- Verified: `ruff`, `mypy`, `pytest -m "not integration"` (342+), `bandit`,
+  `sam validate --lint`.
+
+### Decisions
+- Spread computed server-side from the `item_sid` price band — one definition
+  (ADR-0021), consumers never re-derive. `null` when unknown, `0.0` only for a
+  genuinely tight band.
+- `icon_url` opt-in via a deploy-time base; the icons bucket stays private and a
+  CloudFront-OAC delivery distribution is a separate follow-up (already noted in
+  `infra/icons.yaml`). `icon_url` is `null` until that lands and a base is set.
+
+### Deferred / open questions
+- Public icons-bucket CDN (OAC distribution + `IconBaseUrl` wiring per stage).
+- Order-book best-bid/best-ask inputs for the spread (field already accommodates
+  them).

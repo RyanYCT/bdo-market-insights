@@ -51,6 +51,24 @@ def build_icon_url(item_id: int, *, region: str, base: str = ICON_SOURCE_BASE) -
     return f"{base.rstrip('/')}/{region.upper()}/TradeMarket/Common/img/BDO/item/{item_id}.png"
 
 
+def public_icon_url(item_id: int, *, icon_status: str, base: str) -> str | None:
+    """Public URL for a self-hosted item icon, or ``None`` when unavailable.
+
+    Returns ``{base}/{ICON_KEY_PREFIX}{item_id}.png`` — the object key the
+    materializer writes into the icons bucket, served through the configured
+    delivery ``base`` (a CDN in front of the bucket) — but only when the icon has
+    actually been ``stored`` and a ``base`` is configured. Otherwise ``None``:
+    the icon is not yet materialized (``unset``), does not exist (``missing``),
+    or no public delivery base is configured for this stage.
+
+    The URL is deterministic and stable for a given ``base`` + ``item_id`` so
+    clients can cache it.
+    """
+    if icon_status != "stored" or not base:
+        return None
+    return f"{base.rstrip('/')}/{ICON_KEY_PREFIX}{item_id}.png"
+
+
 def fetch_icon(item_id: int, *, region: str, base: str = ICON_SOURCE_BASE) -> bytes | None:
     """Fetch an icon PNG, or ``None`` when the CDN reports it does not exist.
 

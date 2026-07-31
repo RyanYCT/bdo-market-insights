@@ -62,6 +62,14 @@ Parameters:
     Type: String
     Default: ''
     Description: Route 53 hosted zone ID for the parent domain (shared infra; ADR-0013).
+  IconBaseUrl:
+    Type: String
+    Default: ''
+    Description: >
+      Public delivery base URL for self-hosted item icons (a CDN in front of the
+      icons bucket), e.g. https://icons.example.com. Empty leaves icon_url null
+      on the /v1/items API. Supplied per stage at deploy time; not stored in
+      committed config.
   BedrockModelId:
     Type: String
     Default: 'us.amazon.nova-lite-v1:0'
@@ -187,6 +195,7 @@ Resources:
         LambdaRdsAuthRoleArn: !GetAtt DataStack.Outputs.LambdaRdsAuthRoleArn
         ApiDomainName: !Ref ApiDomainName
         HostedZoneId: !Ref HostedZoneId
+        IconBaseUrl: !Ref IconBaseUrl
         EnableDemoKey: !Ref EnableDemoKey
     # Ordering after Network/Data/Etl is enforced by the !GetAtt *.Outputs
     # references above (incl. the shared CommonLayerArn); an explicit

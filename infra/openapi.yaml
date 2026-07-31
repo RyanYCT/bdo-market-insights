@@ -98,6 +98,11 @@ components:
           - missing
           title: Icon Status
           type: string
+        icon_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Icon Url
         id:
           title: Id
           type: integer
