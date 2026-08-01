@@ -43,6 +43,22 @@ Parameters:
       - 'true'
       - 'false'
     Description: Deploy t4g.nano bastion for DBA access via EICE SSH tunnel
+  AutoMigrate:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: >
+      Run `alembic upgrade head` automatically on deploy via a custom resource
+      (ADR-0025). Set 'false' only for a new environment's first deploy, before
+      `make db-bootstrap` has created the DB roles.
+  MigrationsFingerprint:
+    Type: String
+    Default: unset
+    Description: >
+      Content hash of migrations/versions, supplied by `make deploy`; a change
+      is what triggers the auto-migrate custom resource to re-run (ADR-0025).
   # These four are resolved from SSM Parameter Store at deploy (ADR-0024): the
   # value passed in is an SSM key path, CloudFormation substitutes the stored
   # value, and that value is passed down to the child stacks. Real hosts live in
@@ -159,6 +175,8 @@ Resources:
         RdsPort: !GetAtt DataStack.Outputs.RdsPort
         LambdaRdsAuthRoleArn: !GetAtt DataStack.Outputs.LambdaRdsAuthRoleArn
         LambdaMigratorRoleArn: !GetAtt DataStack.Outputs.LambdaMigratorRoleArn
+        AutoMigrate: !Ref AutoMigrate
+        MigrationsFingerprint: !Ref MigrationsFingerprint
     # Ordering after Network/Data is enforced by the !GetAtt *.Outputs
     # references above; an explicit DependsOn would be redundant (W3005).
 

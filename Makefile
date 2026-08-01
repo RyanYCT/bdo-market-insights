@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy seed-config db-tunnel-up db-tunnel-down dba-password migrate migrate-lambda market-catalog track seed-catalog seed-tracked seed-data seed clean
+.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy seed-config db-tunnel-up db-tunnel-down dba-password db-bootstrap migrate migrate-lambda market-catalog track seed-catalog seed-tracked seed-data seed clean
 
 STAGE ?= dev
 AWS_REGION ?= us-east-1
@@ -12,7 +12,15 @@ LOCAL_DB_PORT ?= 5432
 BDO_REGION ?= tw
 USE_RDS_PROXY ?= false
 ENABLE_BASTION ?= false
-DEPLOY_PARAMS := Stage=$(STAGE) BdoRegion=$(BDO_REGION) UseRdsProxy=$(USE_RDS_PROXY) EnableBastion=$(ENABLE_BASTION) EnableDemoKey=/bdo-market-insights/$(STAGE)/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/$(STAGE)/domain/api-domain-name IconDomainName=/bdo-market-insights/$(STAGE)/domain/icon-domain-name HostedZoneId=/bdo-market-insights/$(STAGE)/domain/hosted-zone-id
+AUTO_MIGRATE ?= true
+
+# Content hash of the migration set. Passed to CloudFormation as
+# MigrationsFingerprint; when it changes, the auto-migrate custom resource
+# re-runs `alembic upgrade head` on deploy (ADR-0025). A no-op deploy (same
+# migrations) leaves it unchanged, so the migrator is not re-invoked.
+MIGRATIONS_FINGERPRINT := $(shell find migrations/versions -type f -name '*.py' -exec sha256sum {} \; | sort | sha256sum | cut -c1-32)
+
+DEPLOY_PARAMS := Stage=$(STAGE) BdoRegion=$(BDO_REGION) UseRdsProxy=$(USE_RDS_PROXY) EnableBastion=$(ENABLE_BASTION) AutoMigrate=$(AUTO_MIGRATE) MigrationsFingerprint=$(MIGRATIONS_FINGERPRINT) EnableDemoKey=/bdo-market-insights/$(STAGE)/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/$(STAGE)/domain/api-domain-name IconDomainName=/bdo-market-insights/$(STAGE)/domain/icon-domain-name HostedZoneId=/bdo-market-insights/$(STAGE)/domain/hosted-zone-id
 
 # Built layer artifacts (CommonLayer is nested under EtlStack).
 LAYER_PYTHON := .aws-sam/build/EtlStack/CommonLayer/python
@@ -141,14 +149,23 @@ migrate:
 
 # Routine schema changes: invoke the in-VPC migrator Lambda (runs
 # `alembic upgrade head` from inside the VPC via IAM auth). No tunnel needed.
-# The one-time role bootstrap (0001-0003) still uses `make migrate` via the
-# bastion as the master user -- see docs/runbook.md.
+# Normally unnecessary -- the auto-migrate custom resource runs this on deploy
+# (ADR-0025); use it to force a routine migration without a full deploy.
 migrate-lambda:
 	@aws lambda invoke --region $(AWS_REGION) \
 		--function-name bdo-$(STAGE)-migrator \
 		--cli-binary-format raw-in-base64-out --payload '{}' \
 		/tmp/bdo-$(STAGE)-migrate.json >/dev/null && \
 		cat /tmp/bdo-$(STAGE)-migrate.json && echo
+
+# One-time per environment: the privileged role bootstrap (migrations 0001-0003
+# -- schema + cluster roles) that the IAM-authenticated migrator role cannot run
+# itself. Reads the RDS-managed master credential locally and invokes the
+# migrator in bootstrap mode; no bastion or tunnel (ADR-0025). Run once, after
+# the first `make deploy STAGE=<env> AUTO_MIGRATE=false`, then deploy normally so
+# the auto-migrate custom resource applies routine migrations (0004+).
+db-bootstrap:
+	uv run python scripts/db_bootstrap.py --stage $(STAGE) --region $(AWS_REGION)
 
 # Regenerate the offline market snapshot (scripts/data/full_items.json) by
 # enumerating the arsha.io market taxonomy. This is the ONLY step that calls
