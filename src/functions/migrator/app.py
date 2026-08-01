@@ -57,6 +57,30 @@ _MIGRATION_LOCK_KEY = zlib.crc32(b"bdo-market-insights:migrations")
 # owns and evolves the schema.
 _BOOTSTRAP_TARGET = "0003"
 
+# Idempotent RDS IAM-auth enrollment for the login roles, run as the master
+# during bootstrap. Migrations 0002/0003 grant `rds_iam` when they first create
+# the roles, but an environment bootstrapped before those grants existed (or
+# whose grant was lost) has roles that RDS then treats as password-auth,
+# rejecting the IAM token with "password authentication failed". Re-applying the
+# grant here every bootstrap makes enrollment a self-healing invariant,
+# independent of the Alembic version pointer. Guarded so it is a no-op on a fresh
+# database where the roles do not exist yet (the migrations create them). A plain
+# GRANT of `rds_iam` TO the role does not make the master a member of anything,
+# so it does not re-introduce the PG16 transitive-membership issue that 0002/0003
+# guard against.
+_ENSURE_IAM_ENROLLMENT_SQL = """
+DO $$
+BEGIN
+    IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'lambda_rds_user') THEN
+        EXECUTE 'GRANT rds_iam TO lambda_rds_user';
+    END IF;
+    IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'lambda_migrator') THEN
+        EXECUTE 'GRANT rds_iam TO lambda_migrator';
+    END IF;
+END
+$$;
+"""
+
 
 def _iam_auth_token(host: str, port: int, user: str, region: str) -> str:
     """Generate an RDS IAM auth token (signed locally; makes no API call)."""
@@ -108,6 +132,27 @@ def _master_database_url(username: str, password: str) -> str:
 
     settings = get_settings()
     return _build_url(username, password, settings.db_host, settings.db_port, settings.db_name)
+
+
+def _ensure_iam_enrollment(master_url: str) -> None:
+    """Idempotently (re)grant ``rds_iam`` to the login roles, as the master.
+
+    Self-heals an environment whose ``lambda_migrator`` / ``lambda_rds_user`` role
+    is not enrolled in RDS IAM auth (so IAM-token connections fail with "password
+    authentication failed"). Safe to run every bootstrap and a no-op on a fresh
+    database (the roles are created by the migrations).
+    """
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.pool import NullPool
+
+    engine = create_engine(master_url, poolclass=NullPool)
+    try:
+        with engine.connect() as raw_conn:
+            conn = raw_conn.execution_options(isolation_level="AUTOCOMMIT")
+            logger.info("Ensuring RDS IAM enrollment for login roles")
+            conn.execute(text(_ENSURE_IAM_ENROLLMENT_SQL))
+    finally:
+        engine.dispose()
 
 
 def _run_upgrade(database_url: str, target: str) -> str | None:
@@ -171,7 +216,12 @@ def _run_bootstrap(event: dict[str, Any]) -> dict[str, Any]:
     if dba_password:
         os.environ["DBA_PASSWORD"] = dba_password
 
-    head = _run_upgrade(_master_database_url(username, password), target)
+    master_url = _master_database_url(username, password)
+    # Self-heal IAM-auth enrollment before/regardless of the schema upgrade, so a
+    # pre-existing environment whose role lost its rds_iam grant is repaired even
+    # when Alembic is already past the bootstrap boundary.
+    _ensure_iam_enrollment(master_url)
+    head = _run_upgrade(master_url, target)
     return {"status": "ok", "mode": "bootstrap", "head": head}
 
 

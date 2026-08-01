@@ -50,7 +50,11 @@ It reads the RDS-managed master secret locally and invokes the migrator in
 *bootstrap* mode, passing the master credentials in the one-time invocation
 payload. The migrator connects as the master and applies `0001`-`0003`. The
 master credential never appears in a committed file and the migrator needs no
-Secrets Manager access from inside the VPC. (Considered and rejected: running the
+Secrets Manager access from inside the VPC. Bootstrap also **idempotently
+re-grants `rds_iam`** to the login roles as a self-healing invariant, so an
+environment whose role lost (or never had) its IAM enrollment is repaired even
+when Alembic is already past the bootstrap boundary — otherwise the routine
+migrator connection fails with "password authentication failed". (Considered and rejected: running the
 full bootstrap on every deploy — keeps master on the hot path; a standing Secrets
 Manager interface endpoint — ~$8/month for a once-per-environment need.)
 

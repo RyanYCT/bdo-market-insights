@@ -233,6 +233,9 @@ def test_bootstrap_mode_uses_master_credentials(
     # Bootstrap stops at the role/schema boundary, not head.
     assert stubbed["upgrade_calls"] and stubbed["upgrade_calls"][0][1] == "0003"
     _assert_advisory_lock_taken(stubbed["sql"])
+    # Self-heals RDS IAM enrollment (idempotent re-grant) as part of bootstrap.
+    joined_sql = " ".join(sql for sql, _ in stubbed["sql"])
+    assert "rds_iam" in joined_sql and "lambda_migrator" in joined_sql
     # No IAM token requested; connects as the master with the supplied password.
     assert stubbed["token_kwargs"] == {}
     url = make_url(os.environ["DATABASE_URL"])
