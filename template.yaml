@@ -43,33 +43,35 @@ Parameters:
       - 'true'
       - 'false'
     Description: Deploy t4g.nano bastion for DBA access via EICE SSH tunnel
+  # These four are resolved from SSM Parameter Store at deploy (ADR-0024): the
+  # value passed in is an SSM key path, CloudFormation substitutes the stored
+  # value, and that value is passed down to the child stacks. Real hosts live in
+  # SSM (see `make seed-config`), never in committed config; "none" is the
+  # sentinel for "no custom domain". Seed the keys once per stage before deploy.
   EnableDemoKey:
-    Type: String
-    Default: 'false'
-    AllowedValues:
-      - 'true'
-      - 'false'
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /bdo/dev/enable-demo-key
     Description: >
-      Publish a public read-only demo API key (tight usage plan; writes
-      rejected by itemRegistry) for "try the API" links. Off by default.
+      SSM key holding "true"/"false" — publish a public read-only demo API key
+      (tight usage plan; writes rejected by itemRegistry). Resolved at deploy.
   ApiDomainName:
-    Type: String
-    Default: ''
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /bdo/dev/api-domain-name
     Description: >
-      Custom API hostname (e.g. api.example.com). Empty disables the custom
-      domain. Supplied per stage at deploy time; not stored in committed config.
+      SSM key holding the custom API hostname, or "none" to disable (ADR-0013).
+      Resolved from SSM at deploy.
   HostedZoneId:
-    Type: String
-    Default: ''
-    Description: Route 53 hosted zone ID for the parent domain (shared infra; ADR-0013).
-  IconDomainName:
-    Type: String
-    Default: ''
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /bdo/shared/route53/hosted-zone-id
     Description: >
-      Custom hostname for the icons CDN (e.g. icons.example.com). Empty serves
-      icons on the CloudFront default domain. The icons stack's CloudFront base
-      URL is wired into the API automatically (icon_url), so no separate base
-      parameter is needed. Supplied per stage at deploy time; not committed.
+      SSM key holding the shared Route 53 hosted zone id (or "none"). Resolved
+      from SSM at deploy.
+  IconDomainName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /bdo/dev/icon-domain-name
+    Description: >
+      SSM key holding the custom icons-CDN hostname, or "none" for the default
+      CloudFront domain. Resolved from SSM at deploy.
   BedrockModelId:
     Type: String
     Default: 'us.amazon.nova-lite-v1:0'

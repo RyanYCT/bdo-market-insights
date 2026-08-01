@@ -46,14 +46,14 @@ Parameters:
     Description: Execution role for in-VPC Lambdas (VPC + X-Ray + rds-db:connect)
   ApiDomainName:
     Type: String
-    Default: ''
+    Default: 'none'
     Description: >
       Custom API hostname, e.g. api.example.com (prod) or api.dev.example.com
-      (dev). Empty disables the custom domain (ADR-0013). Supplied per stage at
-      deploy time; kept out of the committed config.
+      (dev). "none" disables the custom domain (ADR-0013). Resolved from SSM by
+      the parent (ADR-0024); kept out of the committed config.
   HostedZoneId:
     Type: String
-    Default: ''
+    Default: 'none'
     Description: >
       Route 53 hosted zone ID for the parent domain (e.g. example.com). The zone
       is shared infrastructure owned elsewhere; this stack only adds its own
@@ -76,8 +76,9 @@ Parameters:
       default; enable on the stage you want to expose.
 
 Conditions:
-  # Custom domain is opt-in: only built when a hostname is supplied.
-  HasCustomDomain: !Not [!Equals [!Ref ApiDomainName, '']]
+  # Custom domain is opt-in: only built when a hostname is supplied ("none"
+  # is the SSM sentinel for disabled — ADR-0024).
+  HasCustomDomain: !Not [!Equals [!Ref ApiDomainName, 'none']]
   # Public demo key is opt-in: only built when explicitly enabled.
   HasDemoKey: !Equals [!Ref EnableDemoKey, 'true']
 

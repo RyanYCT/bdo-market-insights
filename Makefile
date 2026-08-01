@@ -1,24 +1,18 @@
-.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy db-tunnel-up db-tunnel-down dba-password migrate migrate-lambda market-catalog track seed-catalog seed-tracked seed-data seed clean
+.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy seed-config db-tunnel-up db-tunnel-down dba-password migrate migrate-lambda market-catalog track seed-catalog seed-tracked seed-data seed clean
 
 STAGE ?= dev
 AWS_REGION ?= us-east-1
 LOCAL_DB_PORT ?= 5432
 
-# Full CloudFormation parameter set for `make deploy`. CloudFormation reverts
-# any *unspecified* parameter to its template default (not its previous value),
-# and `sam deploy --parameter-overrides` replaces the whole set rather than
-# merging -- so every deploy must declare the COMPLETE desired state. These
-# variables assemble it; override any on the command line or via the shell
-# environment. Export the (account-specific, never-committed) domain vars once
-# per shell so repeated deploys keep the custom domain:
-#   export API_DOMAIN_NAME=api.example.com HOSTED_ZONE_ID=Z123
+# Full CloudFormation parameter set for `make deploy`. The domain / hosted-zone
+# / demo-key parameters are SSM-resolved (ADR-0024): we pass SSM *key paths*
+# (not secrets) and CloudFormation substitutes the stored values at deploy, so a
+# full-state deploy can't drop the custom domain and no account-specific host is
+# committed. Seed the keys once per stage first: `make seed-config STAGE=<env>`.
 BDO_REGION ?= tw
 USE_RDS_PROXY ?= false
 ENABLE_BASTION ?= false
-ENABLE_DEMO_KEY ?= false
-API_DOMAIN_NAME ?=
-HOSTED_ZONE_ID ?=
-DEPLOY_PARAMS := Stage=$(STAGE) BdoRegion=$(BDO_REGION) UseRdsProxy=$(USE_RDS_PROXY) EnableBastion=$(ENABLE_BASTION) EnableDemoKey=$(ENABLE_DEMO_KEY) ApiDomainName=$(API_DOMAIN_NAME) HostedZoneId=$(HOSTED_ZONE_ID)
+DEPLOY_PARAMS := Stage=$(STAGE) BdoRegion=$(BDO_REGION) UseRdsProxy=$(USE_RDS_PROXY) EnableBastion=$(ENABLE_BASTION) EnableDemoKey=/bdo/$(STAGE)/enable-demo-key ApiDomainName=/bdo/$(STAGE)/api-domain-name IconDomainName=/bdo/$(STAGE)/icon-domain-name HostedZoneId=/bdo/shared/route53/hosted-zone-id
 
 # Built layer artifacts (CommonLayer is nested under EtlStack).
 LAYER_PYTHON := .aws-sam/build/EtlStack/CommonLayer/python
@@ -84,6 +78,30 @@ verify-layer:
 # the domain vars once per shell makes that a non-issue.
 deploy: build
 	sam deploy --config-env $(STAGE) --parameter-overrides "$(DEPLOY_PARAMS)"
+
+# One-time (or on change) per stage: write the deploy config into SSM so the
+# SSM-resolved template params (ADR-0024) can be substituted at deploy. Values
+# default to "none"/"false" (no custom domain); pass real ones to publish them.
+# The hosted zone id is looked up from Route 53 by PARENT_DOMAIN (or pass
+# HOSTED_ZONE_ID directly). Run once before the first `make deploy STAGE=<env>`.
+#
+#   make seed-config STAGE=dev
+#   make seed-config STAGE=prod API_DOMAIN_NAME=api.example.com \
+#       ICON_DOMAIN_NAME=icons.example.com PARENT_DOMAIN=example.com ENABLE_DEMO_KEY=true
+seed-config:
+	@set -e; \
+	api="$${API_DOMAIN_NAME:-none}"; icon="$${ICON_DOMAIN_NAME:-none}"; demo="$${ENABLE_DEMO_KEY:-false}"; \
+	put() { aws ssm put-parameter --region $(AWS_REGION) --overwrite --type String --name "$$1" --value "$$2" >/dev/null; echo "  $$1 = $$2"; }; \
+	echo "seeding SSM deploy config (stage=$(STAGE), region=$(AWS_REGION)):"; \
+	put "/bdo/$(STAGE)/api-domain-name"  "$$api"; \
+	put "/bdo/$(STAGE)/icon-domain-name" "$$icon"; \
+	put "/bdo/$(STAGE)/enable-demo-key"  "$$demo"; \
+	zone="$${HOSTED_ZONE_ID:-}"; \
+	if [ -z "$$zone" ] && [ -n "$${PARENT_DOMAIN:-}" ]; then \
+	  zone=$$(aws route53 list-hosted-zones-by-name --dns-name "$$PARENT_DOMAIN" --max-items 1 \
+	    --query 'HostedZones[0].Id' --output text | sed 's#/hostedzone/##'); \
+	fi; \
+	put "/bdo/shared/route53/hosted-zone-id" "$${zone:-none}"
 
 db-tunnel-up:
 	@BASTION_ID=$$(aws ec2 describe-instances --region $(AWS_REGION) \

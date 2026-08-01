@@ -1271,3 +1271,46 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 - Aurora Serverless v2 + RDS Data API (would remove VPC DB connectivity) — noted
   as a future option, not this effort.
 - Implementation is phased and not yet scheduled; this PR is design only.
+
+
+
+## 2026-07-31 — Deploy convergence P1a: config in SSM
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/ssm-config`
+**Phase:** Deploy convergence (ADR-0024) — slice 1 of the backend redesign
+**Commits:** (this PR)
+
+> First implementation slice: move deploy config (domains, hosted zone, demo
+> key) to SSM, resolved by CloudFormation. Removes the per-deploy flag juggling.
+> Infra/tooling only; leaves every environment deployable.
+
+### Done
+- `template.yaml`: `EnableDemoKey`, `ApiDomainName`, `IconDomainName`,
+  `HostedZoneId` → `AWS::SSM::Parameter::Value<String>`. We pass SSM *key paths*
+  (`/bdo/<env>/…`, `/bdo/shared/route53/hosted-zone-id`); CloudFormation
+  substitutes the stored values and passes them to the child stacks (unchanged
+  wiring). Real hosts live in SSM, never committed.
+- `api.yaml` / `icons.yaml`: `HasCustomDomain` / `HasIconDomain` now test the
+  `none` sentinel (SSM string can't be empty); child param defaults → `none`.
+- `Makefile`: `DEPLOY_PARAMS` passes the SSM key paths per stage; dropped the
+  `API_DOMAIN_NAME`/`HOSTED_ZONE_ID`/`ENABLE_DEMO_KEY` make-vars. New
+  `make seed-config STAGE=<env>` writes the SSM params (defaults `none`/`false`;
+  looks up the zone id from `PARENT_DOMAIN` via `list-hosted-zones-by-name`).
+- Runbook deployment-notes updated to the seed-config/SSM flow (full rewrite
+  deferred to the P4 slice; the old flag/secret sections are flagged superseded).
+- Verified: `cfn-lint` clean; `make -n deploy` shows per-stage SSM paths;
+  `make seed-config` dry-run (stubbed aws) writes the expected keys/values.
+
+### Decisions
+- SSM key paths are committed (not secrets); values (real hosts) live only in
+  SSM. `none` sentinel for "no custom domain".
+- `make seed-config` must run once per stage before the first deploy (the SSM
+  params must exist for the `AWS::SSM::Parameter::Value` type to resolve).
+
+### Deferred / open questions
+- Remaining slices (ADR-0024): auto-migrations, admin-query Lambda, remove
+  bastion, bootstrap orchestrator, verify + thin `make deploy`. Bastion removal
+  is intentionally sequenced *after* auto-migrations + admin Lambda so every
+  intermediate state stays deployable.
