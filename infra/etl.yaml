@@ -33,6 +33,25 @@ Parameters:
   LambdaMigratorRoleArn:
     Type: String
     Description: Execution role for the in-VPC migrator Lambda (rds-db:connect as lambda_migrator)
+  AutoMigrate:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: >
+      When 'true', a custom resource runs `alembic upgrade head` (as
+      lambda_migrator via IAM) on every deploy whose MigrationsFingerprint
+      changed. Set 'false' for a brand-new environment's first deploy, before
+      `make db-bootstrap` has created the roles the migrator authenticates as.
+  MigrationsFingerprint:
+    Type: String
+    Default: unset
+    Description: >
+      Content hash of migrations/versions, supplied by `make deploy`. Changing
+      it is what triggers the auto-migrate custom resource to re-run; a no-op
+      deploy (same migrations) does not re-invoke the migrator.
+
+Conditions:
+  DoAutoMigrate: !Equals [!Ref AutoMigrate, 'true']
 
 Globals:
   Function:
@@ -198,6 +217,24 @@ Resources:
           DB_NAME: bdo
           DB_USER: lambda_migrator
           USE_IAM_AUTH: 'true'
+
+  # ──────────────────────────────────────────────
+  # Auto-migrate custom resource — routine `upgrade head` on deploy
+  # ──────────────────────────────────────────────
+  # Invokes MigratorFunction on every stack update whose MigrationsFingerprint
+  # changed (a no-op deploy does not re-run it). The migrator applies routine
+  # migrations as lambda_migrator via IAM auth and always signals CloudFormation,
+  # so a failed migration fails the deploy rather than hanging it. The one-time
+  # privileged role bootstrap (0001-0003) is NOT run here -- it needs the master
+  # user and is applied once per environment via `make db-bootstrap`.
+  SchemaMigration:
+    Type: AWS::CloudFormation::CustomResource
+    Condition: DoAutoMigrate
+    Properties:
+      ServiceToken: !GetAtt MigratorFunction.Arn
+      # Re-run trigger: when the migrations content hash changes, this property
+      # changes and CloudFormation re-invokes the migrator.
+      MigrationsFingerprint: !Ref MigrationsFingerprint
 
   # ──────────────────────────────────────────────
   # Step Functions state machine (hourly ETL, FR-1)

@@ -1363,3 +1363,47 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 
 ### Deferred / open questions
 - Continue the deploy-convergence slices (auto-migrations next).
+
+
+## 2026-07-05 — Deploy convergence P2: auto-migrations on deploy
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/auto-migrate`
+**Phase:** Deploy-convergence slice ② (refines ADR-0024 item 2)
+**Commits:** see PR
+
+### Done
+- Migrator handler (`src/functions/migrator/app.py`) now dispatches three
+  paths: a CloudFormation custom resource (always signals SUCCESS/FAILED,
+  `Delete` = no-op), a routine `{}` invoke (`upgrade head` as
+  `lambda_migrator` via IAM), and `{"mode": "bootstrap"}` (connects as the RDS
+  master with credentials from the payload, applies `0001`-`0003`).
+- Every upgrade is serialized by a session-level `pg_advisory_lock`.
+- `infra/network.yaml`: added a free S3 gateway VPC endpoint + a scoped 443
+  Lambda egress so the in-VPC migrator can POST to the CFN response URL
+  (no NAT, ADR-0006).
+- `infra/etl.yaml` + `template.yaml`: `SchemaMigration` custom resource gated
+  on `AutoMigrate` (default true) and re-run by a `MigrationsFingerprint`
+  (content hash of `migrations/versions`, computed in the Makefile).
+- `make db-bootstrap` + `scripts/db_bootstrap.py`: one-time-per-env privileged
+  bootstrap via the master secret, no bastion.
+- Migration files left untouched. Verified: cfn-lint clean; ruff/mypy clean;
+  337 unit tests pass (15 integration deselected).
+
+### Decisions
+- Routine migrations auto-run as IAM `lambda_migrator`; the master is used only
+  for one-time bootstrap → ADR-0025.
+- Bootstrap passes the master credential in a one-time invocation payload
+  (no standing Secrets Manager endpoint cost) → ADR-0025.
+- Schema changes follow expand/contract now that migrations run on deploy →
+  ADR-0025.
+- `ci.yml` left unchanged: its explicit migrator invoke stays authoritative and
+  the template defaults are correct there; the param line is entangled with the
+  pending slice-① SSM rollout.
+
+### Deferred / open questions
+- Next slices: ③ admin-query Lambda, ④ remove bastion, ⑤ bootstrap
+  orchestrator, ⑥ verify + thin deploy.
+- Long-migration async (Step Functions signal) still deferred — migrations are
+  small/fast.

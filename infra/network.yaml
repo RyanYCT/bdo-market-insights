@@ -85,6 +85,22 @@ Resources:
         - !Ref PrivateRouteTable
 
   # ──────────────────────────────────────────────
+  # S3 Gateway VPC Endpoint
+  # ──────────────────────────────────────────────
+  # Lets the in-VPC migrator Lambda POST its CloudFormation custom-resource
+  # response to the CFN-presigned S3 URL without NAT/internet (ADR-0006). A
+  # gateway endpoint has no hourly cost; it adds an in-region S3 route to the
+  # private route table via the S3 managed prefix list.
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+
+  # ──────────────────────────────────────────────
   # Security Groups
   # ──────────────────────────────────────────────
   LambdaSG:
@@ -132,6 +148,23 @@ Resources:
       ToPort: 5432
       DestinationSecurityGroupId: !Ref RdsSG
       Description: Allow Lambda to connect to RDS Postgres
+
+  # HTTPS egress so the migrator Lambda can reach S3 (via the S3 gateway
+  # endpoint) to signal CloudFormation, and any in-VPC Lambda can reach the
+  # DynamoDB/S3 gateway endpoints. The wide CIDR is safe here: the private route
+  # table has no default (0.0.0.0/0) route, so 443 can only reach the
+  # gateway-endpoint-backed AWS services -- all other destinations are dropped
+  # by routing, not by the SG. (The standalone egress rules above remove the
+  # implicit allow-all, so this must be declared explicitly.)
+  LambdaToHttpsEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref LambdaSG
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: 0.0.0.0/0
+      Description: Allow Lambda HTTPS egress to AWS gateway endpoints (S3/DynamoDB)
 
   # ── RDS SG Ingress ──
   RdsFromLambdaIngress:
