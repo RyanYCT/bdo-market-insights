@@ -1407,3 +1407,33 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   orchestrator, ⑥ verify + thin deploy.
 - Long-migration async (Step Functions signal) still deferred — migrations are
   small/fast.
+
+
+## 2026-07-05 (follow-up) — Auto-migrate dev test: findings + hardening
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/auto-migrate`
+
+### Done
+- Dev test of the auto-migrate custom resource surfaced two things, both fixed:
+  1. Dev's `lambda_migrator` role was not enrolled in RDS IAM auth (missing
+     `GRANT rds_iam`), so the IAM-token connection failed with "password
+     authentication failed". Bootstrap mode now **idempotently re-grants
+     `rds_iam`** to the login roles as the master, independent of the Alembic
+     version — self-heals the role and makes bootstrap robust for any env.
+  2. Rolling back the introducing deploy hung: CloudFormation reverted the
+     migrator to pre-custom-resource code, which cannot answer the `Delete`, so
+     the rollback looped on the ~1h resource timeout. Recovered with
+     `continue-update-rollback --resources-to-skip EtlStack.SchemaMigration`.
+- Documented the required **two-phase introduction** (`AUTO_MIGRATE=false` deploy
+  + `make db-bootstrap`, then `AUTO_MIGRATE=true`) in ADR-0025 so a rollback
+  always reverts to Delete-capable code.
+- Verified on dev: `make deploy AUTO_MIGRATE=false` → `make db-bootstrap`
+  (`status: ok`) → `make deploy` — the custom resource applied `upgrade head`
+  as `lambda_migrator` and the stack converged.
+
+### Decisions
+- Bootstrap self-heals IAM enrollment as an invariant → ADR-0025.
+- First rollout of the custom resource to an existing environment is two-phase
+  → ADR-0025.

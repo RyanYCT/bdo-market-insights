@@ -91,6 +91,28 @@ rollback.
 - (−) A 443 egress rule on the Lambda SG uses a wide CIDR; it is safe only
   because the private route table has no default route (traffic can reach only
   the gateway-endpoint-backed services).
+- (−) Introducing the custom resource must be a **two-phase deploy** on an
+  existing environment (see below), or a rollback of the introducing deploy can
+  hang.
+
+## Introducing the custom resource to an existing environment
+
+Deploy in two phases, never in one shot:
+
+1. `make deploy STAGE=<env> AUTO_MIGRATE=false` — lands the Delete-capable
+   migrator code and the S3 endpoint without creating the custom resource. Then
+   `make db-bootstrap STAGE=<env>` to ensure the roles are IAM-enrolled.
+2. `make deploy STAGE=<env>` — adds the custom resource (auto-migrate on).
+
+Rationale: a Lambda-backed custom resource must answer its `Delete` request or
+CloudFormation waits out the resource timeout (~1h) and retries indefinitely. If
+the resource's *first* deploy both introduces the resource and updates the
+function's code, and that deploy fails and rolls back, CloudFormation reverts the
+function to the prior code — which has no `Delete` handler — and the rollback
+hangs. Phase 1 makes the Delete-capable code the rollback target before the
+resource exists, so any later rollback reverts to code that can signal. Once the
+custom resource is part of the environment's baseline, ordinary deploys need no
+special handling.
 
 ## Notes
 
