@@ -50,25 +50,25 @@ Parameters:
   # sentinel for "no custom domain". Seed the keys once per stage before deploy.
   EnableDemoKey:
     Type: AWS::SSM::Parameter::Value<String>
-    Default: /bdo/dev/enable-demo-key
+    Default: /bdo-market-insights/dev/api-gateway/enable-demo-key
     Description: >
       SSM key holding "true"/"false" — publish a public read-only demo API key
       (tight usage plan; writes rejected by itemRegistry). Resolved at deploy.
   ApiDomainName:
     Type: AWS::SSM::Parameter::Value<String>
-    Default: /bdo/dev/api-domain-name
+    Default: /bdo-market-insights/dev/domain/api-domain-name
     Description: >
       SSM key holding the custom API hostname, or "none" to disable (ADR-0013).
       Resolved from SSM at deploy.
   HostedZoneId:
     Type: AWS::SSM::Parameter::Value<String>
-    Default: /bdo/shared/route53/hosted-zone-id
+    Default: /bdo-market-insights/dev/domain/hosted-zone-id
     Description: >
       SSM key holding the shared Route 53 hosted zone id (or "none"). Resolved
       from SSM at deploy.
   IconDomainName:
     Type: AWS::SSM::Parameter::Value<String>
-    Default: /bdo/dev/icon-domain-name
+    Default: /bdo-market-insights/dev/domain/icon-domain-name
     Description: >
       SSM key holding the custom icons-CDN hostname, or "none" for the default
       CloudFront domain. Resolved from SSM at deploy.

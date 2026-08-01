@@ -1314,3 +1314,52 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   bastion, bootstrap orchestrator, verify + thin `make deploy`. Bastion removal
   is intentionally sequenced *after* auto-migrations + admin Lambda so every
   intermediate state stays deployable.
+
+
+
+## 2026-07-31 — Repo-scope SSM parameter names
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `fix/ssm-param-namespace`
+**Phase:** Deploy convergence (ADR-0024) — follow-up to slice 1
+**Commits:** (this PR)
+
+> The bare `/bdo/<stage>/...` SSM root is not repo-scoped — `bdo-analytics` and
+> `bdo-market-insights` both abbreviate to `bdo`, so it risks cross-repo
+> collisions. Move every SSM param this repo owns to a repo-scoped
+> `/bdo-market-insights/<stage>/<category>/<key>` and codify it in steering.
+
+### Done
+- Migrated all repo-owned SSM params off `/bdo/...`:
+  - `catalog/checksum` (was `/bdo/<stage>/catalog-checksum`) — `catalog.yaml`
+    env + IAM ARN.
+  - `insights/discord-webhook` (was `/bdo/<stage>/discord-webhook`) —
+    `insights_discord/app.py` constant + docstring, `insights.yaml` IAM ARN.
+  - `domain/{api-domain-name,icon-domain-name,hosted-zone-id}` and
+    `api-gateway/enable-demo-key` (the slice-1 params) — `template.yaml`
+    defaults, `Makefile` `DEPLOY_PARAMS` + `seed-config` paths.
+- Updated `test_catalog.py` fixtures + the runbook checksum path.
+- Steering: recorded the `/bdo-market-insights/<stage>/<category>/<key>`
+  convention in `.kiro/steering/structure.md`.
+- Verified: `cfn-lint` clean; `ruff`/`mypy`/`pytest` (333) green; no bare
+  `/bdo/` left in code/infra/config.
+
+### Decisions
+- SSM names are repo-scoped by prefix; `<category>` groups keys
+  (`domain`/`api-gateway`/`catalog`/`insights`).
+- `hosted-zone-id` is now per-stage under the repo namespace (was a shared
+  `/bdo/shared/...` key); value may repeat across stages, key never collides.
+
+### Migration (in the account; not code)
+- Re-seed dev: `make seed-config STAGE=dev` (writes the new domain/demo/zone
+  keys; dev has no custom domain -> none/false).
+- Copy the Discord webhook SecureString value to the new name before/with the
+  redeploy (the handler never raises, so notifications just pause until seeded).
+- `catalog/checksum` self-heals on the next catalog sync (new param created).
+- Redeploy, then delete the old `/bdo/<stage>/*` + `/bdo/shared/*` params and
+  the legacy v2 `/bdo-market-insights/<stage>/{api-gateway,core,domain}/*`
+  leftovers.
+
+### Deferred / open questions
+- Continue the deploy-convergence slices (auto-migrations next).

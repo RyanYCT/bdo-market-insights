@@ -258,7 +258,7 @@ class TestSyncCatalogChecksum:
         stats = catalog.sync_catalog(
             client,  # type: ignore[arg-type]
             ["en", "tw"],
-            checksum_param="/bdo/dev/catalog-checksum",
+            checksum_param="/bdo-market-insights/dev/catalog/checksum",
             ssm_client=ssm,
         )
 
@@ -301,7 +301,7 @@ class TestSyncCatalogChecksum:
         stats = catalog.sync_catalog(
             client,  # type: ignore[arg-type]
             ["en", "tw"],
-            checksum_param="/bdo/dev/catalog-checksum",
+            checksum_param="/bdo-market-insights/dev/catalog/checksum",
             ssm_client=ssm,
         )
 
@@ -323,7 +323,7 @@ class TestSyncCatalogChecksum:
         stats = catalog.sync_catalog(
             client,  # type: ignore[arg-type]
             ["en", "tw"],
-            checksum_param="/bdo/dev/catalog-checksum",
+            checksum_param="/bdo-market-insights/dev/catalog/checksum",
             ssm_client=ssm,
         )
 
@@ -342,7 +342,7 @@ class TestSyncCatalogChecksum:
         stats = catalog.sync_catalog(
             client,  # type: ignore[arg-type]
             ["en", "tw"],
-            checksum_param="/bdo/dev/catalog-checksum",
+            checksum_param="/bdo-market-insights/dev/catalog/checksum",
             ssm_client=ssm,
         )
 

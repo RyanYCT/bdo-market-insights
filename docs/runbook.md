@@ -156,7 +156,7 @@ uv run python scripts/seed_catalog.py --target-table bdo-dev-items
 Thereafter the weekly Lambda keeps the catalog current (default Thu 08:00 UTC /
 16:00 UTC+8, a buffer after the Thu 03:00-07:00 UTC+8 maintenance window; adjust
 via the `CatalogSyncSchedule` parameter). The Lambda stores a content checksum
-of the catalog in SSM (`/bdo/<stage>/catalog-checksum`) and skips all writes on
+of the catalog in SSM (`/bdo-market-insights/<stage>/catalog/checksum`) and skips all writes on
 weeks where `util/db` is unchanged; when it changes, only new/changed items are
 written. The parameter is created automatically on the first run.
 
