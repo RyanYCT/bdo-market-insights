@@ -12,7 +12,7 @@ LOCAL_DB_PORT ?= 5432
 BDO_REGION ?= tw
 USE_RDS_PROXY ?= false
 ENABLE_BASTION ?= false
-DEPLOY_PARAMS := Stage=$(STAGE) BdoRegion=$(BDO_REGION) UseRdsProxy=$(USE_RDS_PROXY) EnableBastion=$(ENABLE_BASTION) EnableDemoKey=/bdo/$(STAGE)/enable-demo-key ApiDomainName=/bdo/$(STAGE)/api-domain-name IconDomainName=/bdo/$(STAGE)/icon-domain-name HostedZoneId=/bdo/shared/route53/hosted-zone-id
+DEPLOY_PARAMS := Stage=$(STAGE) BdoRegion=$(BDO_REGION) UseRdsProxy=$(USE_RDS_PROXY) EnableBastion=$(ENABLE_BASTION) EnableDemoKey=/bdo-market-insights/$(STAGE)/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/$(STAGE)/domain/api-domain-name IconDomainName=/bdo-market-insights/$(STAGE)/domain/icon-domain-name HostedZoneId=/bdo-market-insights/$(STAGE)/domain/hosted-zone-id
 
 # Built layer artifacts (CommonLayer is nested under EtlStack).
 LAYER_PYTHON := .aws-sam/build/EtlStack/CommonLayer/python
@@ -93,15 +93,15 @@ seed-config:
 	api="$${API_DOMAIN_NAME:-none}"; icon="$${ICON_DOMAIN_NAME:-none}"; demo="$${ENABLE_DEMO_KEY:-false}"; \
 	put() { aws ssm put-parameter --region $(AWS_REGION) --overwrite --type String --name "$$1" --value "$$2" >/dev/null; echo "  $$1 = $$2"; }; \
 	echo "seeding SSM deploy config (stage=$(STAGE), region=$(AWS_REGION)):"; \
-	put "/bdo/$(STAGE)/api-domain-name"  "$$api"; \
-	put "/bdo/$(STAGE)/icon-domain-name" "$$icon"; \
-	put "/bdo/$(STAGE)/enable-demo-key"  "$$demo"; \
+	put "/bdo-market-insights/$(STAGE)/domain/api-domain-name"  "$$api"; \
+	put "/bdo-market-insights/$(STAGE)/domain/icon-domain-name" "$$icon"; \
+	put "/bdo-market-insights/$(STAGE)/api-gateway/enable-demo-key"  "$$demo"; \
 	zone="$${HOSTED_ZONE_ID:-}"; \
 	if [ -z "$$zone" ] && [ -n "$${PARENT_DOMAIN:-}" ]; then \
 	  zone=$$(aws route53 list-hosted-zones-by-name --dns-name "$$PARENT_DOMAIN" --max-items 1 \
 	    --query 'HostedZones[0].Id' --output text | sed 's#/hostedzone/##'); \
 	fi; \
-	put "/bdo/shared/route53/hosted-zone-id" "$${zone:-none}"
+	put "/bdo-market-insights/$(STAGE)/domain/hosted-zone-id" "$${zone:-none}"
 
 db-tunnel-up:
 	@BASTION_ID=$$(aws ec2 describe-instances --region $(AWS_REGION) \

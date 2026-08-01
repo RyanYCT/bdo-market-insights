@@ -220,7 +220,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - ssm:GetParameter
-                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/bdo/${Stage}/discord-webhook'
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/bdo-market-insights/${Stage}/insights/discord-webhook'
 
   InsightsDiscordFunction:
     Type: AWS::Serverless::Function

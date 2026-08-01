@@ -1,7 +1,8 @@
 """insightsDiscord Lambda: deliver insight notifications to Discord.
 
 SNS-triggered, out-of-VPC. Reads the webhook URL from SSM SecureString
-``/bdo/${Stage}/discord-webhook`` via Powertools parameters (cached). POSTs a
+``/bdo-market-insights/${Stage}/insights/discord-webhook`` via Powertools
+parameters (cached). POSTs a
 formatted message to the Discord webhook using stdlib ``urllib.request``.
 
 This handler NEVER raises -- any failure is logged and a
@@ -26,7 +27,7 @@ tracer = Tracer()
 metrics = Metrics(namespace="BdoMarket")
 
 _STAGE = os.environ.get("STAGE", "dev")
-_SSM_PARAM_NAME = f"/bdo/{_STAGE}/discord-webhook"
+_SSM_PARAM_NAME = f"/bdo-market-insights/{_STAGE}/insights/discord-webhook"
 
 
 def _get_webhook_url() -> str:

@@ -84,3 +84,13 @@ bdo-market-insights/
   tests `bdo_common/arsha_client.py`.
 - **One root `template.yaml`** that nests `infra/*.yaml`. No second
   SAM template, no parallel Terraform.
+- **SSM parameter names are repo-scoped**:
+  `/bdo-market-insights/<stage>/<category>/<key>` — never the bare
+  `/bdo/...` root (it is not repo-scoped: `bdo-analytics` and
+  `bdo-market-insights` both abbreviate to `bdo`, so `/bdo/...` risks
+  cross-repo collisions). `<category>` groups related keys
+  (`domain`, `api-gateway`, `catalog`, `insights`, ...). Examples:
+  `/bdo-market-insights/prod/domain/api-domain-name`,
+  `/bdo-market-insights/dev/catalog/checksum`. Deploy config
+  (domains/zone/toggles) is resolved from these at deploy (ADR-0024);
+  seed with `make seed-config`.
