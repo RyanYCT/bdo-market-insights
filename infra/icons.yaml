@@ -31,14 +31,14 @@ Parameters:
       by the next run.
   IconDomainName:
     Type: String
-    Default: ''
+    Default: 'none'
     Description: >
-      Custom hostname for the icons CDN (e.g. icons.example.com). Empty uses the
-      CloudFront default *.cloudfront.net domain. Supplied per stage at deploy
-      time; not stored in committed config (ADR-0013 convention).
+      Custom hostname for the icons CDN (e.g. icons.example.com). "none" uses the
+      CloudFront default *.cloudfront.net domain. Resolved from SSM by the parent
+      (ADR-0024); not stored in committed config (ADR-0013 convention).
   HostedZoneId:
     Type: String
-    Default: ''
+    Default: 'none'
     Description: >
       Route 53 hosted zone ID for the parent domain (shared infra; ADR-0013).
       Required when IconDomainName is set.
@@ -49,9 +49,9 @@ Conditions:
   # unblocking a later fresh CREATE with the same fixed bucket name.
   IsProd: !Equals [!Ref Stage, 'prod']
   IsNotProd: !Not [!Equals [!Ref Stage, 'prod']]
-  # Custom domain is opt-in (ADR-0013): empty IconDomainName -> serve on the
-  # CloudFront default domain, no ACM cert / Route 53 record.
-  HasIconDomain: !Not [!Equals [!Ref IconDomainName, '']]
+  # Custom domain is opt-in (ADR-0013): "none" -> serve on the CloudFront default
+  # domain, no ACM cert / Route 53 record ("none" is the SSM sentinel, ADR-0024).
+  HasIconDomain: !Not [!Equals [!Ref IconDomainName, 'none']]
 
 Globals:
   Function:

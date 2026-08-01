@@ -406,10 +406,24 @@ Two things apply to every `make deploy` below:
   deploy can never republish a source-only `CommonLayer` — which would otherwise
   break every function at init with `No module named 'aws_lambda_powertools'`.
   On a `/mnt/*` path `pip --target` can silently vendor nothing.
-- **`make deploy` re-declares the full stack state.** Every invocation must pass
-  the stage's persistent flags (`ENABLE_DEMO_KEY`, the custom-domain vars) or
-  they are dropped — even when you are only toggling one option (e.g. the
-  bastion). CI passes them for prod on every tagged release.
+- **Deploy config (domains, hosted zone, demo key) lives in SSM** (ADR-0024).
+  Seed it once per stage before the first deploy — `make seed-config STAGE=<env>`
+  (see below) — and `make deploy` resolves it automatically; a full-state deploy
+  can no longer drop the custom domain by forgetting a flag. The older
+  `API_DOMAIN_NAME`/`HOSTED_ZONE_ID` make-vars and the `PROD_*` GitHub secrets
+  described later in this doc are superseded and will be removed when the runbook
+  is rewritten around the one-command flow.
+
+  ```bash
+  # no custom domain (dev):
+  make seed-config STAGE=dev
+  # with custom domains + zone lookup (prod):
+  make seed-config STAGE=prod API_DOMAIN_NAME=api.example.com \
+      ICON_DOMAIN_NAME=icons.example.com PARENT_DOMAIN=example.com ENABLE_DEMO_KEY=true
+  ```
+- **`make deploy` re-declares the full stack state.** Non-SSM parameters not
+  passed revert to their template default; `DEPLOY_PARAMS` in the Makefile
+  assembles the complete set.
 
 ### Dev deployment (manual)
 
