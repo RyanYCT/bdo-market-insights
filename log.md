@@ -1437,3 +1437,36 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 - Bootstrap self-heals IAM enrollment as an invariant → ADR-0025.
 - First rollout of the custom resource to an existing environment is two-phase
   → ADR-0025.
+
+
+## 2026-07-05 — CI prod deploy: SSM-resolved params + auto-migrate
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `ci/prod-deploy-ssm-auto-migrate`
+**Commits:** see PR
+
+### Done
+- Brought the tag-triggered prod deploy job in line with the current template:
+  - Pass SSM *key paths* for `EnableDemoKey` / `ApiDomainName` / `HostedZoneId`
+    and add the missing `IconDomainName` (these params are now
+    `AWS::SSM::Parameter::Value<String>` after the slice-① SSM change; the old
+    command passed literals, which would fail parameter resolution).
+  - Pass `AutoMigrate=true` and a computed `MigrationsFingerprint` (same hash as
+    the Makefile) so the auto-migrate custom resource runs `upgrade head` on
+    deploy (ADR-0025).
+  - Removed the separate "Run database migrations (migrator Lambda)" step — the
+    custom resource now owns migrations on deploy and fails the deploy on error.
+- The `PROD_API_DOMAIN_NAME` / `PROD_HOSTED_ZONE_ID` repo secrets are no longer
+  used (values live in SSM); the deploy role no longer needs
+  `lambda:InvokeFunction` on the migrator from CI.
+
+### Decisions
+- CI mirrors the Makefile `DEPLOY_PARAMS` as the single source of truth for the
+  prod parameter set.
+- Migrations run only via the custom resource on deploy (no duplicate invoke).
+
+### Deferred / open questions
+- Prereq before the next `v*` tag: prod SSM keys seeded (`make seed-config
+  STAGE=prod`) and the auto-migrate custom resource introduced two-phase on prod
+  (ADR-0025), so the tag deploy is steady-state.
