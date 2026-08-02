@@ -1470,3 +1470,39 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 - Prereq before the next `v*` tag: prod SSM keys seeded (`make seed-config
   STAGE=prod`) and the auto-migrate custom resource introduced two-phase on prod
   (ADR-0025), so the tag deploy is steady-state.
+
+
+## 2026-07-05 — Deploy convergence P3: admin-query Lambda
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/admin-query`
+**Phase:** Deploy-convergence slice ③ (ADR-0024 item 3)
+**Commits:** see PR
+
+### Done
+- Added `bdo-<stage>-admin-query`, an in-VPC, invoke-only Lambda for ad-hoc SQL
+  that replaces pgAdmin-over-bastion for routine work (the prerequisite for
+  removing the bastion next).
+  - Connects as `lambda_rds_user` via IAM auth (reuses `bdo_common.db`).
+  - **Read-only by default, DB-enforced**: statements run in a Postgres
+    `READ ONLY` transaction (`conn.read_only = True`) and roll back; a write is
+    rejected by the database.
+  - `{"write": true}` runs DML in a committing transaction; no DDL/ownership
+    (that stays in migrations, ADR-0025).
+  - Results capped (default 200 / max 1000) with a `truncated` flag; values
+    reduced to JSON-safe primitives; SQL logged to CloudWatch.
+- `scripts/db_admin.py` + `make db-admin STAGE=<env> SQL='…' [WRITE=1]`.
+- `AdminQueryFunction` in `infra/etl.yaml` (in-VPC pattern, `LambdaRdsAuthRole`,
+  no schedule/API); `AdminQueryLogGroup` in `observability.yaml`.
+- ADR-0026. Verified: cfn-lint clean; ruff/mypy clean; 342 unit tests pass
+  (5 new; 15 integration deselected).
+
+### Decisions
+- Ad-hoc access is read-only by default (DB-enforced), DML only on explicit
+  opt-in, no DDL — least privilege via `lambda_rds_user` → ADR-0026.
+- Invoke-only + IAM-gated; no public API surface.
+
+### Deferred / open questions
+- Next: slice ④ remove the bastion (this Lambda unblocks it); genuine
+  break-glass becomes ephemeral, not a standing resource.
