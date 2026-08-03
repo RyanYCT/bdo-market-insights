@@ -237,6 +237,37 @@ Resources:
       MigrationsFingerprint: !Ref MigrationsFingerprint
 
   # ──────────────────────────────────────────────
+  # Admin query — in VPC; ad-hoc SQL (ADR-0026), invoke-only
+  # ──────────────────────────────────────────────
+  # Replaces human pgAdmin-over-bastion access. Connects as the runtime
+  # `lambda_rds_user` role via IAM auth and runs each statement in a Postgres
+  # READ ONLY transaction by default (writes are rejected by the DB); an explicit
+  # {"write": true} payload runs DML in a committing transaction. Because
+  # lambda_rds_user holds no DDL/ownership, schema changes still go through
+  # migrations. No schedule and no API event -- invoked directly (`make
+  # db-admin`), gated by IAM (lambda:InvokeFunction).
+  AdminQueryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-admin-query'
+      CodeUri: ../src/functions/admin_query
+      Handler: app.handler
+      Timeout: 60
+      Role: !Ref LambdaRdsAuthRoleArn
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroupId
+        SubnetIds:
+          - !Ref PrivateSubnetA
+      Environment:
+        Variables:
+          DB_HOST: !Ref RdsEndpoint
+          DB_PORT: !Ref RdsPort
+          DB_NAME: bdo
+          DB_USER: lambda_rds_user
+          USE_IAM_AUTH: 'true'
+
+  # ──────────────────────────────────────────────
   # Step Functions state machine (hourly ETL, FR-1)
   # ──────────────────────────────────────────────
   EtlStateMachine:

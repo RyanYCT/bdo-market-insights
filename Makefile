@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy seed-config db-tunnel-up db-tunnel-down dba-password db-bootstrap migrate migrate-lambda market-catalog track seed-catalog seed-tracked seed-data seed clean
+.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy seed-config db-tunnel-up db-tunnel-down dba-password db-bootstrap db-admin migrate migrate-lambda market-catalog track seed-catalog seed-tracked seed-data seed clean
 
 STAGE ?= dev
 AWS_REGION ?= us-east-1
@@ -166,6 +166,17 @@ migrate-lambda:
 # the auto-migrate custom resource applies routine migrations (0004+).
 db-bootstrap:
 	uv run python scripts/db_bootstrap.py --stage $(STAGE) --region $(AWS_REGION)
+
+# Ad-hoc SQL against RDS via the in-VPC admin-query Lambda (ADR-0026) -- replaces
+# pgAdmin over the bastion. Read-only by default (statements run in a Postgres
+# READ ONLY transaction); add WRITE=1 to run DML in a committing transaction.
+# No tunnel/bastion; requires lambda:InvokeFunction on bdo-$(STAGE)-admin-query.
+#
+#   make db-admin STAGE=dev SQL='select count(*) from item'
+#   make db-admin STAGE=dev SQL="delete from market_snapshot where id = 42" WRITE=1
+db-admin:
+	uv run python scripts/db_admin.py --stage $(STAGE) --region $(AWS_REGION) \
+		--sql "$(SQL)" $(if $(WRITE),--write,)
 
 # Regenerate the offline market snapshot (scripts/data/full_items.json) by
 # enumerating the arsha.io market taxonomy. This is the ONLY step that calls
