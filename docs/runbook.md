@@ -20,7 +20,7 @@ access, insights evaluation, recovery/teardown, and troubleshooting.
 - [Feature toggles](#feature-toggles)
   - [Custom API domain](#custom-api-domain)
   - [Public demo API key](#public-demo-api-key)
-- [Database access via bastion](#database-access-via-bastion)
+- [Database access](#database-access)
 - [Market Insights: dev evaluation](#market-insights-dev-evaluation)
 - [Recovery & teardown](#recovery--teardown)
   - [Cleanup and teardown](#cleanup-and-teardown)
@@ -40,7 +40,7 @@ flowchart TD
     q --> standup["Stand up a fresh stack<br/>→ First-time bring-up"]
     q --> reset{"Remove or reset a stack?"}
     q --> monitor["Check ETL / API health<br/>→ Daily operations"]
-    q --> dbwork["Connect to Postgres (ad-hoc / recovery)<br/>→ Database access via bastion"]
+    q --> dbwork["Connect to Postgres (ad-hoc / recovery)<br/>→ Database access"]
     q --> feature["Toggle custom domain / demo key<br/>→ Feature toggles"]
     q --> reviewi["Review insights on dev<br/>→ Market Insights: dev evaluation"]
     q --> broken["Something is broken<br/>→ Troubleshooting"]
@@ -78,60 +78,30 @@ releases can deploy.
 
 ### First-time role bootstrap
 
-(Run once, via the bastion.) The Postgres roles themselves are cluster-level
+(Run once per environment, no bastion.) The Postgres roles are cluster-level
 objects created by migrations `0002`/`0003` and need privileges the
 `lambda_migrator` role does not hold:
 
-- `0002_bootstrap_roles` — `lambda_rds_user` (runtime, IAM auth) and
-  `dba` (human login; created only when `DBA_PASSWORD` is set).
+- `0002_bootstrap_roles` — `lambda_rds_user` (runtime, IAM auth).
 - `0003_migrator_role` — `lambda_migrator` (IAM auth) used by the migrator
   Lambda (see [Running migrations](#running-migrations)); also grants it DML on
   `alembic_version`.
 
-Apply the full chain (`0001`–`0003`) **once** as the RDS master user through the
-bastion tunnel. Enable the bastion and open the tunnel (see
-[Database access via bastion](#database-access-via-bastion) for the mechanics),
-then run the chain in a second terminal:
+`make db-bootstrap` applies `0001`–`0003` as the RDS **master** user by invoking
+the migrator Lambda in bootstrap mode — it reads the RDS-managed master secret
+locally and passes it in a one-time invocation, so there is no tunnel or bastion
+(ADR-0025). Because the migrator Lambda must exist first, and introducing the
+auto-migrate custom resource must be two-phase (ADR-0025), deploy with
+auto-migrate off, bootstrap, then deploy normally:
 
 ```sh
-make deploy STAGE=dev ENABLE_BASTION=true   # one-time; skip if the bastion is already up
-make db-tunnel-up STAGE=dev                 # leave running; use a second terminal below
+make deploy STAGE=dev AUTO_MIGRATE=false   # creates infra incl. the migrator, no auto-migrate CR
+make db-bootstrap STAGE=dev                # applies 0001-0003 as master (roles + schema)
+make deploy STAGE=dev                      # auto-migrate CR applies routine migrations (0004+)
 ```
 
-```sh
-STAGE=dev
-
-# dba password (so 0002 creates the dba login role). The dba secret is created
-# only while the bastion is up and has a generated name, so resolve it from the
-# DbaSecretArn stack output rather than a fixed secret id:
-DBA_SECRET_ARN=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] \
-           | [?OutputKey=='DbaSecretArn'].OutputValue | [0]" --output text)
-export DBA_PASSWORD="$(aws secretsmanager get-secret-value \
-  --secret-id "$DBA_SECRET_ARN" \
-  --query SecretString --output text \
-  | python -c 'import json,sys; print(json.load(sys.stdin)["password"])')"
-
-# master password from the RDS-managed master secret (NOT the dba secret):
-MASTER_SECRET_ARN=$(aws cloudformation describe-stacks \
-  --query "Stacks[?starts_with(StackName,'bdo-market-${STAGE}')].Outputs[] \
-           | [?OutputKey=='MasterSecretArn'].OutputValue | [0]" --output text)
-MASTER_PW=$(aws secretsmanager get-secret-value --secret-id "$MASTER_SECRET_ARN" \
-  --query SecretString --output text \
-  | python -c 'import json,sys; print(json.load(sys.stdin)["password"])')
-
-# env.py normalizes the driver to +psycopg (this project ships psycopg v3
-# only), so a plain postgresql:// URL now works too; the explicit form is fine.
-export DATABASE_URL="postgresql+psycopg://postgres:${MASTER_PW}@localhost:5432/bdo"
-
-make migrate
-uv run alembic -c migrations/alembic.ini current   # expect: 0003 (head)
-make db-tunnel-down
-```
-
-After this one-time bootstrap, all later schema changes go through
-`make migrate-lambda` (or the CI deploy step) — no tunnel required. Drop the
-bastion again once you're done (`make deploy STAGE=dev ENABLE_BASTION=false`).
+After this one-time bootstrap, all later schema changes run automatically on
+deploy via the auto-migrate custom resource (ADR-0025) — no tunnel required.
 
 > Migrations `0002`/`0003` end with `REVOKE … FROM CURRENT_USER` so the master
 > keeps password login; without it the master becomes a transitive `rds_iam`
@@ -372,9 +342,9 @@ gh secret set PROD_HOSTED_ZONE_ID --body "ZXXXXXXXXXXXXX"
 > role, and you can tighten to least-privilege later by replaying CloudTrail.
 
 > First prod deploy only: the RDS Postgres roles must be bootstrapped
-> (migrations `0001`–`0003` as the master user via the bastion — see
-> [First-time role bootstrap](#first-time-role-bootstrap)) before the CI migrator
-> step can run as `lambda_migrator`.
+> (migrations `0001`–`0003` as the master user via `make db-bootstrap` — see
+> [First-time role bootstrap](#first-time-role-bootstrap)) before the auto-migrate
+> custom resource can run as `lambda_migrator`.
 
 ## Daily operations
 
@@ -462,9 +432,9 @@ See [Running migrations](#running-migrations) for how this works.
 
 > **First time on a fresh database?** The `lambda_migrator` role does not exist
 > yet, so the migrator Lambda cannot run. Do the one-time
-> [First-time role bootstrap](#first-time-role-bootstrap) instead — it applies
-> `0001`–`0003` (schema + roles) as the master through the bastion, in one pass.
-> Every later migration then uses `make migrate-lambda` as above.
+> [First-time role bootstrap](#first-time-role-bootstrap) instead — `make
+> db-bootstrap` applies `0001`–`0003` (schema + roles) as the master, no bastion.
+> Every later migration then runs automatically on deploy (or `make migrate-lambda`).
 
 #### Post-deploy verification (dev)
 
@@ -808,68 +778,51 @@ make deploy STAGE=prod \
 > reverted by the next tagged release. To disable it permanently, flip
 > `EnableDemoKey=true` to `false` in the deploy step of `.github/workflows/ci.yml`.
 
-## Database access via bastion
+## Database access
 
-Reach Postgres directly for ad-hoc inspection or recovery (connect
-pgAdmin/psql, run one-off SQL, recover from a lockout). The one-time role setup
-for a fresh database lives in
-[First-time bring-up → First-time role bootstrap](#first-time-role-bootstrap);
-routine schema migrations don't use the bastion at all (see
+There is **no standing bastion** (ADR-0027). Reach Postgres by escalating scope:
+
+### Routine: the admin-query Lambda (ADR-0026)
+
+Ad-hoc inspection and the occasional row fix go through the in-VPC,
+IAM-authenticated `admin-query` Lambda — no tunnel, no host. Read-only by
+default (statements run in a Postgres `READ ONLY` transaction); add `WRITE=1`
+for a committing DML transaction:
+
+```sh
+make db-admin STAGE=dev SQL='select count(*) from item'
+make db-admin STAGE=dev SQL="delete from market_snapshot where id = 42" WRITE=1
+```
+
+It cannot run DDL (schema changes go through migrations — see
 [Running migrations](#running-migrations)).
 
-### Prerequisites
+### Rare: on-demand break-glass (ADR-0027)
 
-- AWS CLI v2 (with a local `ssh` binary on `PATH`)
-- IAM permissions for EICE: `ec2-instance-connect:OpenTunnel`,
-  `ec2-instance-connect:SendSSHPublicKey`, `ec2:DescribeInstances`,
-  `ec2:DescribeInstanceConnectEndpoints`
-- pgAdmin or `psql` (optional; `make migrate` uses the bundled `alembic`)
+For DDL outside migrations, bulk work, or master-level recovery, provision an
+**ephemeral** t4g.nano + EICE, tunnel through it as the RDS **master**, and tear
+it down afterward. Nothing is left standing.
 
-### Flow
+Prerequisites: AWS CLI v2 with a local `ssh` on `PATH`; IAM for EICE
+(`ec2-instance-connect:OpenTunnel`, `…:SendSSHPublicKey`, `ec2:DescribeInstances`,
+`ec2:DescribeInstanceConnectEndpoints`) plus `cloudformation:*` on the
+`bdo-market-<stage>-break-glass` stack.
 
-The bastion has **no public IP** (ADR-0009). Access is brokered by the EC2
-Instance Connect Endpoint (EICE), so you never SSH to it directly — the
-`db-tunnel-up` target tunnels through the EICE with `--connection-type eice`.
+```sh
+# 1. Stand up the break-glass host and open the tunnel (leave running).
+make break-glass-up STAGE=<dev|prod>       # localhost:5432 -> RDS via EICE
 
-1. Ensure the bastion is deployed. If your stack was deployed with
-   `EnableBastion=false` (the default), redeploy with it on. The bastion is a
-   transient toggle, but the deploy re-declares full stack state, so include the
-   stage's persistent flags (demo key, domain) too if it has them (see
-   [Deployment notes](#deployment-notes)):
+# 2. In a second terminal, connect as the RDS master (resolve the master secret).
+MASTER_ARN=$(aws cloudformation describe-stacks \
+  --query "Stacks[?starts_with(StackName,'bdo-market-<dev|prod>')].Outputs[] \
+           | [?OutputKey=='MasterSecretArn'].OutputValue | [0]" --output text)
+aws secretsmanager get-secret-value --secret-id "$MASTER_ARN" \
+  --query SecretString --output text        # -> {"username":"postgres","password":...}
+# psql "host=localhost port=5432 dbname=bdo user=postgres" (password from above)
 
-   ```sh
-   make deploy STAGE=dev ENABLE_BASTION=true
-   ```
-
-2. `make db-tunnel-up STAGE=<dev|prod>` — opens the EICE tunnel to RDS on
-   `localhost:5432`. Leave it running; open a second terminal for the next
-   steps. Ctrl-C (or `make db-tunnel-down`) closes it.
-3. Sync the `dba` role password to the current secret value:
-
-   ```sh
-   make dba-password STAGE=<dev|prod>
-   ```
-
-   The dba secret is recreated each time the bastion comes up (generated name,
-   so no recovery-window collision), so its stored value won't match the role
-   until you run this once per session. The tunnel from step 2 must be up.
-
-   > This is a separate step (not folded into `make deploy`) on purpose: it
-   > needs a live DB connection over the tunnel, and the tunnel needs a bastion
-   > that only exists *after* the deploy finishes — so the sync is inherently a
-   > post-deploy action. It also has nothing to do on the common
-   > `ENABLE_BASTION=false` deploy, where no dba secret exists.
-4. Connect pgAdmin (or psql) to `localhost:5432` using the `dba` role. The
-   secret has a generated name and exists only while the bastion is up, so
-   resolve its value from the `DbaSecretArn` stack output:
-
-   ```sh
-   DBA_SECRET_ARN=$(aws cloudformation describe-stacks \
-     --query "Stacks[?starts_with(StackName,'bdo-market-<dev|prod>')].Outputs[] \
-              | [?OutputKey=='DbaSecretArn'].OutputValue | [0]" --output text)
-   aws secretsmanager get-secret-value --secret-id "$DBA_SECRET_ARN" \
-     --query SecretString --output text
-   ```
+# 3. Tear it down when finished (Ctrl-C the tunnel first).
+make break-glass-down STAGE=<dev|prod>
+```
 
 ## Market Insights: dev evaluation
 
@@ -886,13 +839,12 @@ backfill a small synthetic dataset and trigger the state machine by hand.
 > spike, and an accessory whose enhancement-cost ladder moves.
 
 ```sh
-# 1. Backfill synthetic market data into dev RDS (over the bastion tunnel).
-make deploy STAGE=dev ENABLE_BASTION=true   # if the bastion isn't already deployed
-make db-tunnel-up STAGE=dev        # leave running; use a second terminal below
+# 1. Backfill synthetic market data into dev RDS (over an on-demand break-glass
+#    tunnel; there is no standing bastion — ADR-0027).
+make break-glass-up STAGE=dev      # deploys an ephemeral EICE + host and opens the tunnel; leave running
 
-# In the second terminal: a DB URL with write access over the tunnel. The RDS
-# master (see First-time role bootstrap) always works; dba works if it has been
-# granted table privileges. The script accepts the +psycopg form too.
+# In the second terminal: a DB URL with write access over the tunnel, as the RDS
+# master (see First-time role bootstrap). The script accepts the +psycopg form too.
 export DATABASE_URL="postgresql://postgres:<MASTER_PW>@localhost:5432/bdo"
 uv run python scripts/seed_market_dev.py --dry-run   # preview
 uv run python scripts/seed_market_dev.py             # seeds region tw, 14 days
@@ -911,10 +863,9 @@ aws stepfunctions start-execution --state-machine-arn "$SM_ARN" \
 curl -s -H "x-api-key: ${API_KEY}" "${API_URL}/v1/insights?region=tw&period=daily"  | jq .
 curl -s -H "x-api-key: ${API_KEY}" "${API_URL}/v1/insights?region=tw&period=weekly" | jq .
 
-# 4. Clean up the synthetic rows when finished.
+# 4. Clean up the synthetic rows when finished, then tear down the break-glass host.
 uv run python scripts/seed_market_dev.py --clean
-make db-tunnel-down
-make deploy STAGE=dev ENABLE_BASTION=false   # optional, saves the bastion cost
+make break-glass-down STAGE=dev    # closes the tunnel and deletes the ephemeral host
 ```
 
 > The `Summarize` step calls Bedrock. If the dev account/region has **no
@@ -936,12 +887,11 @@ one-time exercise -- see `docs/cleanup-tasks.md`.
 After a dev evaluation, undo the opt-in pieces without touching the stack:
 
 ```sh
-# Remove synthetic insights rows seeded into RDS (needs an open tunnel; see
-# "Market Insights - dev evaluation").
+# Remove synthetic insights rows seeded into RDS (needs an open break-glass
+# tunnel; see "Market Insights - dev evaluation").
 uv run python scripts/seed_market_dev.py --clean
 
-make db-tunnel-down              # close the EICE tunnel
-make deploy STAGE=dev ENABLE_BASTION=false   # remove the bastion + EICE (saves cost)
+make break-glass-down STAGE=dev  # close the tunnel and delete the ephemeral EICE + host
 # Custom domain: see "Custom API domain → Disable" (unset the CI secrets, then
 # redeploy the full state without the domain vars). Only if one was enabled.
 make clean                       # local build artifacts (.aws-sam/, etc.)
@@ -961,11 +911,9 @@ remove any orphaned nested stacks" below). Know what goes with it:
   (`aws rds delete-db-snapshot`).
 - **The `bdo-<stage>-items` DynamoDB table is deleted** -- the tracked-items
   list is lost. Export it first if you need it.
-- The `dba` secret exists only if the bastion was up (generated name). If
-  present it is scheduled for deletion on its default recovery window; secrets
-  in a recovery window are not billed, and the generated name means a later
-  bastion bring-up won't collide with it. The RDS-managed master secret is
-  removed with the DB.
+- The RDS-managed master secret is removed with the DB. (There is no `dba`
+  secret; an on-demand break-glass stack, if one is up, is separate — delete it
+  with `make break-glass-down`.)
 - Lambda-created CloudWatch log groups can remain orphaned -- delete separately
   if desired. The shared SAM deploy bucket is not part of the stack and stays.
 - **The `bdo-<stage>-icons` S3 bucket's fate depends on stage** (ADR-0019):
@@ -1037,7 +985,7 @@ aws cloudformation list-stacks --region us-east-1 \
 
 # Delete leftovers in reverse-dependency order. Network LAST: its subnets and
 # security groups cannot delete while another stack's RDS or Lambda ENIs remain.
-for S in Observability Api Insights Etl Bastion Data Network; do
+for S in Observability Api Insights Etl Data Network; do
   NAME=$(aws cloudformation list-stacks --region us-east-1 \
     --query "StackSummaries[?contains(StackName,'bdo-market-dev-${S}Stack') && StackStatus!='DELETE_COMPLETE'].StackName | [0]" \
     --output text)
@@ -1114,7 +1062,7 @@ tracked seed) run together, in the correct order, via `make seed-data STAGE=<sta
 |---------|---------------|
 | ETL timeout | Check arsha.io status page; verify Lambda timeout config in `template.yaml`. |
 | RDS connection failures | Check security group rules; verify IAM auth token generation; confirm RDS instance status. |
-| `make db-tunnel-up`: "Unable to connect to target" | EICE can't reach the bastion on :22. Confirm the bastion SG has a self-referencing port-22 egress rule (`BastionSshEgress`) and that the EICE is `available`. |
+| `make break-glass-up`: "Unable to connect to target" | EICE can't reach the break-glass host on :22. Confirm the break-glass SG has a self-referencing port-22 egress rule (`BreakGlassSshEgress`) and that the EICE is `available`. |
 | Master login: "PAM authentication failed for user postgres" | Master became a (transitive) member of `rds_iam`. See [First-time role bootstrap](#first-time-role-bootstrap) — IAM-auth in and `REVOKE` the role memberships. |
 | `make migrate-lambda`: "permission denied for table alembic_version" | `lambda_migrator` lacks DML on `alembic_version`. Re-run the `0003` grant, or one-off as master: `GRANT SELECT, INSERT, UPDATE, DELETE ON alembic_version TO lambda_migrator;`. |
 | API 5xx spike | Filter CloudWatch logs by `correlation_id`; look for connection pool exhaustion or query timeouts. |

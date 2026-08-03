@@ -1,9 +1,9 @@
 """One-time privileged database bootstrap for an environment (no bastion).
 
 Applies the bootstrap migrations (``0001``-``0003``: the schema and the cluster
-roles ``lambda_rds_user`` / ``lambda_migrator`` / optional ``dba``) that the
-IAM-authenticated migrator role cannot create itself, because creating roles and
-transferring table ownership need the RDS master user (ADR-0025).
+roles ``lambda_rds_user`` / ``lambda_migrator``) that the IAM-authenticated
+migrator role cannot create itself, because creating roles and transferring
+table ownership need the RDS master user (ADR-0025).
 
 Rather than open a bastion tunnel, this reads the RDS-managed master credential
 locally (the operator has Secrets Manager access) and invokes the in-VPC
@@ -61,11 +61,6 @@ def main() -> None:
         default="0003",
         help="Alembic revision to bootstrap up to (default: 0003)",
     )
-    parser.add_argument(
-        "--dba-password",
-        default=None,
-        help="Optional: also create the human 'dba' login role with this password",
-    )
     args = parser.parse_args()
 
     cf = boto3.client("cloudformation", region_name=args.region)
@@ -80,8 +75,6 @@ def main() -> None:
         "master_password": password,
         "target": args.target,
     }
-    if args.dba_password:
-        payload["dba_password"] = args.dba_password
 
     function_name = f"bdo-{args.stage}-migrator"
     print(f"Invoking {function_name} in bootstrap mode (target {args.target})...")

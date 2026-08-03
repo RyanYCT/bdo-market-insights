@@ -29,11 +29,11 @@ The stack below is locked. Any change requires an ADR in `docs/adr/`.
 ## Infrastructure
 
 - **AWS SAM** — one root `template.yaml` with nested stacks
-  (`network`, `data`, `bastion`, `etl`, `api`, `observability`).
+  (`network`, `data`, `etl`, `api`, `observability`).
   Not CDK, not raw CFN, not Terraform (ADR-0001).
-- **IAM database authentication** for Lambdas (ADR-0008); a separate
-  `dba` Postgres role with password in Secrets Manager exists only
-  for human bastion access (ADR-0009).
+- **IAM database authentication** for Lambdas (ADR-0008). Ad-hoc human
+  DB access uses the in-VPC `adminQuery` Lambda (ADR-0026); there is no
+  standing bastion, and break-glass is on-demand (ADR-0027).
 - **Alembic** owns the Postgres schema.
 - RDS Proxy is opt-in via SAM parameter `UseRdsProxy`, default
   `false` (ADR-0002).

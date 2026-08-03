@@ -85,8 +85,9 @@ steering files manually.
 - All AWS resources in IaC (SAM template). No console-clickers.
 - Single-AZ workload by design (ADR-0011). Any Multi-AZ resource needs
   a new ADR.
-- IAM database auth for Lambdas; never bypass it. The `dba` Postgres
-  role exists only for human bastion access.
+- IAM database auth for Lambdas; never bypass it. Routine ad-hoc DB
+  access is the in-VPC `adminQuery` Lambda (ADR-0026); there is no
+  standing bastion — break-glass is on-demand (ADR-0027).
 - No NAT (ADR-0006). If a future feature needs internet from a
   VPC-attached Lambda, write an ADR before adding NAT.
 

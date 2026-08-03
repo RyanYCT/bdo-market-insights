@@ -14,7 +14,7 @@ bdo-market-insights/
 ├── README.md
 ├── LICENSE
 ├── pyproject.toml                     # uv-managed
-├── Makefile                           # build/test/lint/deploy/db-tunnel
+├── Makefile                           # build/test/lint/deploy/break-glass
 ├── samconfig.toml                     # dev + prod envs
 ├── template.yaml                      # SAM root, nests infra/*.yaml
 ├── log.md                             # session log (append-only)
@@ -35,8 +35,8 @@ bdo-market-insights/
 │   └── slo.md
 ├── infra/
 │   ├── network.yaml                   # VPC, subnets, SGs, gateway endpoints
-│   ├── data.yaml                      # RDS, DynamoDB, Secrets Manager
-│   ├── bastion.yaml                   # gated by EnableBastion
+│   ├── data.yaml                      # RDS, DynamoDB, IAM roles
+│   ├── break-glass.yaml               # on-demand only; not in root template
 │   ├── etl.yaml                       # Step Functions + EventBridge crons
 │   ├── api.yaml                       # API Gateway + usage plan
 │   ├── observability.yaml             # dashboard + alarms
@@ -78,8 +78,9 @@ bdo-market-insights/
   single `app.py` entry point. Handlers import from `bdo_common`.
 - **Shared code lives in the Lambda Layer**; never duplicated across
   functions.
-- **Infra split by concern** (`network`, `data`, `bastion`, `etl`,
-  `api`, `observability`). No 1000-line monolithic CFN.
+- **Infra split by concern** (`network`, `data`, `etl`, `api`,
+  `observability`). No 1000-line monolithic CFN. (`break-glass.yaml` is
+  on-demand only and not nested in the root template.)
 - **Test layout mirrors source**: e.g. `tests/unit/test_arsha_client.py`
   tests `bdo_common/arsha_client.py`.
 - **One root `template.yaml`** that nests `infra/*.yaml`. No second

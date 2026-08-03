@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy seed-config db-tunnel-up db-tunnel-down dba-password db-bootstrap db-admin migrate migrate-lambda market-catalog track seed-catalog seed-tracked seed-data seed clean
+.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy seed-config break-glass-up break-glass-down db-bootstrap db-admin migrate migrate-lambda market-catalog track seed-catalog seed-tracked seed-data seed clean
 
 STAGE ?= dev
 AWS_REGION ?= us-east-1
@@ -11,7 +11,6 @@ LOCAL_DB_PORT ?= 5432
 # committed. Seed the keys once per stage first: `make seed-config STAGE=<env>`.
 BDO_REGION ?= tw
 USE_RDS_PROXY ?= false
-ENABLE_BASTION ?= false
 AUTO_MIGRATE ?= true
 
 # Content hash of the migration set. Passed to CloudFormation as
@@ -20,7 +19,7 @@ AUTO_MIGRATE ?= true
 # migrations) leaves it unchanged, so the migrator is not re-invoked.
 MIGRATIONS_FINGERPRINT := $(shell find migrations/versions -type f -name '*.py' -exec sha256sum {} \; | sort | sha256sum | cut -c1-32)
 
-DEPLOY_PARAMS := Stage=$(STAGE) BdoRegion=$(BDO_REGION) UseRdsProxy=$(USE_RDS_PROXY) EnableBastion=$(ENABLE_BASTION) AutoMigrate=$(AUTO_MIGRATE) MigrationsFingerprint=$(MIGRATIONS_FINGERPRINT) EnableDemoKey=/bdo-market-insights/$(STAGE)/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/$(STAGE)/domain/api-domain-name IconDomainName=/bdo-market-insights/$(STAGE)/domain/icon-domain-name HostedZoneId=/bdo-market-insights/$(STAGE)/domain/hosted-zone-id
+DEPLOY_PARAMS := Stage=$(STAGE) BdoRegion=$(BDO_REGION) UseRdsProxy=$(USE_RDS_PROXY) AutoMigrate=$(AUTO_MIGRATE) MigrationsFingerprint=$(MIGRATIONS_FINGERPRINT) EnableDemoKey=/bdo-market-insights/$(STAGE)/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/$(STAGE)/domain/api-domain-name IconDomainName=/bdo-market-insights/$(STAGE)/domain/icon-domain-name HostedZoneId=/bdo-market-insights/$(STAGE)/domain/hosted-zone-id
 
 # Built layer artifacts (CommonLayer is nested under EtlStack).
 LAYER_PYTHON := .aws-sam/build/EtlStack/CommonLayer/python
@@ -78,12 +77,10 @@ verify-layer:
 #
 #   make deploy STAGE=dev
 #   make deploy STAGE=prod ENABLE_DEMO_KEY=true API_DOMAIN_NAME=api.example.com HOSTED_ZONE_ID=Z123
-#   make deploy STAGE=prod ENABLE_BASTION=true ENABLE_DEMO_KEY=true API_DOMAIN_NAME=... HOSTED_ZONE_ID=...
 #
-# The bastion is a transient toggle (bring it up for a DBA session, then deploy
-# again with ENABLE_BASTION=false). Because the whole state is declared each
-# time, keep the persistent flags (demo key, domain) in the command -- exporting
-# the domain vars once per shell makes that a non-issue.
+# Because the whole state is declared each time, keep the persistent flags (demo
+# key, domain) in the command -- exporting the domain vars once per shell makes
+# that a non-issue.
 deploy: build
 	sam deploy --config-env $(STAGE) --parameter-overrides "$(DEPLOY_PARAMS)"
 
@@ -111,38 +108,42 @@ seed-config:
 	fi; \
 	put "/bdo-market-insights/$(STAGE)/domain/hosted-zone-id" "$${zone:-none}"
 
-db-tunnel-up:
-	@BASTION_ID=$$(aws ec2 describe-instances --region $(AWS_REGION) \
-		--filters "Name=tag:Name,Values=bdo-$(STAGE)-bastion" \
-		          "Name=instance-state-name,Values=running" \
-		--query 'Reservations[0].Instances[0].InstanceId' --output text); \
-	if [ -z "$$BASTION_ID" ] || [ "$$BASTION_ID" = "None" ]; then \
-		echo "No running bastion for stage '$(STAGE)'. Deploy with 'make deploy STAGE=$(STAGE) ENABLE_BASTION=true' (plus the stage's persistent flags)."; exit 1; fi; \
+# On-demand break-glass access (ADR-0027): deploy an ephemeral t4g.nano + EICE,
+# then open an IAM-authenticated SSH tunnel localhost:$(LOCAL_DB_PORT) -> RDS. For
+# rare DDL / bulk / master-level work only -- routine reads/fixes use `make
+# db-admin`. Connect as the RDS master (resolve the master secret). Leave running
+# (Ctrl-C to close the tunnel), then `make break-glass-down` to delete the host.
+break-glass-up:
+	@echo "Deploying on-demand break-glass stack for stage '$(STAGE)'..."; \
+	SUBNET=$$(aws cloudformation describe-stacks --region $(AWS_REGION) \
+		--query "Stacks[?starts_with(StackName,'bdo-market-$(STAGE)')].Outputs[] | [?OutputKey=='PrivateSubnetA'].OutputValue | [0]" --output text); \
+	SG=$$(aws cloudformation describe-stacks --region $(AWS_REGION) \
+		--query "Stacks[?starts_with(StackName,'bdo-market-$(STAGE)')].Outputs[] | [?OutputKey=='BreakGlassSecurityGroupId'].OutputValue | [0]" --output text); \
+	if [ -z "$$SUBNET" ] || [ "$$SUBNET" = "None" ] || [ -z "$$SG" ] || [ "$$SG" = "None" ]; then \
+		echo "Could not resolve PrivateSubnetA / BreakGlassSecurityGroupId from the bdo-market-$(STAGE) stacks. Is the stack deployed?"; exit 1; fi; \
+	aws cloudformation deploy --region $(AWS_REGION) \
+		--stack-name bdo-market-$(STAGE)-break-glass \
+		--template-file infra/break-glass.yaml \
+		--capabilities CAPABILITY_IAM \
+		--parameter-overrides Stage=$(STAGE) PrivateSubnetA=$$SUBNET BreakGlassSecurityGroupId=$$SG; \
+	INSTANCE_ID=$$(aws cloudformation describe-stacks --region $(AWS_REGION) \
+		--stack-name bdo-market-$(STAGE)-break-glass \
+		--query "Stacks[0].Outputs[?OutputKey=='BreakGlassInstanceId'].OutputValue | [0]" --output text); \
 	RDS_ENDPOINT=$$(aws cloudformation describe-stacks --region $(AWS_REGION) \
-		--query "Stacks[?starts_with(StackName,'bdo-market-$(STAGE)')].Outputs[] | [?OutputKey=='RdsEndpoint'].OutputValue | [0]" \
-		--output text); \
-	if [ -z "$$RDS_ENDPOINT" ] || [ "$$RDS_ENDPOINT" = "None" ]; then \
-		echo "Could not resolve RdsEndpoint output from stack 'bdo-market-$(STAGE)'. Is the stack deployed?"; exit 1; fi; \
-	echo "Tunnel: localhost:$(LOCAL_DB_PORT) -> $$RDS_ENDPOINT:5432 via $$BASTION_ID (Ctrl-C to close)"; \
-	aws ec2-instance-connect ssh --instance-id $$BASTION_ID --region $(AWS_REGION) \
+		--query "Stacks[?starts_with(StackName,'bdo-market-$(STAGE)')].Outputs[] | [?OutputKey=='RdsEndpoint'].OutputValue | [0]" --output text); \
+	echo "Tunnel: localhost:$(LOCAL_DB_PORT) -> $$RDS_ENDPOINT:5432 via $$INSTANCE_ID (Ctrl-C to close, then 'make break-glass-down')"; \
+	aws ec2-instance-connect ssh --instance-id $$INSTANCE_ID --region $(AWS_REGION) \
 		--connection-type eice --local-forwarding "$(LOCAL_DB_PORT):$$RDS_ENDPOINT:5432"
 
-db-tunnel-down:
-	@pkill -f "ec2-instance-connect ssh" && echo "Tunnel closed." || echo "No active tunnel."
+break-glass-down:
+	@pkill -f "ec2-instance-connect ssh" 2>/dev/null && echo "Tunnel closed." || echo "No active tunnel."; \
+	echo "Deleting break-glass stack bdo-market-$(STAGE)-break-glass..."; \
+	aws cloudformation delete-stack --region $(AWS_REGION) --stack-name bdo-market-$(STAGE)-break-glass; \
+	aws cloudformation wait stack-delete-complete --region $(AWS_REGION) \
+		--stack-name bdo-market-$(STAGE)-break-glass && echo "Break-glass stack deleted." \
+		|| echo "Delete initiated; verify in the CloudFormation console."
 
-# Re-sync the dba role password to the current dba secret (ADR-0020). The dba
-# secret exists only while the bastion is up and gets a fresh password each
-# time, so run this once per bastion session (after make db-tunnel-up) to let
-# pgAdmin log in as dba. Requires an open tunnel + ENABLE_BASTION=true.
-# Kept separate from `make deploy` by necessity: it needs a live DB connection
-# over the tunnel, which needs a bastion that only exists after the deploy
-# finishes -- so it is inherently a post-deploy step (and a no-op on the common
-# ENABLE_BASTION=false deploy, where no dba secret exists).
-dba-password:
-	uv run python scripts/set_dba_password.py --stage $(STAGE) --region $(AWS_REGION) \
-		--port $(LOCAL_DB_PORT)
-
-# Requires an open tunnel (make db-tunnel-up) and DATABASE_URL pointing at
+# Requires an open tunnel (make break-glass-up) and DATABASE_URL pointing at
 # localhost:$(LOCAL_DB_PORT). See docs/runbook.md for the full flow.
 migrate:
 	uv run alembic -c migrations/alembic.ini upgrade head

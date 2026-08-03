@@ -1506,3 +1506,43 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 ### Deferred / open questions
 - Next: slice ④ remove the bastion (this Lambda unblocks it); genuine
   break-glass becomes ephemeral, not a standing resource.
+
+
+## 2026-07-05 — Deploy convergence P4: remove the standing bastion
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/remove-bastion`
+**Phase:** Deploy-convergence slice ④ (implements ADR-0024 item 3)
+**Commits:** see PR
+
+### Done
+- Removed the standing bastion: deleted the `EnableBastion` parameter, the
+  `BastionStack`, and the bastion-gated `DbaSecret` (+ `DbaSecretArn` output)
+  from the root/data templates; dropped `EnableBastion` from `samconfig.toml`
+  and the CI prod deploy.
+- Retained break-glass **on demand** (Option B): `infra/bastion.yaml` →
+  `infra/break-glass.yaml`, no longer nested in the root template. New
+  `make break-glass-up` / `break-glass-down` deploy an ephemeral t4g.nano + EICE,
+  open an IAM tunnel to RDS (as the master), and tear it down — nothing standing.
+- Kept the (free, inert) break-glass SG + RDS ingress in `network.yaml`,
+  renamed `Bastion*` → `BreakGlass*`.
+- Replaced `db-tunnel-up/down` + `dba-password` targets; deleted
+  `scripts/set_dba_password.py`; dropped the `dba_password` bootstrap branch
+  from `db_bootstrap.py` + migrator; `seed_market_dev.py` now uses the
+  break-glass tunnel.
+- Docs: bastion-ectomy across README, architecture, steering, AGENTS,
+  cleanup-tasks, and the runbook (Database access → admin-query + break-glass;
+  first-time bootstrap → `make db-bootstrap`). ADR-0027 added; ADR-0009 & 0020
+  marked Superseded. Verified: cfn-lint clean; ruff/mypy clean; 344 tests pass;
+  no dangling bastion/dba refs in code/config.
+
+### Decisions
+- No standing bastion; break-glass provisioned on demand and torn down → ADR-0027.
+- Break-glass authenticates as the RDS master (no `dba` role/secret to maintain).
+
+### Deferred / open questions
+- The existing `dba` Postgres role (if a past bootstrap created one) is left
+  inert; dropping it needs master privileges — deferred as a manual cleanup.
+- Next: slice ⑤ bootstrap orchestrator, then ⑥ verify + thin deploy + full
+  runbook rewrite.
