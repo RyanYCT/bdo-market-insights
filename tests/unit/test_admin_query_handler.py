@@ -48,6 +48,7 @@ class _FakeConn:
         self.rollbacks = 0
         self.commits = 0
         self.read_only_sets: list[bool] = []
+        self.cursor_names: list[str | None] = []
         self._read_only = False
 
     @property
@@ -65,7 +66,8 @@ class _FakeConn:
     def commit(self) -> None:
         self.commits += 1
 
-    def cursor(self) -> _FakeCursor:
+    def cursor(self, name: str | None = None) -> _FakeCursor:
+        self.cursor_names.append(name)
         return self._cursor
 
 
@@ -100,6 +102,45 @@ def test_read_only_select_returns_rows_and_never_commits(
     assert True in [ro is True for ro in conn.read_only_sets]
     assert conn.commits == 0
     assert conn.rollbacks >= 1
+    # A SELECT streams through a server-side (named) cursor.
+    assert "admin_query" in conn.cursor_names
+    # A server-side statement_timeout was set.
+    assert any("statement_timeout" in sql for sql, _ in cur.executed)
+
+
+def test_error_rolls_back_reraises_and_resets_read_only(
+    admin_query: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _BoomCursor(_FakeCursor):
+        def execute(self, sql: str, params: Any = None) -> None:
+            super().execute(sql, params)
+            if "statement_timeout" not in sql:
+                raise RuntimeError("cannot execute UPDATE in a read-only transaction")
+
+    cur = _BoomCursor(None, [], 0)
+    conn = _install_conn(admin_query, monkeypatch, cur)
+
+    with pytest.raises(RuntimeError, match="read-only transaction"):
+        admin_query.handler({"sql": "update item set name = 'x'"}, lambda_context)
+
+    assert conn.commits == 0
+    assert conn.rollbacks >= 1
+    # The connection is left defaulting to read-only for the next warm invoke.
+    assert conn.read_only_sets[-1] is True
+
+
+def test_utility_read_uses_client_cursor(
+    admin_query: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cur = _FakeCursor(_cols("name", "setting"), [("statement_timeout", "30s")], rowcount=1)
+    conn = _install_conn(admin_query, monkeypatch, cur)
+
+    result = admin_query.handler({"sql": "show statement_timeout"}, lambda_context)
+
+    assert result["columns"] == ["name", "setting"]
+    # SHOW is not DECLARE-CURSOR-able, so no server-side cursor is used.
+    assert conn.cursor_names == [None, None]
+    assert conn.commits == 0
 
 
 def test_write_mode_commits_and_runs_read_write(

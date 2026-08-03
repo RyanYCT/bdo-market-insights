@@ -76,7 +76,7 @@ def main() -> None:
     _print_table(result.get("columns", []), result.get("rows", []))
     footer = f"rowcount={result.get('rowcount')}"
     if result.get("truncated"):
-        footer += f" (result truncated to {args.max_rows} rows)"
+        footer += f" (showing first {len(result.get('rows', []))} rows; more exist)"
     if result.get("write"):
         footer += " [committed]"
     print(footer)
