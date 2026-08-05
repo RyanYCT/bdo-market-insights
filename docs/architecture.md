@@ -60,7 +60,7 @@ The system runs 16 Lambdas: the 8 ETL/API handlers, the in-VPC `migrator`, the
 `docs` API, the four insights functions (`computeDigest`, `summarize`,
 `storeSummary`, `discordNotifier`), the weekly `catalogSync`, and the daily
 `iconSync`. SAM nests them as `network`, `data`, `etl`, `api`, `insights`,
-`catalog`, `icons`, `observability`, and `bastion` stacks.
+`catalog`, `icons`, and `observability` stacks.
 
 ### ETL state machine
 
@@ -163,10 +163,13 @@ Summaries are read back through `GET /v1/insights`.
 
 Single VPC with 2 private subnets (AWS requires 2 AZs for a DB
 Subnet Group). Only database-touching Lambdas are placed inside the
-VPC. A DynamoDB Gateway Endpoint provides in-VPC access without NAT.
+VPC. DynamoDB and S3 Gateway Endpoints provide in-VPC access without NAT.
 
-EICE (EC2 Instance Connect Endpoint) allows DBA access to RDS through
-a bastion host without a public IP or NAT gateway.
+There is no standing bastion (ADR-0027). Routine ad-hoc DB access goes through
+the in-VPC, IAM-authenticated `adminQuery` Lambda (read-only by default,
+ADR-0026); rare break-glass access is provisioned on demand (an ephemeral
+EICE + t4g.nano via `make break-glass-up`, torn down after) and never left
+standing.
 
 ## Custom Domain (optional)
 

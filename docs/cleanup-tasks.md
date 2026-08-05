@@ -42,8 +42,8 @@ These belong to the live v3 stacks and must be preserved:
   stacks).
 - DynamoDB table **`bdo-${Stage}-items`** (`bdo-dev-items`, `bdo-prod-items`).
 - Everything named `bdo-<stage>-*` (e.g. `bdo-dev-*`, `bdo-prod-*`):
-  Lambdas (`bdo-<stage>-migrator` plus the ETL/API/insights functions), the `bdo-common` layer,
-  `bdo-<stage>-alarms` SNS topic, `bdo-<stage>-dba-credentials` secret, the
+  Lambdas (`bdo-<stage>-migrator`, `bdo-<stage>-admin-query`, plus the ETL/API/insights functions), the `bdo-common` layer,
+  `bdo-<stage>-alarms` SNS topic, the
   `bdo-<stage>` dashboard, VPC/subnets/SGs created by `infra/network.yaml`,
   and the v3 RDS instance + DynamoDB created by `infra/data.yaml`.
 

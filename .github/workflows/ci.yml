@@ -161,4 +161,4 @@ jobs:
         run: |
           fingerprint=$(find migrations/versions -type f -name '*.py' -exec sha256sum {} \; | sort | sha256sum | cut -c1-32)
           sam deploy --config-env prod --no-confirm-changeset \
-            --parameter-overrides "Stage=prod BdoRegion=tw UseRdsProxy=false EnableBastion=false AutoMigrate=true MigrationsFingerprint=$fingerprint EnableDemoKey=/bdo-market-insights/prod/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/prod/domain/api-domain-name IconDomainName=/bdo-market-insights/prod/domain/icon-domain-name HostedZoneId=/bdo-market-insights/prod/domain/hosted-zone-id"
+            --parameter-overrides "Stage=prod BdoRegion=tw UseRdsProxy=false AutoMigrate=true MigrationsFingerprint=$fingerprint EnableDemoKey=/bdo-market-insights/prod/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/prod/domain/api-domain-name IconDomainName=/bdo-market-insights/prod/domain/icon-domain-name HostedZoneId=/bdo-market-insights/prod/domain/hosted-zone-id"

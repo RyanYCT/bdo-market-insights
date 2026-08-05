@@ -9,9 +9,10 @@ This inserts a small, deterministic synthetic dataset (a few buff + accessory
 items over a 14-day window ending yesterday) shaped to exercise the narration:
 a steady gainer, a steady loser, an anomalous spike, and an accessory whose
 enhancement-cost ladder moves. It is **dev-only** and writes to whatever
-DATABASE_URL points at -- run it over the bastion tunnel against the dev RDS.
+DATABASE_URL points at -- run it over an on-demand break-glass tunnel
+(`make break-glass-up STAGE=dev`) against the dev RDS.
 
-Usage (with an open `make db-tunnel-up STAGE=dev` and a privileged DATABASE_URL):
+Usage (with an open `make break-glass-up STAGE=dev` and a privileged DATABASE_URL):
 
     export DATABASE_URL="postgresql://USER:PW@localhost:5432/bdo"
     uv run python scripts/seed_market_dev.py            # backfill region tw

@@ -121,22 +121,25 @@ Resources:
         - Key: Name
           Value: !Sub 'bdo-${Stage}-rds-sg'
 
-  BastionSG:
+  # Security group for on-demand break-glass access (ADR-0027). Inert and free
+  # while nothing uses it; the on-demand break-glass stack (infra/break-glass.yaml,
+  # deployed via `make break-glass-up`) attaches its EC2 instance + EICE to it.
+  BreakGlassSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security group for bastion host (EICE connectivity)
+      GroupDescription: Security group for on-demand break-glass access (EICE connectivity)
       VpcId: !Ref Vpc
       Tags:
         - Key: Name
-          Value: !Sub 'bdo-${Stage}-bastion-sg'
+          Value: !Sub 'bdo-${Stage}-break-glass-sg'
 
   # NOTE: Adding any standalone AWS::EC2::SecurityGroupEgress rule causes EC2 to
   # drop the implicit allow-all-egress rule for that SG, so each SG below is
   # restricted to exactly the egress declared here. In a no-NAT VPC (ADR-0006)
   # the only reachable destinations are in-VPC (RDS) and the DynamoDB gateway
   # endpoint (via its prefix list); the in-VPC Lambdas only need RDS, so 5432 is
-  # all they require. The bastion additionally needs SSH egress to itself so the
-  # co-located EICE can reach it (see BastionSshEgress).
+  # all they require. The break-glass host additionally needs SSH egress to
+  # itself so the co-located EICE can reach it (see BreakGlassSshEgress).
 
   # -- Lambda SG Egress --
   LambdaToRdsEgress:
@@ -177,57 +180,57 @@ Resources:
       SourceSecurityGroupId: !Ref LambdaSG
       Description: Allow inbound Postgres from Lambda
 
-  RdsFromBastionIngress:
+  RdsFromBreakGlassIngress:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
       GroupId: !Ref RdsSG
       IpProtocol: tcp
       FromPort: 5432
       ToPort: 5432
-      SourceSecurityGroupId: !Ref BastionSG
-      Description: Allow inbound Postgres from Bastion
+      SourceSecurityGroupId: !Ref BreakGlassSG
+      Description: Allow inbound Postgres from the break-glass host
 
-  # -- Bastion SG Ingress --
-  # The EC2 Instance Connect Endpoint shares this SG, so the bastion
+  # -- Break-glass SG Ingress --
+  # The EC2 Instance Connect Endpoint shares this SG, so the break-glass
   # instance must allow SSH from the same SG for the operator tunnel
-  # (operator -> EICE -> bastion :22 -> RDS :5432) to form. Without this
-  # rule the bastion is unreachable (NFR-19).
-  BastionSshIngress:
+  # (operator -> EICE -> host :22 -> RDS :5432) to form. Without this
+  # rule the host is unreachable.
+  BreakGlassSshIngress:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
-      GroupId: !Ref BastionSG
+      GroupId: !Ref BreakGlassSG
       IpProtocol: tcp
       FromPort: 22
       ToPort: 22
-      SourceSecurityGroupId: !Ref BastionSG
+      SourceSecurityGroupId: !Ref BreakGlassSG
       Description: Allow SSH from the EC2 Instance Connect Endpoint
 
-  # -- Bastion SG Egress --
-  # The EICE shares this SG and connects to the bastion on :22 with
+  # -- Break-glass SG Egress --
+  # The EICE shares this SG and connects to the host on :22 with
   # PreserveClientIp=false, so the traffic's source is this SG. Because the
-  # standalone egress rules below remove the implicit allow-all, the bastion
+  # standalone egress rules above remove the implicit allow-all, the host
   # needs an explicit self-referencing SSH egress rule or the EICE cannot reach
-  # it (operator -> EICE -> bastion :22). Without this the tunnel fails with
+  # it (operator -> EICE -> host :22). Without this the tunnel fails with
   # "Websocket Closure Reason: Unable to connect to target".
-  BastionSshEgress:
+  BreakGlassSshEgress:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
-      GroupId: !Ref BastionSG
+      GroupId: !Ref BreakGlassSG
       IpProtocol: tcp
       FromPort: 22
       ToPort: 22
-      DestinationSecurityGroupId: !Ref BastionSG
-      Description: Allow the co-located EICE to reach the bastion on SSH
+      DestinationSecurityGroupId: !Ref BreakGlassSG
+      Description: Allow the co-located EICE to reach the host on SSH
 
-  BastionToRdsEgress:
+  BreakGlassToRdsEgress:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
-      GroupId: !Ref BastionSG
+      GroupId: !Ref BreakGlassSG
       IpProtocol: tcp
       FromPort: 5432
       ToPort: 5432
       DestinationSecurityGroupId: !Ref RdsSG
-      Description: Allow Bastion to connect to RDS Postgres
+      Description: Allow the break-glass host to connect to RDS Postgres
 
 Outputs:
   VpcId:
@@ -260,7 +263,7 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-RdsSecurityGroupId'
 
-  BastionSecurityGroupId:
-    Value: !Ref BastionSG
+  BreakGlassSecurityGroupId:
+    Value: !Ref BreakGlassSG
     Export:
-      Name: !Sub '${AWS::StackName}-BastionSecurityGroupId'
+      Name: !Sub '${AWS::StackName}-BreakGlassSecurityGroupId'

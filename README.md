@@ -101,7 +101,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the subsystem diagrams (E
 - **Data:** Amazon RDS for PostgreSQL (time series), DynamoDB (item registry), Alembic (schema migrations)
 - **API:** API Gateway (REST) with API-key usage plans
   - OpenAPI 3.1 spec auto-generated from the handlers and served via interactive Swagger UI
-- **IaC:** AWS SAM — one root `template.yaml` with nested stacks (`network`, `data`, `etl`, `api`, `insights`, `observability`, `bastion`)
+- **IaC:** AWS SAM — one root `template.yaml` with nested stacks (`network`, `data`, `etl`, `api`, `insights`, `observability`)
 - **Libraries:** AWS Lambda Powertools (logging, tracing, metrics, validation), Pydantic v2, psycopg 3, PyYAML (spec parsing)
 - **Observability:** CloudWatch dashboard + SLO alarms, X-Ray tracing, EMF custom metrics (`BdoMarket/*`)
 - **Tooling:** `uv` (deps), `ruff` (lint/format), `pytest` + `moto` (tests)
@@ -109,8 +109,8 @@ See [`docs/architecture.md`](docs/architecture.md) for the subsystem diagrams (E
 
 ## Design decisions
 
-- **Passwordless database access.** Every Lambda connects to Postgres using **IAM database authentication** — short-lived tokens, no secrets to rotate or leak. A separate `dba` role has a Secrets Manager password, created only while the bastion is up (generated name, per-session sync) so it costs nothing when idle. *(ADR-0008, ADR-0020)*
-- **No-NAT private networking.** DB-touching Lambdas run in a VPC; a DynamoDB **Gateway Endpoint** gives in-VPC access with zero NAT cost. Human DBA access goes through an **EC2 Instance Connect Endpoint** + a `t4g.nano` bastion with **no public IP**. *(ADR-0006, ADR-0009)*
+- **Passwordless database access.** Every Lambda connects to Postgres using **IAM database authentication** — short-lived tokens, no secrets to rotate or leak. Ad-hoc human queries go through an in-VPC, IAM-gated **admin-query Lambda** (read-only by default). *(ADR-0008, ADR-0026)*
+- **No-NAT private networking.** DB-touching Lambdas run in a VPC; **DynamoDB and S3 Gateway Endpoints** give in-VPC access with zero NAT cost. There is **no standing bastion** — rare break-glass access is provisioned on demand (ephemeral EICE + `t4g.nano`) and torn down after. *(ADR-0006, ADR-0027)*
 - **Resilient ingestion.** The arsha.io client normalizes five polymorphic JSON shapes, caps URL length, auto-splits oversized ID batches, and bounds concurrency/rate; retries, tracing, and structured logging come from AWS Lambda Powertools rather than hand-rolled code *(ADR-0007)*.
 - **Idempotent, transactional writes.** `storeData` upserts `item`/`item_sid` and bulk-inserts snapshots in a single transaction, keyed on `(region, item_id, sid, snapshot_at)` — so a missed or re-run ETL execution is always safe. *(NFR-4)*
 - **Domain pricing model.** A pluggable model registry computes expected enhancement cost via a Markov chain over enhancement tiers (including the "cron stone" path), validated against worked examples on real in-game data. *(ADR-0012)*

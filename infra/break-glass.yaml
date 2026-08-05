@@ -1,7 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Bastion host (t4g.nano) with EC2 Instance Connect Endpoint
-  for IAM-authenticated SSH tunneling to RDS.
+  On-demand break-glass access to RDS: a t4g.nano instance + EC2 Instance
+  Connect Endpoint for an IAM-authenticated SSH tunnel, as the RDS master user.
+  NOT part of the root template (ADR-0027): deployed on demand via
+  `make break-glass-up` and torn down with `make break-glass-down`, so there is
+  no standing host. Routine DB access uses the admin-query Lambda (ADR-0026).
 
 Parameters:
   Stage:
@@ -11,14 +14,14 @@ Parameters:
       - prod
   PrivateSubnetA:
     Type: AWS::EC2::Subnet::Id
-  BastionSecurityGroupId:
+  BreakGlassSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
 
 Resources:
   # ──────────────────────────────────────────────
   # IAM Role & Instance Profile
   # ──────────────────────────────────────────────
-  BastionRole:
+  BreakGlassRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -32,29 +35,29 @@ Resources:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       Tags:
         - Key: Name
-          Value: !Sub 'bdo-${Stage}-bastion-role'
+          Value: !Sub 'bdo-${Stage}-break-glass-role'
 
-  BastionInstanceProfile:
+  BreakGlassInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       Roles:
-        - !Ref BastionRole
+        - !Ref BreakGlassRole
 
   # ──────────────────────────────────────────────
   # EC2 Instance
   # ──────────────────────────────────────────────
-  BastionInstance:
+  BreakGlassInstance:
     Type: AWS::EC2::Instance
     Properties:
       InstanceType: t4g.nano
       ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64}}'
       SubnetId: !Ref PrivateSubnetA
       SecurityGroupIds:
-        - !Ref BastionSecurityGroupId
-      IamInstanceProfile: !Ref BastionInstanceProfile
+        - !Ref BreakGlassSecurityGroupId
+      IamInstanceProfile: !Ref BreakGlassInstanceProfile
       Tags:
         - Key: Name
-          Value: !Sub 'bdo-${Stage}-bastion'
+          Value: !Sub 'bdo-${Stage}-break-glass'
 
   # ──────────────────────────────────────────────
   # EC2 Instance Connect Endpoint
@@ -64,14 +67,14 @@ Resources:
     Properties:
       SubnetId: !Ref PrivateSubnetA
       SecurityGroupIds:
-        - !Ref BastionSecurityGroupId
+        - !Ref BreakGlassSecurityGroupId
       PreserveClientIp: false
 
 Outputs:
-  BastionInstanceId:
-    Value: !Ref BastionInstance
+  BreakGlassInstanceId:
+    Value: !Ref BreakGlassInstance
     Export:
-      Name: !Sub '${AWS::StackName}-BastionInstanceId'
+      Name: !Sub '${AWS::StackName}-BreakGlassInstanceId'
 
   InstanceConnectEndpointId:
     Value: !Ref InstanceConnectEndpoint

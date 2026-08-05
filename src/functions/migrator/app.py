@@ -205,16 +205,11 @@ def _run_bootstrap(event: dict[str, Any]) -> dict[str, Any]:
 
     Credentials come from the invocation payload (``make db-bootstrap`` reads
     them from the RDS-managed master secret), so the function needs no Secrets
-    Manager access from inside the no-NAT VPC. An optional ``dba_password``
-    provisions the human ``dba`` login role (migration 0002); omit it to skip.
+    Manager access from inside the no-NAT VPC.
     """
     username = event["master_username"]
     password = event["master_password"]
     target = event.get("target", _BOOTSTRAP_TARGET)
-
-    dba_password = event.get("dba_password")
-    if dba_password:
-        os.environ["DBA_PASSWORD"] = dba_password
 
     master_url = _master_database_url(username, password)
     # Self-heal IAM-auth enrollment before/regardless of the schema upgrade, so a

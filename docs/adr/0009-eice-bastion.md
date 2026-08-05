@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Superseded by ADR-0027 (no standing bastion; on-demand break-glass). The EICE +
+t4g.nano are no longer deployed as part of the stack; the same components are
+retained as an on-demand break-glass stack.
 
 ## Context
 

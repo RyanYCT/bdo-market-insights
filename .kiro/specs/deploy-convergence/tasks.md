@@ -3,29 +3,34 @@
 Phased (ADR-0024). Each phase is independently deployable and leaves the
 environment working; nothing ships half-built. Design only until scheduled.
 
+> Implemented as re-sequenced slices: (1) SSM config, (2) auto-migrations,
+> (3) admin-query Lambda, (4) remove bastion, (5) bootstrap orchestrator,
+> (6) verify + thin deploy. SSM names are repo-scoped
+> (`/bdo-market-insights/<env>/<category>/<key>`), not the `/bdo/…` sketch below.
+
 ## Phase 1 — Config in SSM + remove the bastion
 
-- [ ] SSM parameter layout (`/bdo/shared/route53/hosted-zone-id`,
-      `/bdo/<env>/{api-domain-name,icon-domain-name,enable-demo-key}`)
-- [ ] Convert `HostedZoneId` / `ApiDomainName` / `IconDomainName` / demo-key
+- [x] SSM parameter layout (repo-scoped `/bdo-market-insights/<env>/<category>/<key>`)
+- [x] Convert `HostedZoneId` / `ApiDomainName` / `IconDomainName` / demo-key
       template params to `AWS::SSM::Parameter::Value<String>`; `samconfig.toml`
       supplies the key paths per env; `none` sentinel + condition updates
-- [ ] `make seed-config STAGE=<env>` (idempotent `put-parameter`; zone-id lookup
+- [x] `make seed-config STAGE=<env>` (idempotent `put-parameter`; zone-id lookup
       via `list-hosted-zones-by-name`)
-- [ ] Remove the bastion stack + `EnableBastion` parameter/condition everywhere
-- [ ] admin-query Lambda (in-VPC, IAM auth) + `make db-admin SQL=…`
-- [ ] Break-glass (ephemeral access) documented; no standing resource
-- [ ] `cfn-lint` / `sam validate --lint` green
+- [x] Remove the bastion stack + `EnableBastion` parameter/condition everywhere
+      (retained as an on-demand break-glass stack — ADR-0027)
+- [x] admin-query Lambda (in-VPC, IAM auth) + `make db-admin SQL=…` (ADR-0026)
+- [x] Break-glass (ephemeral access) documented; no standing resource (ADR-0027)
+- [x] `cfn-lint` / `sam validate --lint` green
 
 ## Phase 2 — Auto-migrations
 
-- [ ] Re-sequence role bootstrap to use the RDS master secret (drop the
-      dba-secret-gated-on-bastion path); migrator IAM scoped to that secret
-- [ ] MigrateCustomResource invokes the migrator on create/update; long runs via
-      a migrate Step Functions the CR waits on
-- [ ] Deploy fails on migration failure; rollback (forward-fix / downgrade)
-      documented
-- [ ] Tests for the migrator invocation path
+- [x] Re-sequence role bootstrap to use the RDS master secret (drop the
+      dba-secret-gated-on-bastion path); `make db-bootstrap` (ADR-0025)
+- [x] Auto-migrate custom resource invokes the migrator on create/update
+      (long-run Step Functions deferred — migrations are small/fast)
+- [x] Deploy fails on migration failure; rollback (forward-fix / downgrade)
+      documented (ADR-0025)
+- [x] Tests for the migrator invocation path
 
 ## Phase 3 — Bootstrap orchestrator
 

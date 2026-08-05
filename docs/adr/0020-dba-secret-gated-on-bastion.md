@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Superseded by ADR-0027. The `dba` secret and role are removed with the standing
+bastion; break-glass access authenticates as the RDS master, and routine DB
+access uses the admin-query Lambda (ADR-0026).
 
 ## Context
 
