@@ -3,9 +3,9 @@
 Phased (ADR-0024). Each phase is independently deployable and leaves the
 environment working; nothing ships half-built. Design only until scheduled.
 
-> Implemented as re-sequenced slices: ① SSM config, ② auto-migrations,
-> ③ admin-query Lambda, ④ remove bastion, ⑤ bootstrap orchestrator,
-> ⑥ verify + thin deploy. SSM names are repo-scoped
+> Implemented as re-sequenced slices: (1) SSM config, (2) auto-migrations,
+> (3) admin-query Lambda, (4) remove bastion, (5) bootstrap orchestrator,
+> (6) verify + thin deploy. SSM names are repo-scoped
 > (`/bdo-market-insights/<env>/<category>/<key>`), not the `/bdo/…` sketch below.
 
 ## Phase 1 — Config in SSM + remove the bastion
