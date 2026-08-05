@@ -376,6 +376,17 @@ def scan_catalog_fingerprints() -> dict[int, tuple[str, int | None, dict[str, st
     return fingerprints
 
 
+def catalog_is_empty() -> bool:
+    """Return True if the items table has no rows.
+
+    A cheap ``Scan`` with ``Limit=1`` projecting only the key -- used by the
+    bootstrap first-create guard (ADR-0028) to decide whether to seed a fresh
+    environment. Directly reflects "is there any data?" rather than a proxy.
+    """
+    response = _get_table().scan(Limit=1, ProjectionExpression="id")
+    return not response.get("Items")
+
+
 def list_tracked_items() -> list[Item]:
     """Query the sparse tracked-index for all tracked items (ETL retrieveItems).
 

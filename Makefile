@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy seed-config break-glass-up break-glass-down db-bootstrap db-admin migrate migrate-lambda market-catalog track seed-catalog seed-tracked seed-data seed clean
+.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy seed-config break-glass-up break-glass-down db-bootstrap db-admin migrate migrate-lambda market-catalog track seed-catalog seed-tracked seed-data seed bootstrap clean
 
 STAGE ?= dev
 AWS_REGION ?= us-east-1
@@ -12,6 +12,7 @@ LOCAL_DB_PORT ?= 5432
 BDO_REGION ?= tw
 USE_RDS_PROXY ?= false
 AUTO_MIGRATE ?= true
+AUTO_BOOTSTRAP ?= true
 
 # Content hash of the migration set. Passed to CloudFormation as
 # MigrationsFingerprint; when it changes, the auto-migrate custom resource
@@ -19,7 +20,7 @@ AUTO_MIGRATE ?= true
 # migrations) leaves it unchanged, so the migrator is not re-invoked.
 MIGRATIONS_FINGERPRINT := $(shell find migrations/versions -type f -name '*.py' -exec sha256sum {} \; | sort | sha256sum | cut -c1-32)
 
-DEPLOY_PARAMS := Stage=$(STAGE) BdoRegion=$(BDO_REGION) UseRdsProxy=$(USE_RDS_PROXY) AutoMigrate=$(AUTO_MIGRATE) MigrationsFingerprint=$(MIGRATIONS_FINGERPRINT) EnableDemoKey=/bdo-market-insights/$(STAGE)/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/$(STAGE)/domain/api-domain-name IconDomainName=/bdo-market-insights/$(STAGE)/domain/icon-domain-name HostedZoneId=/bdo-market-insights/$(STAGE)/domain/hosted-zone-id
+DEPLOY_PARAMS := Stage=$(STAGE) BdoRegion=$(BDO_REGION) UseRdsProxy=$(USE_RDS_PROXY) AutoMigrate=$(AUTO_MIGRATE) MigrationsFingerprint=$(MIGRATIONS_FINGERPRINT) AutoBootstrap=$(AUTO_BOOTSTRAP) EnableDemoKey=/bdo-market-insights/$(STAGE)/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/$(STAGE)/domain/api-domain-name IconDomainName=/bdo-market-insights/$(STAGE)/domain/icon-domain-name HostedZoneId=/bdo-market-insights/$(STAGE)/domain/hosted-zone-id
 
 # Built layer artifacts (CommonLayer is nested under EtlStack).
 LAYER_PYTHON := .aws-sam/build/EtlStack/CommonLayer/python
@@ -207,6 +208,20 @@ seed-data: seed-catalog seed-tracked
 # Back-compat alias. Was tracked-only (a footgun: seeding the tracked set before
 # the catalog left items without name/grade). Now runs the full ordered rebuild.
 seed: seed-data
+
+# Run the in-cloud bootstrap orchestrator (ADR-0028): the Step Functions state
+# machine catalog sync -> tracked seed -> icon sync, using the deployed Lambdas.
+# Auto-runs once on a fresh environment's first deploy; use this to re-run it on
+# demand (all steps idempotent). Contrast with `make seed*`, which are the local
+# offline scripts. Resolves the state-machine ARN from the stack outputs.
+bootstrap:
+	@ARN=$$(aws cloudformation describe-stacks --region $(AWS_REGION) \
+		--query "Stacks[?starts_with(StackName,'bdo-market-$(STAGE)')].Outputs[] | [?OutputKey=='BootstrapStateMachineArn'].OutputValue | [0]" \
+		--output text); \
+	if [ -z "$$ARN" ] || [ "$$ARN" = "None" ]; then \
+		echo "Could not resolve BootstrapStateMachineArn from the bdo-market-$(STAGE) stacks. Is the stack deployed?"; exit 1; fi; \
+	aws stepfunctions start-execution --region $(AWS_REGION) --state-machine-arn "$$ARN" \
+		--query 'executionArn' --output text && echo "Bootstrap started for stage $(STAGE)."
 
 clean:
 	rm -rf .aws-sam/ build/ dist/ *.egg-info

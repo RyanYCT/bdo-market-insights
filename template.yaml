@@ -52,6 +52,16 @@ Parameters:
     Description: >
       Content hash of migrations/versions, supplied by `make deploy`; a change
       is what triggers the auto-migrate custom resource to re-run (ADR-0025).
+  AutoBootstrap:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: >
+      Start the data bootstrap (catalog -> tracked seed -> icons) once on a fresh
+      environment's first create, if the items table is empty (ADR-0028).
+      `make bootstrap` runs it on demand regardless.
   # These four are resolved from SSM Parameter Store at deploy (ADR-0024): the
   # value passed in is an SSM key path, CloudFormation substitutes the stored
   # value, and that value is passed down to the child stacks. Real hosts live in
@@ -227,6 +237,20 @@ Resources:
         IconSyncSchedule: !Ref IconSyncSchedule
         IconDomainName: !Ref IconDomainName
         HostedZoneId: !Ref HostedZoneId
+
+  BootstrapStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: infra/bootstrap.yaml
+      Parameters:
+        Stage: !Ref Stage
+        CommonLayerArn: !GetAtt EtlStack.Outputs.CommonLayerArn
+        DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
+        CatalogSyncFunctionArn: !GetAtt CatalogStack.Outputs.CatalogSyncFunctionArn
+        IconSyncFunctionArn: !GetAtt IconsStack.Outputs.IconSyncFunctionArn
+        AutoBootstrap: !Ref AutoBootstrap
+    # Ordering after Etl/Data/Catalog/Icons is enforced by the !GetAtt *.Outputs
+    # references above; an explicit DependsOn would be redundant (cfn-lint W3005).
 
   ObservabilityStack:
     Type: AWS::CloudFormation::Stack
