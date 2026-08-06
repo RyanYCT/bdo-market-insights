@@ -1,0 +1,184 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Bootstrap orchestrator for bdo-market-insights (ADR-0028): a Step Functions
+  state machine that populates a fresh environment -- catalog sync -> tracked
+  seed -> icon sync -- plus a custom resource that starts it once on first
+  create (guarded by a catalog-empty check) and a Lambda that applies the
+  committed tracked set. Re-runnable on demand via `make bootstrap`.
+
+Parameters:
+  Stage:
+    Type: String
+    AllowedValues: [dev, prod]
+  CommonLayerArn:
+    Type: String
+    Description: ARN of the shared bdo-common Lambda layer (from the ETL stack)
+  DynamoDbTableName:
+    Type: String
+    Description: per-stage items table name (bdo-<stage>-items)
+  CatalogSyncFunctionArn:
+    Type: String
+    Description: ARN of the catalogSync Lambda (from the catalog stack)
+  IconSyncFunctionArn:
+    Type: String
+    Description: ARN of the iconSync Lambda (from the icons stack)
+  AutoBootstrap:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: >
+      When 'true', a custom resource starts the bootstrap state machine once on
+      first environment create (if the items table is empty). Set 'false' to
+      skip auto-seeding; `make bootstrap` still runs it on demand.
+
+Conditions:
+  DoAutoBootstrap: !Equals [!Ref AutoBootstrap, 'true']
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 256
+    Tracing: Active
+    Layers:
+      - !Ref CommonLayerArn
+    Environment:
+      Variables:
+        STAGE: !Ref Stage
+        POWERTOOLS_SERVICE_NAME: bdo-market-insights
+        POWERTOOLS_METRICS_NAMESPACE: BdoMarket
+
+Resources:
+  # ──────────────────────────────────────────────
+  # seedTracked — apply the committed tracked set (offline), not in VPC
+  # ──────────────────────────────────────────────
+  # Bundles scripts/data/*.json at build time (see build.py) and marks the
+  # curated items tracked via partial UpdateItem (catalog-owned fields preserved,
+  # ADR-0018). Idempotent; additive only.
+  SeedTrackedFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-seed-tracked'
+      CodeUri: ../src/functions/seed_tracked
+      Handler: app.handler
+      Timeout: 120
+      MemorySize: 512
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref DynamoDbTableName
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DynamoDbTableName
+
+  # ──────────────────────────────────────────────
+  # Bootstrap state machine — catalog -> tracked -> icons
+  # ──────────────────────────────────────────────
+  BootstrapStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub 'bdo-${Stage}-bootstrap'
+      Type: STANDARD
+      Tracing:
+        Enabled: true
+      DefinitionSubstitutions:
+        CatalogSyncArn: !Ref CatalogSyncFunctionArn
+        SeedTrackedArn: !GetAtt SeedTrackedFunction.Arn
+        IconSyncArn: !Ref IconSyncFunctionArn
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource:
+                - !Ref CatalogSyncFunctionArn
+                - !Sub '${CatalogSyncFunctionArn}:*'
+                - !GetAtt SeedTrackedFunction.Arn
+                - !Sub '${SeedTrackedFunction.Arn}:*'
+                - !Ref IconSyncFunctionArn
+                - !Sub '${IconSyncFunctionArn}:*'
+      Definition:
+        Comment: >
+          One-shot environment bootstrap: full catalog sync, then apply the
+          curated tracked set, then materialize tracked-item icons. Each task is
+          idempotent, so the machine is safe to re-run.
+        StartAt: CatalogSync
+        States:
+          CatalogSync:
+            Type: Task
+            Resource: '${CatalogSyncArn}'
+            Retry:
+              - ErrorEquals:
+                  - Lambda.ServiceException
+                  - Lambda.AWSLambdaException
+                  - Lambda.SdkClientException
+                  - Lambda.TooManyRequestsException
+                IntervalSeconds: 5
+                MaxAttempts: 3
+                BackoffRate: 2
+            Next: SeedTracked
+          SeedTracked:
+            Type: Task
+            Resource: '${SeedTrackedArn}'
+            Retry:
+              - ErrorEquals:
+                  - Lambda.ServiceException
+                  - Lambda.AWSLambdaException
+                  - Lambda.SdkClientException
+                  - Lambda.TooManyRequestsException
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 2
+            Next: IconSync
+          IconSync:
+            Type: Task
+            Resource: '${IconSyncArn}'
+            Retry:
+              - ErrorEquals:
+                  - Lambda.ServiceException
+                  - Lambda.AWSLambdaException
+                  - Lambda.SdkClientException
+                  - Lambda.TooManyRequestsException
+                IntervalSeconds: 5
+                MaxAttempts: 3
+                BackoffRate: 2
+            End: true
+
+  # ──────────────────────────────────────────────
+  # First-create trigger — starts the bootstrap once, fire-and-forget
+  # ──────────────────────────────────────────────
+  BootstrapTriggerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-bootstrap-trigger'
+      CodeUri: ../src/functions/bootstrap_trigger
+      Handler: app.handler
+      Timeout: 30
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref DynamoDbTableName
+          BOOTSTRAP_STATE_MACHINE_ARN: !Ref BootstrapStateMachine
+      Policies:
+        # Read-only: the catalog-empty guard does a Scan(Limit=1).
+        - DynamoDBReadPolicy:
+            TableName: !Ref DynamoDbTableName
+        - Statement:
+            - Effect: Allow
+              Action: states:StartExecution
+              Resource: !Ref BootstrapStateMachine
+
+  # Starts the bootstrap state machine once, on stack Create only, if the items
+  # table is empty. Fire-and-forget (StartExecution + signal SUCCESS at once), so
+  # the deploy never waits on seeding. Update/Delete are no-ops.
+  BootstrapTrigger:
+    Type: AWS::CloudFormation::CustomResource
+    Condition: DoAutoBootstrap
+    Properties:
+      ServiceToken: !GetAtt BootstrapTriggerFunction.Arn
+
+Outputs:
+  BootstrapStateMachineArn:
+    Value: !Ref BootstrapStateMachine
+    Export:
+      Name: !Sub '${AWS::StackName}-BootstrapStateMachineArn'

@@ -1546,3 +1546,41 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   inert; dropping it needs master privileges — deferred as a manual cleanup.
 - Next: slice ⑤ bootstrap orchestrator, then ⑥ verify + thin deploy + full
   runbook rewrite.
+
+
+## 2026-07-05 — Deploy convergence P5: bootstrap orchestrator
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/bootstrap-orchestrator`
+**Phase:** Deploy-convergence slice (5) (implements ADR-0024 item 4)
+**Commits:** see PR
+
+### Done
+- Added a `bdo-<stage>-bootstrap` Step Functions state machine that seeds a
+  fresh environment: **catalog sync -> tracked seed -> icon sync**, each an
+  idempotent Task with the standard retry block (`infra/bootstrap.yaml`).
+- New **`seedTracked` Lambda** (`src/functions/seed_tracked/`): the tracked-set
+  seed was script-only; this reuses `bdo_common.tracking` + `dynamo` and bundles
+  the committed `scripts/data/*.json` at build time (build.py, mirrors the
+  migrator). `scripts/seed_items.py` stays for local authoring.
+- **First-create auto-run**: a `BootstrapTrigger` custom resource
+  (`src/functions/bootstrap_trigger/`) starts the state machine on stack Create
+  only, guarded by a `catalog_is_empty()` `Scan(Limit=1)`, fire-and-forget
+  (StartExecution + signal SUCCESS immediately; deploy never waits). Update/Delete
+  no-op; always signals CloudFormation. Gated by `AutoBootstrap` (default true).
+- Added `dynamo.catalog_is_empty()`; wired `BootstrapStack` into `template.yaml`
+  (after catalog/icons); `AUTO_BOOTSTRAP` + `AutoBootstrap` in Makefile
+  `DEPLOY_PARAMS`; `make bootstrap STAGE=<env>` (on-demand start-execution).
+- ADR-0028. Verified: cfn-lint clean; ruff/mypy clean; 350 unit tests pass
+  (6 new; 15 integration deselected); confirmed build.py bundles the data files.
+
+### Decisions
+- Bundle the curated data files in the Lambda (git-versioned config, changes via
+  PR+redeploy) rather than S3 → ADR-0028.
+- Fire-and-forget first-create (data seeding is non-gating for the deploy);
+  guard = direct `Scan(Limit=1)` not an SSM-param proxy → ADR-0028.
+
+### Deferred / open questions
+- Next: slice (6) verify + thin deploy + full runbook rewrite. `make verify`
+  must tolerate a just-started (async) bootstrap on a fresh env.
