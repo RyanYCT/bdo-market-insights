@@ -264,3 +264,4 @@ Resources:
         Stage: !Ref Stage
         EtlStateMachineArn: !GetAtt EtlStack.Outputs.EtlStateMachineArn
         InsightsStateMachineArn: !GetAtt InsightsStack.Outputs.InsightsStateMachineArn
+        BootstrapStateMachineArn: !GetAtt BootstrapStack.Outputs.BootstrapStateMachineArn

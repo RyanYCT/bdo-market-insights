@@ -50,6 +50,13 @@ def main() -> None:
     for name in _DATA_FILES:
         shutil.copy(data_src / name, data_dst / name)
 
+    # Fail the build loudly if any data file did not land -- the bundle is the
+    # only guarantee the tracked set ships with the function (there is no
+    # runtime fallback), so a silent miss must never reach a deploy.
+    missing = [name for name in _DATA_FILES if not (data_dst / name).is_file()]
+    if missing:
+        raise SystemExit(f"seedTracked build failed to bundle data files: {missing}")
+
 
 if __name__ == "__main__":
     main()

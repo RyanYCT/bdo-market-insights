@@ -16,6 +16,9 @@ Parameters:
   InsightsStateMachineArn:
     Type: String
     Description: ARN of the Insights state machine (from the Insights stack) for alarms
+  BootstrapStateMachineArn:
+    Type: String
+    Description: ARN of the bootstrap state machine (from the bootstrap stack) for alarms
   LogRetentionInDays:
     Type: Number
     Default: 30
@@ -247,6 +250,60 @@ Resources:
               Dimensions:
                 - Name: StateMachineArn
                   Value: !Ref InsightsStateMachineArn
+            Period: 86400
+            Stat: Sum
+
+  # The bootstrap state machine (catalog -> tracked seed -> icon sync, ADR-0028)
+  # is fire-and-forget on first create, and the tracked-seed step has no schedule
+  # to self-heal, so a failed run would otherwise be silent. Any non-success
+  # execution in 24h -> notify (then re-run with `make bootstrap`).
+  BootstrapExecutionFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-${Stage}-bootstrap-execution-failure'
+      AlarmDescription: 'One or more bootstrap executions failed/aborted/timed out in 24h'
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 1
+      EvaluationPeriods: 1
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      Metrics:
+        - Id: e_bad
+          Label: Bootstrap non-success executions
+          Expression: FILL(m_failed, 0) + FILL(m_aborted, 0) + FILL(m_timedout, 0)
+          ReturnData: true
+        - Id: m_failed
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/States
+              MetricName: ExecutionsFailed
+              Dimensions:
+                - Name: StateMachineArn
+                  Value: !Ref BootstrapStateMachineArn
+            Period: 86400
+            Stat: Sum
+        - Id: m_aborted
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/States
+              MetricName: ExecutionsAborted
+              Dimensions:
+                - Name: StateMachineArn
+                  Value: !Ref BootstrapStateMachineArn
+            Period: 86400
+            Stat: Sum
+        - Id: m_timedout
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/States
+              MetricName: ExecutionsTimedOut
+              Dimensions:
+                - Name: StateMachineArn
+                  Value: !Ref BootstrapStateMachineArn
             Period: 86400
             Stat: Sum
 
