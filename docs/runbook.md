@@ -63,14 +63,31 @@ Standing up a stack from empty (a new account, or after a full teardown — see
 orphan-clearing that precedes this). Do these in order; each is a self-contained
 subsection below, so the sequence reads top to bottom without jumping out:
 
-1. **Deploy the stack:** `make deploy STAGE=dev` (a fresh create; see
-   [Deployment notes](#deployment-notes) for the build guard and full-state flags).
-2. **[First-time role bootstrap](#first-time-role-bootstrap)** — create the DB
-   roles and apply the initial schema.
-3. **[Backfill the item catalog](#backfill-the-item-catalog-one-time)**.
-4. **[Seed the tracked set](#seed-the-tracked-set-one-time)**.
-5. **[Item icons](#item-icons)** — materialize.
-6. **Verify** — [Post-deploy verification (dev)](#post-deploy-verification-dev).
+1. **Seed deploy config (once):** `make seed-config STAGE=<env>` — writes the
+   SSM parameters the deploy resolves (custom domain / demo key / hosted-zone;
+   dev defaults to none). See [Deployment notes](#deployment-notes).
+2. **Bootstrap the DB roles (once):** introducing the auto-migrate custom
+   resource is two-phase, so deploy with it off, create the roles, then deploy
+   normally (see [First-time role bootstrap](#first-time-role-bootstrap)):
+
+   ```sh
+   make deploy STAGE=<env> AUTO_MIGRATE=false
+   make db-bootstrap STAGE=<env>
+   ```
+3. **Converge + verify:** `make deploy STAGE=<env>`. One command: it applies
+   routine migrations (auto-migrate custom resource, ADR-0025), starts the data
+   bootstrap on first create (catalog → tracked set → icons, ADR-0028), and ends
+   with `make verify` (liveness + RDS path + waits on the async bootstrap to
+   populate data, ADR-0029).
+
+That is the whole bring-up — the catalog backfill, tracked-set seed, and icon
+materialization run **automatically** inside the bootstrap orchestrator, so
+there are no manual seed steps. Re-run the seeding anytime with
+`make bootstrap STAGE=<env>` (idempotent); the offline `make seed*` scripts
+below remain as local alternatives. The first `make deploy` may wait several
+minutes on the initial ~tens-of-thousands-item catalog sync — raise
+`VERIFY_WAIT` or pass `VERIFY=false` and run `make verify` separately if you'd
+rather not block on it.
 
 For **prod**, also run the one-time
 [CI/CD deploy role bootstrap](#cicd-deploy-role-github-oidc-bootstrap) so tagged
@@ -112,6 +129,10 @@ deploy via the auto-migrate custom resource (ADR-0025) — no tunnel required.
 > `REVOKE lambda_rds_user FROM postgres; REVOKE lambda_migrator FROM postgres;`.
 
 ### Backfill the item catalog (one-time)
+
+> The bootstrap orchestrator (ADR-0028) runs the catalog sync automatically on
+> a fresh environment's first deploy and on every `make bootstrap`. The manual
+> backfill below is the offline/local alternative or for a targeted re-run.
 
 The full BDO item catalog (~tens of thousands of items) is synced from arsha.io
 `util/db` by the weekly `catalogSync` Lambda. For the initial load, run the
@@ -169,6 +190,11 @@ flowchart LR
     end
 ```
 
+> The bootstrap orchestrator (ADR-0028) applies the committed tracked set
+> automatically (the `seedTracked` Lambda) on first deploy and on
+> `make bootstrap`. Use the offline flow below to **change** what's tracked,
+> then `make bootstrap STAGE=<env>` (or a redeploy) applies the new set.
+
 The ETL polls only *tracked* items. A **curated default tracked set ships** in
 `scripts/data/tracked_items.json` — you can seed it as-is, or adjust what's
 tracked first with the toggle below. Everything here is offline; only
@@ -221,6 +247,10 @@ item whose `(main:sub)` is not in `categories.json` is still tracked but left
 ungrouped — extend the map to classify it.
 
 ### Item icons
+
+> The bootstrap orchestrator (ADR-0028) runs the icon sync automatically as its
+> last step on a fresh deploy and on `make bootstrap`. The manual invoke below
+> is for materializing immediately outside that flow.
 
 Icons are self-hosted in the `bdo-<stage>-icons` bucket and materialized from the
 Pearl Abyss CDN by the daily `iconSync` Lambda, which processes tracked items
@@ -367,6 +397,16 @@ input/output, and retry behaviour.
 | Prod | Push a `v*` tag to trigger CI deploy |
 | Rollback | Deploy the previous tag |
 
+`make deploy` converges the whole environment: `build → sam deploy` (which runs
+migrations and starts the first-create data bootstrap) `→ verify`. Other
+one-command operations:
+
+- `make verify STAGE=<env>` — post-deploy smoke test (ADR-0029); also run
+  automatically at the end of `make deploy` (`VERIFY=false` to skip).
+- `make bootstrap STAGE=<env>` — re-run the data seeding (catalog → tracked set
+  → icons); idempotent.
+- `make db-admin STAGE=<env> SQL='…'` — ad-hoc read-only SQL (ADR-0026).
+
 ### Deployment notes
 
 Two things apply to every `make deploy` below:
@@ -438,8 +478,19 @@ See [Running migrations](#running-migrations) for how this works.
 
 #### Post-deploy verification (dev)
 
-This block is parametrized on `STAGE`; the [prod section](#post-deploy-verification-prod)
-reuses it with `STAGE=prod`.
+The one-command check is **`make verify STAGE=<env>`** (ADR-0029) — it runs
+automatically at the end of `make deploy` and asserts liveness
+(`/v1/openapi.json` → 200), the RDS path (admin-query `select 1`), and that the
+items table is populated (waiting on the async bootstrap up to `VERIFY_WAIT`):
+
+```sh
+make verify STAGE=dev
+```
+
+The manual commands below are a deeper, key-authenticated spot-check (resolve a
+private API key and hit `/v1/items` directly) — useful to exercise the key-gated
+read path or inspect responses by hand. This block is parametrized on `STAGE`;
+the [prod section](#post-deploy-verification-prod) reuses it with `STAGE=prod`.
 
 ```bash
 STAGE=dev
