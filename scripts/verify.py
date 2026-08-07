@@ -45,28 +45,50 @@ def _stack_output(cf: Any, stage: str, key: str) -> str:
     raise SystemExit(f"error: output {key} not found on {prefix}* stacks. Is the stack deployed?")
 
 
-def check_liveness(api_url: str) -> tuple[bool, str]:
-    """GET the public OpenAPI document; a 200 proves the API serves."""
+def check_liveness(
+    api_url: str,
+    *,
+    attempts: int = 3,
+    backoff: float = 2.0,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[bool, str]:
+    """GET the public OpenAPI document; a 200 proves the API serves.
+
+    Retries a few times: right after a deploy, API Gateway / Lambda may need a
+    moment to warm, so a single attempt can spuriously fail an otherwise-healthy
+    stack. Backs off linearly between attempts.
+    """
     url = f"{api_url}/v1/openapi.json"
-    try:
-        req = urllib.request.Request(url, method="GET")  # noqa: S310 - fixed https API URL
-        with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310
-            code = resp.status
-    except Exception as exc:  # noqa: BLE001 - any error is a liveness failure
-        return False, f"liveness: GET {url} failed: {exc}"
-    ok = code == 200
-    return ok, f"liveness: GET /v1/openapi.json -> {code}"
+    last = f"liveness: GET {url} produced no result"
+    for attempt in range(1, attempts + 1):
+        try:
+            req = urllib.request.Request(url, method="GET")  # noqa: S310 - fixed https API URL
+            with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310
+                code = resp.status
+            if code == 200:
+                return True, f"liveness: GET /v1/openapi.json -> {code}"
+            last = f"liveness: GET /v1/openapi.json -> {code}"
+        except Exception as exc:  # noqa: BLE001 - any error is a liveness failure
+            last = f"liveness: GET {url} failed: {exc}"
+        if attempt < attempts:
+            sleep(backoff * attempt)
+    return False, last
 
 
 def check_rds(lambda_client: Any, stage: str) -> tuple[bool, str]:
     """Invoke the admin-query Lambda with ``select 1`` to prove the RDS path."""
     fn = f"bdo-{stage}-admin-query"
     payload = json.dumps({"sql": "select 1 as ok"}).encode("utf-8")
-    resp = lambda_client.invoke(FunctionName=fn, InvocationType="RequestResponse", Payload=payload)
-    body = resp["Payload"].read().decode("utf-8")
-    if resp.get("FunctionError"):
-        return False, f"rds: admin-query failed ({resp['FunctionError']}): {body[:200]}"
-    rows = json.loads(body).get("rows") or []
+    try:
+        resp = lambda_client.invoke(
+            FunctionName=fn, InvocationType="RequestResponse", Payload=payload
+        )
+        body = resp["Payload"].read().decode("utf-8")
+        if resp.get("FunctionError"):
+            return False, f"rds: admin-query failed ({resp['FunctionError']}): {body[:200]}"
+        rows = json.loads(body).get("rows") or []
+    except Exception as exc:  # noqa: BLE001 - any error is an RDS-path failure
+        return False, f"rds: admin-query invoke failed: {exc}"
     ok = bool(rows)
     return ok, f"rds: admin-query select 1 -> {'ok' if ok else 'no rows'}"
 
@@ -77,29 +99,47 @@ def data_check(
     *,
     wait: float,
     poll: float,
+    grace: float = 60.0,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
 ) -> tuple[bool, str]:
     """Wait (execution-aware) until the items table is non-empty.
 
-    Returns as soon as items appear; fails fast on a failed/absent bootstrap;
-    otherwise waits while the bootstrap execution is RUNNING, bounded by ``wait``.
+    Returns as soon as items appear; fails fast on a failed bootstrap; otherwise
+    waits while the bootstrap execution is RUNNING, bounded by ``wait``.
+
+    When no execution is listed yet, it keeps waiting up to ``grace`` seconds
+    before concluding the bootstrap was never triggered: right after a converged
+    deploy ``ListExecutions`` is eventually consistent, so a just-started
+    execution can briefly list as absent.
     """
-    deadline = now() + wait
+    start = now()
+    deadline = start + wait
+    grace_deadline = min(start + grace, deadline)
     while True:
         if items_present():
             return True, "data: items table is non-empty"
         execution = latest_execution()
         if execution is None:
-            return (
-                False,
-                "data: items table empty and no bootstrap execution found; run `make bootstrap`",
-            )
+            # No execution listed yet: tolerate the ListExecutions consistency
+            # window before declaring the bootstrap was never triggered.
+            if now() >= grace_deadline:
+                return (
+                    False,
+                    "data: items table empty and no bootstrap execution found; "
+                    "run `make bootstrap`",
+                )
+            sleep(poll)
+            continue
         status = execution["status"]
         arn = execution.get("executionArn", "?")
         if status in _EXEC_FAILED:
             return False, f"data: bootstrap execution {status}: {arn}"
         if status == "SUCCEEDED":
+            # The items Scan is eventually consistent; re-check once so a read
+            # lag at the SUCCEEDED transition does not false-fail.
+            if items_present():
+                return True, "data: items table is non-empty"
             return False, f"data: bootstrap SUCCEEDED but items table is empty: {arn}"
         # RUNNING / PENDING_REDRIVE: still populating.
         if now() >= deadline:
@@ -112,25 +152,16 @@ def data_check(
 
 
 def _items_present(ddb: Any, table: str) -> bool:
-    """True if the items table has at least one row (cheap Scan Limit=1)."""
-    resp = ddb.scan(TableName=table, Limit=1, ProjectionExpression="id")
+    """True if the items table has at least one row (cheap consistent Scan Limit=1)."""
+    resp = ddb.scan(TableName=table, Limit=1, ProjectionExpression="id", ConsistentRead=True)
     return bool(resp.get("Items"))
 
 
-def _latest_bootstrap_execution(sfn: Any, stage: str) -> dict[str, str] | None:
+def _latest_bootstrap_execution(sfn: Any, state_machine_arn: str) -> dict[str, str] | None:
     """Return the most recent bootstrap execution ``{status, executionArn}`` or None."""
-    name = f"bdo-{stage}-bootstrap"
-    arn: str | None = None
-    for page in sfn.get_paginator("list_state_machines").paginate():
-        for machine in page["stateMachines"]:
-            if machine["name"] == name:
-                arn = machine["stateMachineArn"]
-                break
-        if arn:
-            break
-    if arn is None:
-        return None
-    executions = sfn.list_executions(stateMachineArn=arn, maxResults=1).get("executions", [])
+    executions = sfn.list_executions(stateMachineArn=state_machine_arn, maxResults=1).get(
+        "executions", []
+    )
     if not executions:
         return None
     return {"status": executions[0]["status"], "executionArn": executions[0]["executionArn"]}
@@ -157,6 +188,7 @@ def main() -> None:
     sfn = boto3.client("stepfunctions", region_name=args.region)
 
     api_url = _stack_output(cf, args.stage, "ApiUrl")
+    bootstrap_arn = _stack_output(cf, args.stage, "BootstrapStateMachineArn")
     table = f"bdo-{args.stage}-items"
 
     print(f"Verifying stage {args.stage} ({args.region})...")
@@ -165,9 +197,10 @@ def main() -> None:
         check_rds(lambda_client, args.stage),
         data_check(
             lambda: _items_present(ddb, table),
-            lambda: _latest_bootstrap_execution(sfn, args.stage),
+            lambda: _latest_bootstrap_execution(sfn, bootstrap_arn),
             wait=args.wait,
             poll=args.poll,
+            grace=max(4 * args.poll, 60.0),
         ),
     ]
 
