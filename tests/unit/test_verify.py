@@ -236,7 +236,6 @@ def test_rds_no_rows() -> None:
     assert ok is False
 
 
-
 class _RaisingLambda:
     def invoke(self, **_kwargs: Any) -> dict[str, Any]:
         raise RuntimeError("no such function")
