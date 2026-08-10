@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy seed-config break-glass-up break-glass-down db-bootstrap db-admin migrate migrate-lambda market-catalog track seed-catalog seed-tracked seed-data seed bootstrap clean
+.PHONY: lint format typecheck test test-integration openapi postman build verify-layer deploy verify seed-config break-glass-up break-glass-down db-bootstrap db-admin migrate migrate-lambda market-catalog track seed-catalog seed-tracked seed-data seed bootstrap clean
 
 STAGE ?= dev
 AWS_REGION ?= us-east-1
@@ -13,6 +13,11 @@ BDO_REGION ?= tw
 USE_RDS_PROXY ?= false
 AUTO_MIGRATE ?= true
 AUTO_BOOTSTRAP ?= true
+# Post-deploy smoke test (ADR-0029). VERIFY=false skips it at the end of a
+# deploy; VERIFY_WAIT caps the execution-aware wait for the async bootstrap to
+# populate data (it returns as soon as the bootstrap execution completes).
+VERIFY ?= true
+VERIFY_WAIT ?= 1200
 
 # Content hash of the migration set. Passed to CloudFormation as
 # MigrationsFingerprint; when it changes, the auto-migrate custom resource
@@ -84,6 +89,17 @@ verify-layer:
 # that a non-issue.
 deploy: build
 	sam deploy --config-env $(STAGE) --parameter-overrides "$(DEPLOY_PARAMS)"
+ifneq ($(VERIFY),false)
+	$(MAKE) verify STAGE=$(STAGE) AWS_REGION=$(AWS_REGION)
+endif
+
+# Post-deploy smoke test (ADR-0029): liveness (public /v1/openapi.json 200),
+# RDS-backed serving (admin-query `select 1`), and data present (items table
+# non-empty, waiting on the async bootstrap up to VERIFY_WAIT). Key-free and
+# uniform dev/prod. Runs automatically at the end of `make deploy`; run it
+# standalone anytime.
+verify:
+	uv run python scripts/verify.py --stage $(STAGE) --region $(AWS_REGION) --wait $(VERIFY_WAIT)
 
 # One-time (or on change) per stage: write the deploy config into SSM so the
 # SSM-resolved template params (ADR-0024) can be substituted at deploy. Values

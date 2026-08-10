@@ -1584,3 +1584,41 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 ### Deferred / open questions
 - Next: slice (6) verify + thin deploy + full runbook rewrite. `make verify`
   must tolerate a just-started (async) bootstrap on a fresh env.
+
+
+## 2026-07-05 — Deploy convergence P6: verify + thin deploy (final slice)
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/deploy-verify`
+**Phase:** Deploy-convergence slice (6) (implements ADR-0024 item 5; completes the redesign)
+**Commits:** see PR
+
+### Done
+- Added `scripts/verify.py` + `make verify STAGE=<env>`: a key-free post-deploy
+  smoke test — liveness (`GET /v1/openapi.json` 200, the public route), RDS-backed
+  serving (admin-query `select 1`, ADR-0026), and items-table non-empty. The data
+  check is **execution-aware**: it follows the async bootstrap state machine
+  (waits while RUNNING, passes when items appear, fails fast on a FAILED run),
+  bounded by `VERIFY_WAIT` (default 1200s) — so it neither false-fails the large
+  first-time catalog sync nor waits on a redeploy.
+- Market rows are not asserted (ETL-populated, absent on a fresh env); the RDS
+  check proves the path serves.
+- `make deploy` is now `build → sam deploy → verify` (migrations + first-create
+  bootstrap already run inside `sam deploy`). `VERIFY=false` skips the check.
+- ADR-0029. Runbook rewritten around the one-command flow: bring-up is
+  seed-config → (two-phase role bootstrap) → `make deploy` (converges + verifies);
+  catalog/tracked/icon seeding noted as automated (bootstrap orchestrator) with
+  the offline `make seed*` scripts as alternatives; added `make verify` /
+  `make bootstrap` to the quick reference.
+- Verified: ruff/mypy clean; 362 unit tests pass (12 new); `make -n` confirms
+  verify wires into deploy and `VERIFY=false` skips it.
+
+### Decisions
+- Verify is key-free (liveness via public route, RDS via admin-query, items via
+  DynamoDB) so it is uniform dev/prod without provisioning an API key → ADR-0029.
+- Data check waits on the real bootstrap execution, not a fixed timer → ADR-0029.
+
+### Deferred / open questions
+- Deploy-convergence redesign (slices 1-6) is complete. Prod rollout of the full
+  converged flow is the pending operational step (see below).
