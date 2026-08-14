@@ -31,6 +31,11 @@ Parameters:
     Description: >
       Comma-separated arsha util/db languages to sync. English is the canonical
       name (stored on `name`); others go in the `names` map.
+  LogRetentionInDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 180, 365, 400, 545, 731, 1827, 3653]
+    Description: Retention for this stack's Lambda log groups (default 30, matches the API SLO window)
 
 Globals:
   Function:
@@ -84,6 +89,16 @@ Resources:
           Properties:
             Schedule: !Ref CatalogSyncSchedule
             Description: Weekly full-catalog sync from arsha.io util/db (post-maintenance)
+
+  # ──────────────────────────────────────────────
+  # Log group — co-located with the function (ADR-0030). Created before the
+  # bootstrap orchestrator can invoke catalogSync, so the managed group wins.
+  # ──────────────────────────────────────────────
+  CatalogSyncLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-catalog-sync'
+      RetentionInDays: !Ref LogRetentionInDays
 
 Outputs:
   CatalogSyncFunctionArn:

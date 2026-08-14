@@ -51,6 +51,11 @@ Parameters:
     Type: String
     Default: ''
     Description: Optional email subscribed to the insights SNS topic (blank = no subscription)
+  LogRetentionInDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 180, 365, 400, 545, 731, 1827, 3653]
+    Description: Retention for this stack's Lambda log groups (default 30, matches the API SLO window)
 
 Conditions:
   HasInsightsEmail: !Not [!Equals [!Ref InsightsAlarmEmail, '']]
@@ -346,6 +351,33 @@ Resources:
               Best-effort notification failed after retries. The summary is
               already stored and served via /v1/insights, so the run still
               succeeds rather than reporting a false failure.
+
+  # ──────────────────────────────────────────────
+  # Log groups — co-located with their functions (ADR-0030).
+  # ──────────────────────────────────────────────
+  InsightsComputeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-compute'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  InsightsSummarizeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-summarize'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  InsightsStoreLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-store'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  InsightsDiscordLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-discord'
+      RetentionInDays: !Ref LogRetentionInDays
 
 Outputs:
   InsightsStateMachineArn:

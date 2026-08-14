@@ -1,9 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Observability for bdo-market-insights: one CloudWatch dashboard, the SLO +
+  Observability for bdo-market-insights: one CloudWatch dashboard and the SLO +
   pipeline alarms (API 5xx rate, API p95 latency, ETL/insights execution
-  failures, insight + catalog fetch failures -> SNS), and log-group retention
-  for every Lambda. Targets match docs/slo.md and the Observability section of
+  failures, insight + catalog fetch failures -> SNS). Lambda log groups (with
+  retention) are co-located with their functions in the owning stacks (ADR-0030).
+  Targets match docs/slo.md and the Observability section of
   .kiro/specs/v3/design.md.
 
 Parameters:
@@ -19,11 +20,6 @@ Parameters:
   BootstrapStateMachineArn:
     Type: String
     Description: ARN of the bootstrap state machine (from the bootstrap stack) for alarms
-  LogRetentionInDays:
-    Type: Number
-    Default: 30
-    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 180, 365, 400, 545, 731, 1827, 3653]
-    Description: Retention applied to every Lambda log group (default 30, matches the API SLO window)
   AlarmEmail:
     Type: String
     Default: ''
@@ -330,114 +326,6 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlarmTopic]
       OKActions: [!Ref AlarmTopic]
-
-  # ──────────────────────────────────────────────
-  # Log-group retention (one per Lambda; names follow the FunctionName
-  # convention bdo-${Stage}-<name> from infra/etl.yaml and infra/api.yaml).
-  # Created here so retention is managed centrally; on a fresh deploy the
-  # functions have not logged yet, so these own the groups.
-  # ──────────────────────────────────────────────
-  RetrieveItemsLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-retrieve-items'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  FetchDataLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-fetch-data'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  CleanDataLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-clean-data'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  StoreDataLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-store-data'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  RollupDailyLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-rollup-daily'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  PurgeOldSnapshotsLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-purge-old-snapshots'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  MigratorLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-migrator'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  ItemRegistryLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-item-registry'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  MarketQueryLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-market-query'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  AdminQueryLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-admin-query'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  DocsLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-docs'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  InsightsComputeLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-compute'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  InsightsSummarizeLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-summarize'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  InsightsStoreLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-store'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  InsightsDiscordLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-discord'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  CatalogSyncLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-catalog-sync'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  IconSyncLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-icon-sync'
-      RetentionInDays: !Ref LogRetentionInDays
 
   # ──────────────────────────────────────────────
   # Dashboard

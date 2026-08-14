@@ -68,10 +68,12 @@ subsection below, so the sequence reads top to bottom without jumping out:
    dev defaults to none). See [Deployment notes](#deployment-notes).
 2. **Bootstrap the DB roles (once):** introducing the auto-migrate custom
    resource is two-phase, so deploy with it off, create the roles, then deploy
-   normally (see [First-time role bootstrap](#first-time-role-bootstrap)):
+   normally (see [First-time role bootstrap](#first-time-role-bootstrap)). Pass
+   `VERIFY=false` on this first deploy — the DB roles `verify` checks
+   (`lambda_rds_user`) are not created until `make db-bootstrap` runs next:
 
    ```sh
-   make deploy STAGE=<env> AUTO_MIGRATE=false
+   make deploy STAGE=<env> AUTO_MIGRATE=false VERIFY=false
    make db-bootstrap STAGE=<env>
    ```
 3. **Converge + verify:** `make deploy STAGE=<env>`. One command: it applies
@@ -112,9 +114,9 @@ auto-migrate custom resource must be two-phase (ADR-0025), deploy with
 auto-migrate off, bootstrap, then deploy normally:
 
 ```sh
-make deploy STAGE=dev AUTO_MIGRATE=false   # creates infra incl. the migrator, no auto-migrate CR
+make deploy STAGE=dev AUTO_MIGRATE=false VERIFY=false  # infra incl. migrator; no auto-migrate CR; skip verify (roles not created yet)
 make db-bootstrap STAGE=dev                # applies 0001-0003 as master (roles + schema)
-make deploy STAGE=dev                      # auto-migrate CR applies routine migrations (0004+)
+make deploy STAGE=dev                      # auto-migrate CR applies routine migrations (0004+); re-runs verify
 ```
 
 After this one-time bootstrap, all later schema changes run automatically on
