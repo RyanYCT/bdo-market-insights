@@ -49,6 +49,11 @@ Parameters:
       Content hash of migrations/versions, supplied by `make deploy`. Changing
       it is what triggers the auto-migrate custom resource to re-run; a no-op
       deploy (same migrations) does not re-invoke the migrator.
+  LogRetentionInDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 180, 365, 400, 545, 731, 1827, 3653]
+    Description: Retention for this stack's Lambda log groups (default 30, matches the API SLO window)
 
 Conditions:
   DoAutoMigrate: !Equals [!Ref AutoMigrate, 'true']
@@ -230,6 +235,10 @@ Resources:
   SchemaMigration:
     Type: AWS::CloudFormation::CustomResource
     Condition: DoAutoMigrate
+    # The migrator is invoked here during the deploy, so its log group must
+    # already exist (created by CloudFormation, below) -- otherwise the Lambda
+    # runtime auto-creates an unmanaged group and the managed one then collides.
+    DependsOn: MigratorLogGroup
     Properties:
       ServiceToken: !GetAtt MigratorFunction.Arn
       # Re-run trigger: when the migrations content hash changes, this property
@@ -397,6 +406,59 @@ Resources:
             End: true
           Done:
             Type: Succeed
+
+  # ──────────────────────────────────────────────
+  # Log groups — co-located with their functions (ADR-0030). Created here so
+  # they exist before any invocation; retention is managed, not the Lambda
+  # runtime's default never-expire group.
+  # ──────────────────────────────────────────────
+  RetrieveItemsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-retrieve-items'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  FetchDataLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-fetch-data'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  CleanDataLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-clean-data'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  StoreDataLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-store-data'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  RollupDailyLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-rollup-daily'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  PurgeOldSnapshotsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-purge-old-snapshots'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  MigratorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-migrator'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  AdminQueryLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-admin-query'
+      RetentionInDays: !Ref LogRetentionInDays
 
 Outputs:
   CommonLayerArn:

@@ -74,6 +74,11 @@ Parameters:
       sustained, 5 burst, 500/day) for "try the API" links. itemRegistry
       rejects writes made with this key, so it is effectively read-only. Off by
       default; enable on the stage you want to expose.
+  LogRetentionInDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 180, 365, 400, 545, 731, 1827, 3653]
+    Description: Retention for this stack's Lambda log groups (default 30, matches the API SLO window)
 
 Conditions:
   # Custom domain is opt-in: only built when a hostname is supplied ("none"
@@ -347,6 +352,27 @@ Resources:
             Method: get
             Auth:
               ApiKeyRequired: false
+
+  # ──────────────────────────────────────────────
+  # Log groups — co-located with their functions (ADR-0030).
+  # ──────────────────────────────────────────────
+  ItemRegistryLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-item-registry'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  MarketQueryLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-market-query'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  DocsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-docs'
+      RetentionInDays: !Ref LogRetentionInDays
 
 Outputs:
   ApiUrl:
