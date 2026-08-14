@@ -45,6 +45,9 @@ invoking resource wait for the log group:
   [BootstrapTriggerLogGroup, SeedTrackedLogGroup]`. `catalog-sync` and
   `icon-sync` need no dependency here: their groups live in the catalog/icons
   stacks, which are created before the bootstrap stack.
+- `IconsBucketJanitor` (non-prod bucket-emptying custom resource) → `DependsOn:
+  IconsBucketJanitorLogGroup`. CloudFormation invokes its Lambda for the Create
+  event during the deploy, so the group (also non-prod) must exist first.
 
 The observability stack keeps the dashboard and all SLO/pipeline alarms. Three
 previously unmanaged log groups (`bootstrap-trigger`, `seed-tracked`,
