@@ -153,7 +153,7 @@ break-glass-up:
 		--connection-type eice --local-forwarding "$(LOCAL_DB_PORT):$$RDS_ENDPOINT:5432"
 
 break-glass-down:
-	@pkill -f "ec2-instance-connect ssh" 2>/dev/null && echo "Tunnel closed." || echo "No active tunnel."; \
+	@pkill -f "[e]c2-instance-connect ssh" 2>/dev/null && echo "Tunnel closed." || echo "No active tunnel."; \
 	echo "Deleting break-glass stack bdo-market-$(STAGE)-break-glass..."; \
 	aws cloudformation delete-stack --region $(AWS_REGION) --stack-name bdo-market-$(STAGE)-break-glass; \
 	aws cloudformation wait stack-delete-complete --region $(AWS_REGION) \
