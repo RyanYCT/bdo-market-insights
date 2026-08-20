@@ -90,16 +90,6 @@ Resources:
             Schedule: !Ref CatalogSyncSchedule
             Description: Weekly full-catalog sync from arsha.io util/db (post-maintenance)
 
-  # ──────────────────────────────────────────────
-  # Log group — co-located with the function (ADR-0030). Created before the
-  # bootstrap orchestrator can invoke catalogSync, so the managed group wins.
-  # ──────────────────────────────────────────────
-  CatalogSyncLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-catalog-sync'
-      RetentionInDays: !Ref LogRetentionInDays
-
 Outputs:
   CatalogSyncFunctionArn:
     Value: !GetAtt CatalogSyncFunction.Arn

@@ -353,27 +353,6 @@ Resources:
             Auth:
               ApiKeyRequired: false
 
-  # ──────────────────────────────────────────────
-  # Log groups — co-located with their functions (ADR-0030).
-  # ──────────────────────────────────────────────
-  ItemRegistryLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-item-registry'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  MarketQueryLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-market-query'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  DocsLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-docs'
-      RetentionInDays: !Ref LogRetentionInDays
-
 Outputs:
   ApiUrl:
     Description: Base invoke URL for the /v1 API (requires x-api-key header)

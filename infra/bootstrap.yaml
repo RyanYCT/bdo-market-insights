@@ -179,30 +179,8 @@ Resources:
   BootstrapTrigger:
     Type: AWS::CloudFormation::CustomResource
     Condition: DoAutoBootstrap
-    # The trigger fires during the deploy and immediately starts the state
-    # machine (which invokes seedTracked, and the trigger Lambda itself logs),
-    # so both log groups must exist first -- otherwise the Lambda runtime
-    # auto-creates unmanaged groups that the managed ones then collide with.
-    DependsOn:
-      - BootstrapTriggerLogGroup
-      - SeedTrackedLogGroup
     Properties:
       ServiceToken: !GetAtt BootstrapTriggerFunction.Arn
-
-  # ──────────────────────────────────────────────
-  # Log groups — co-located with their functions (ADR-0030).
-  # ──────────────────────────────────────────────
-  SeedTrackedLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-seed-tracked'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  BootstrapTriggerLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-bootstrap-trigger'
-      RetentionInDays: !Ref LogRetentionInDays
 
 Outputs:
   BootstrapStateMachineArn:

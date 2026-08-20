@@ -352,33 +352,6 @@ Resources:
               already stored and served via /v1/insights, so the run still
               succeeds rather than reporting a false failure.
 
-  # ──────────────────────────────────────────────
-  # Log groups — co-located with their functions (ADR-0030).
-  # ──────────────────────────────────────────────
-  InsightsComputeLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-compute'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  InsightsSummarizeLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-summarize'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  InsightsStoreLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-store'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  InsightsDiscordLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-insights-discord'
-      RetentionInDays: !Ref LogRetentionInDays
-
 Outputs:
   InsightsStateMachineArn:
     Value: !Ref InsightsStateMachine

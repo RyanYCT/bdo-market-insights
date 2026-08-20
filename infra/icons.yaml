@@ -247,34 +247,12 @@ Resources:
   IconsBucketJanitor:
     Type: Custom::IconsBucketJanitor
     Condition: IsNotProd
-    # CloudFormation invokes the backing Lambda for the Create event during the
-    # deploy, so its log group must already exist -- otherwise the Lambda runtime
-    # auto-creates an unmanaged group that the managed one then collides with.
-    DependsOn: IconsBucketJanitorLogGroup
     Properties:
       ServiceToken: !GetAtt IconsBucketJanitorFunction.Arn
       # !Ref on the bucket also creates the dependency that makes
       # CloudFormation invoke this custom resource's Delete *before* it
       # attempts to delete IconsBucket -- the ordering the janitor relies on.
       BucketName: !Ref IconsBucket
-
-  # ──────────────────────────────────────────────
-  # Log groups — co-located with their functions (ADR-0030). iconSync's group is
-  # created before the bootstrap orchestrator can invoke it; the janitor group
-  # follows the janitor's non-prod condition.
-  # ──────────────────────────────────────────────
-  IconSyncLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-icon-sync'
-      RetentionInDays: !Ref LogRetentionInDays
-
-  IconsBucketJanitorLogGroup:
-    Type: AWS::Logs::LogGroup
-    Condition: IsNotProd
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-icons-bucket-janitor'
-      RetentionInDays: !Ref LogRetentionInDays
 
 Outputs:
   IconsBucketName:
