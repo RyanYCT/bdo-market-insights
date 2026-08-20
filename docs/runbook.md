@@ -19,6 +19,7 @@ access, insights evaluation, recovery/teardown, and troubleshooting.
   - [Breaking changes](#breaking-changes)
 - [Feature toggles](#feature-toggles)
   - [Custom API domain](#custom-api-domain)
+  - [Custom icons domain](#custom-icons-domain)
   - [Public demo API key](#public-demo-api-key)
 - [Database access](#database-access)
 - [Market Insights: dev evaluation](#market-insights-dev-evaluation)
@@ -357,13 +358,12 @@ aws iam put-role-policy --role-name bdo-github-deploy \
 gh secret set AWS_DEPLOY_ROLE_ARN \
   --body "arn:aws:iam::${ACCOUNT_ID}:role/bdo-github-deploy"
 
-# 5. Optional: if prod serves a custom domain, set its repository *secrets*
-#    (kept out of git, and masked in the public Actions logs the rendered
-#    deploy command would otherwise expose). The CI deploy passes them so every
-#    tagged release preserves the domain. Skip if not using a domain; leaving
-#    them unset deploys prod with the domain disabled.
-gh secret set PROD_API_DOMAIN_NAME --body "api.example.com"
-gh secret set PROD_HOSTED_ZONE_ID --body "ZXXXXXXXXXXXXX"
+# 5. Optional: if prod serves a custom domain, seed its config into SSM once
+#    (ADR-0024). The CI deploy resolves these keys on every tagged release, so
+#    no domain secrets are needed. Skip if not using a domain (keys default to
+#    "none"). See "Custom API domain" / "Custom icons domain".
+make seed-config STAGE=prod API_DOMAIN_NAME=api.example.com \
+    ICON_DOMAIN_NAME=cdn.example.com PARENT_DOMAIN=example.com ENABLE_DEMO_KEY=true
 ```
 
 > CloudFormation-generated resource roles are prefixed with the stack name
@@ -421,17 +421,17 @@ Two things apply to every `make deploy` below:
 - **Deploy config (domains, hosted zone, demo key) lives in SSM** (ADR-0024).
   Seed it once per stage before the first deploy — `make seed-config STAGE=<env>`
   (see below) — and `make deploy` resolves it automatically; a full-state deploy
-  can no longer drop the custom domain by forgetting a flag. The older
-  `API_DOMAIN_NAME`/`HOSTED_ZONE_ID` make-vars and the `PROD_*` GitHub secrets
-  described later in this doc are superseded and will be removed when the runbook
-  is rewritten around the one-command flow.
+  can no longer drop the custom domain by forgetting a flag. The pre-SSM
+  deploy-time `API_DOMAIN_NAME`/`HOSTED_ZONE_ID` make-vars and `PROD_*` GitHub
+  secrets are gone; set domains via `make seed-config` (or a targeted
+  `put-parameter`) as in [Custom API domain](#custom-api-domain).
 
   ```bash
   # no custom domain (dev):
   make seed-config STAGE=dev
   # with custom domains + zone lookup (prod):
   make seed-config STAGE=prod API_DOMAIN_NAME=api.example.com \
-      ICON_DOMAIN_NAME=icons.example.com PARENT_DOMAIN=example.com ENABLE_DEMO_KEY=true
+      ICON_DOMAIN_NAME=cdn.example.com PARENT_DOMAIN=example.com ENABLE_DEMO_KEY=true
   ```
 - **`make deploy` re-declares the full stack state.** Non-SSM parameters not
   passed revert to their template default; `DEPLOY_PARAMS` in the Makefile
@@ -675,49 +675,48 @@ Optional, opt-in capabilities that are off by default. Each is a plain
 ### Custom API domain
 
 The API custom domain is opt-in and off by default (ADR-0013). The hostname and
-hosted zone are **not** stored in committed config (account-specific). They are
-supplied two ways:
+hosted zone are **not** stored in committed config (account-specific); they live
+in SSM Parameter Store (ADR-0024) and are resolved at deploy:
 
-- **CI (prod):** repository **secrets** `PROD_API_DOMAIN_NAME` /
-  `PROD_HOSTED_ZONE_ID` (Settings → Secrets and variables → Actions →
-  Secrets — secrets, not variables, so the values are masked in the public
-  workflow logs). The tag-gated deploy passes them, so every release keeps the
-  domain; if unset, CI deploys with the domain disabled.
-- **Manual:** the `make deploy` variables `API_DOMAIN_NAME` / `HOSTED_ZONE_ID`.
+- `/bdo-market-insights/<stage>/domain/api-domain-name` — the hostname, or `none`
+  to disable.
+- `/bdo-market-insights/<stage>/domain/hosted-zone-id` — the Route 53 zone id for
+  the parent domain, or `none`.
 
-Use `{service}.{env}.example.com`: `api.example.com` for prod,
-`api.dev.example.com` for dev.
+Use `{service}.{env}.example.com` (e.g. `api.example.com` for prod). The
+tag-gated CI deploy resolves these keys too, so once seeded every release keeps
+the domain — no GitHub secrets or `make deploy` domain vars are involved.
 
 #### Prerequisites
 
 - The parent domain's hosted zone exists in Route 53 (shared infra; **not**
-  created by this stack). Get its ID:
+  created by this stack). Get its bare ID (the part after `/hostedzone/`):
 
   ```sh
   aws route53 list-hosted-zones-by-name --dns-name example.com \
     --query 'HostedZones[0].Id' --output text   # e.g. /hostedzone/ZXXXXXXXXXXXXX
   ```
+- IAM to create ACM certificates, API Gateway domain names, and Route 53 records.
 
-  Use the bare ID (the part after `/hostedzone/`).
-- IAM permissions to create ACM certificates, API Gateway domain names, and
-  Route 53 record sets.
+#### Enable
 
-#### Enable (prod example)
-
-Set the CI secrets once so every tagged release preserves the domain:
+Seed the SSM keys, then deploy. For a fresh stage, `make seed-config` writes the
+domain/demo-key keys together (it looks up the zone id from `PARENT_DOMAIN`):
 
 ```sh
-gh secret set PROD_API_DOMAIN_NAME --body "api.example.com"
-gh secret set PROD_HOSTED_ZONE_ID --body "ZXXXXXXXXXXXXX"
+make seed-config STAGE=prod API_DOMAIN_NAME=api.example.com \
+    PARENT_DOMAIN=example.com ENABLE_DEMO_KEY=true
+make deploy STAGE=prod
 ```
 
-To apply it now without waiting for a tag, run a full-state deploy (keep the
-stage's other persistent flags, e.g. the demo key — see
-[Deployment notes](#deployment-notes)):
+To change **only** the API hostname on an existing stage, set that one key
+directly — `make seed-config` overwrites *all* of them (including
+`hosted-zone-id`), so a targeted `put-parameter` avoids clobbering the others:
 
 ```sh
-make deploy STAGE=prod ENABLE_DEMO_KEY=true \
-  API_DOMAIN_NAME=api.example.com HOSTED_ZONE_ID=ZXXXXXXXXXXXXX
+aws ssm put-parameter --region us-east-1 --overwrite --type String \
+  --name /bdo-market-insights/prod/domain/api-domain-name --value "api.example.com"
+make deploy STAGE=prod
 ```
 
 > The first deploy that sets a domain blocks for a few minutes while ACM
@@ -736,15 +735,62 @@ curl -H "x-api-key: <KEY>" https://api.example.com/v1/items
 
 #### Disable
 
-Unset the CI secrets (so releases stop re-adding it), then redeploy the full
-state without the domain vars — the domain reverts to empty, removing the cert,
-domain, base-path mapping, and DNS record:
+Set the hostname key to `none` and redeploy — the cert, domain, base-path
+mapping, and DNS record are removed and the API reverts to the `execute-api` URL:
 
 ```sh
-gh secret delete PROD_API_DOMAIN_NAME
-gh secret delete PROD_HOSTED_ZONE_ID
-make deploy STAGE=prod ENABLE_DEMO_KEY=true   # no domain vars -> domain removed
+aws ssm put-parameter --region us-east-1 --overwrite --type String \
+  --name /bdo-market-insights/prod/domain/api-domain-name --value "none"
+make deploy STAGE=prod
 ```
+
+### Custom icons domain
+
+The item-icon CDN (CloudFront) is opt-in and off by default (same SSM/ADR-0024
+mechanism as the API domain, reusing the same `hosted-zone-id`):
+
+- `/bdo-market-insights/<stage>/domain/icon-domain-name` — the icons hostname, or
+  `none` to serve on the default `*.cloudfront.net` domain.
+
+Setting a hostname makes CloudFormation create the ACM cert (DNS-validated in the
+zone), the Route 53 alias, and the CloudFront alias. The `IconBaseUrl` output —
+and therefore the `icon_url` in `/v1/items` responses — switches to the custom
+host automatically on the next deploy. Icons already live in the distribution, so
+nothing is re-materialized.
+
+> **Host naming:** the API appends `/icons/<id>.png` to the base, so a broad CDN
+> host reads better than `icons.` (which yields `.../icons/icons/<id>.png`).
+> Prefer e.g. `cdn.example.com` → `cdn.example.com/icons/<id>.png`.
+
+#### Enable
+
+```sh
+aws ssm put-parameter --region us-east-1 --overwrite --type String \
+  --name /bdo-market-insights/prod/domain/icon-domain-name --value "cdn.example.com"
+make deploy STAGE=prod
+```
+
+> This deploy is slower than usual: it waits on ACM validation **and** a
+> CloudFront distribution update (alias propagation ~5–15 min). Do not cancel it.
+
+Verify the custom host serves and the API emits it:
+
+```sh
+curl -sI https://cdn.example.com/icons/<item-id>.png | head -1        # expect HTTP/2 200
+curl -s -H "x-api-key: <KEY>" "https://api.example.com/v1/items?limit=1" \
+  | grep -o '"icon_url":"[^"]*"' | head
+```
+
+#### Disable
+
+```sh
+aws ssm put-parameter --region us-east-1 --overwrite --type String \
+  --name /bdo-market-insights/prod/domain/icon-domain-name --value "none"
+make deploy STAGE=prod
+```
+
+Icons revert to the default CloudFront domain; the cert, CloudFront alias, and
+DNS record are removed.
 
 ### Public demo API key
 
@@ -757,23 +803,25 @@ Never publish the privileged stage key — only this demo key.
 
 #### Enable
 
-Add `ENABLE_DEMO_KEY=true` to a full-state deploy (see
-[Deployment notes](#deployment-notes)). For **prod** the demo key should persist
-across releases — the tag-gated CI deploy sets `EnableDemoKey=true`, so once this
-is on `main` every release keeps it live.
+The demo key is deploy config in SSM (ADR-0024): set `enable-demo-key=true`, then
+deploy. For **prod** it persists across releases — the tag-gated CI deploy
+resolves the SSM key, so once it's `true` in SSM every release keeps it live.
 
-Apply it immediately with a full-state deploy. Prod (include the domain so it is
-not dropped):
+Set the key directly (targeted; `make seed-config` would rewrite the domain keys
+too), then apply with a deploy:
 
 ```sh
-make deploy STAGE=prod ENABLE_DEMO_KEY=true \
-  API_DOMAIN_NAME=api.example.com HOSTED_ZONE_ID=ZXXXXXXXXXXXXX
+# prod
+aws ssm put-parameter --region us-east-1 --overwrite --type String \
+  --name /bdo-market-insights/prod/api-gateway/enable-demo-key --value "true"
+make deploy STAGE=prod
 ```
 
-Dev (no custom domain), for testing:
-
 ```sh
-make deploy STAGE=dev ENABLE_DEMO_KEY=true
+# dev, for testing
+aws ssm put-parameter --region us-east-1 --overwrite --type String \
+  --name /bdo-market-insights/dev/api-gateway/enable-demo-key --value "true"
+make deploy STAGE=dev
 ```
 
 > The demo usage plan is ordered after the API stage (`DependsOn: BdoApiStage`),
@@ -818,18 +866,17 @@ read, which is fine — only the status codes matter here.)
 
 #### Disable
 
-Run a full-state deploy with the demo key off (omit `ENABLE_DEMO_KEY`, which
-defaults to false) — this removes the demo key, its usage plan, and the
-association. Include the domain so it is not dropped:
+Set `enable-demo-key=false` and redeploy — this removes the demo key, its usage
+plan, and the association:
 
 ```sh
-make deploy STAGE=prod \
-  API_DOMAIN_NAME=api.example.com HOSTED_ZONE_ID=ZXXXXXXXXXXXXX
+aws ssm put-parameter --region us-east-1 --overwrite --type String \
+  --name /bdo-market-insights/prod/api-gateway/enable-demo-key --value "false"
+make deploy STAGE=prod
 ```
 
-> For prod, the CI deploy sets `EnableDemoKey=true`, so a manual disable is
-> reverted by the next tagged release. To disable it permanently, flip
-> `EnableDemoKey=true` to `false` in the deploy step of `.github/workflows/ci.yml`.
+> The CI deploy resolves this key from SSM, so `false` in SSM sticks across
+> tagged releases — no `.github/workflows/ci.yml` edit needed.
 
 ## Database access
 
@@ -945,8 +992,8 @@ After a dev evaluation, undo the opt-in pieces without touching the stack:
 uv run python scripts/seed_market_dev.py --clean
 
 make break-glass-down STAGE=dev  # close the tunnel and delete the ephemeral EICE + host
-# Custom domain: see "Custom API domain → Disable" (unset the CI secrets, then
-# redeploy the full state without the domain vars). Only if one was enabled.
+# Custom domain: see "Custom API domain → Disable" (set the SSM api-domain-name
+# key to "none", then redeploy). Only if one was enabled.
 make clean                       # local build artifacts (.aws-sam/, etc.)
 ```
 
