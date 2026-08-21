@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from bdo_common.arsha_client import (
+    _SUBLIST_MAX_ATTEMPTS,
     _UTIL_DB_MAX_ATTEMPTS,
     ArshaClient,
     normalize_item_db,
@@ -263,15 +264,18 @@ class TestFetchSubList:
         records = client.fetch_sub_list([])
         assert records == []
 
-    def test_fetch_sub_list_network_error_skipped(self) -> None:
-        """Network error logs but does not raise."""
+    def test_fetch_sub_list_network_error_raises(self) -> None:
+        """A transient network error that exhausts retries propagates (fail loud)."""
         client = ArshaClient()
-        with patch(
-            "bdo_common.arsha_client.urllib.request.urlopen",
-            side_effect=OSError("connection refused"),
+        with (
+            patch(
+                "bdo_common.arsha_client.urllib.request.urlopen",
+                side_effect=OSError("connection refused"),
+            ),
+            patch("bdo_common.arsha_client.time.sleep"),
+            pytest.raises(OSError, match="connection refused"),
         ):
-            records = client.fetch_sub_list([11608])
-        assert records == []
+            client.fetch_sub_list([11608])
 
     def test_batching_100_ids_produces_multiple_batches(self) -> None:
         """100 IDs should produce at least 2 batches of <=50."""
@@ -297,6 +301,56 @@ class TestFetchSubList:
             client.fetch_sub_list(ids)
 
         assert call_count >= 2
+
+
+class TestFetchRawRetry:
+    """fetch_raw retries transient arsha failures and raises when exhausted."""
+
+    @staticmethod
+    def _ok(payload: Any) -> MagicMock:
+        resp = MagicMock()
+        resp.read.return_value = json.dumps(payload).encode()
+        resp.__enter__ = MagicMock(return_value=resp)
+        resp.__exit__ = MagicMock(return_value=False)
+        return resp
+
+    def test_retries_transient_then_succeeds(self) -> None:
+        client = ArshaClient()
+        good = self._ok([_item(11608, 0)])
+        err = urllib.error.HTTPError("u", 500, "boom", {}, None)  # type: ignore[arg-type]
+        with (
+            patch(
+                "bdo_common.arsha_client.urllib.request.urlopen", side_effect=[err, good]
+            ) as urlopen,
+            patch("bdo_common.arsha_client.time.sleep") as sleep,
+        ):
+            payloads = client.fetch_raw([11608])
+        assert len(payloads) == 1
+        assert urlopen.call_count == 2
+        sleep.assert_called_once()
+
+    def test_gives_up_and_raises_after_max_attempts(self) -> None:
+        client = ArshaClient()
+        err = urllib.error.HTTPError("u", 500, "boom", {}, None)  # type: ignore[arg-type]
+        with (
+            patch("bdo_common.arsha_client.urllib.request.urlopen", side_effect=err) as urlopen,
+            patch("bdo_common.arsha_client.time.sleep"),
+            pytest.raises(urllib.error.HTTPError),
+        ):
+            client.fetch_raw([11608])
+        assert urlopen.call_count == _SUBLIST_MAX_ATTEMPTS
+
+    def test_non_retryable_4xx_raises_immediately(self) -> None:
+        client = ArshaClient()
+        err = urllib.error.HTTPError("u", 404, "not found", {}, None)  # type: ignore[arg-type]
+        with (
+            patch("bdo_common.arsha_client.urllib.request.urlopen", side_effect=err) as urlopen,
+            patch("bdo_common.arsha_client.time.sleep") as sleep,
+            pytest.raises(urllib.error.HTTPError),
+        ):
+            client.fetch_raw([11608])
+        assert urlopen.call_count == 1  # 4xx is not retried
+        sleep.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
