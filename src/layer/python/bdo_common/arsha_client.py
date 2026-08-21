@@ -23,6 +23,16 @@ _UTIL_DB_MAX_ATTEMPTS = 4
 _UTIL_DB_TIMEOUT_SECONDS = 30
 _UTIL_DB_BACKOFF_SECONDS = 3.0
 
+#: The v2 ``GetWorldMarketSubList`` endpoint (hourly ETL market fetch) is also
+#: intermittently flaky (transient 5xx / timeouts). It is retried with linear
+#: backoff and, unlike the catalog sync, *raises* if a batch still fails -- so
+#: the ETL fetchData stage fails loudly (Step Functions retry, then the
+#: ExecutionsFailed alarm) instead of silently storing nothing. The budget fits
+#: inside the fetchData Lambda's 60s timeout.
+_SUBLIST_MAX_ATTEMPTS = 3
+_SUBLIST_TIMEOUT_SECONDS = 15
+_SUBLIST_BACKOFF_SECONDS = 2.0
+
 
 def _is_retryable_fetch_error(exc: Exception) -> bool:
     """True for transient errors worth retrying (timeouts, 5xx, 429).
@@ -238,27 +248,57 @@ class ArshaClient:
             batches.extend(self._split_batch_by_url_length(chunk))
         return batches
 
+    def _fetch_batch_with_retry(self, url: str) -> Any:
+        """GET and JSON-decode one SubList batch, retrying transient failures.
+
+        Retries 5xx/429/timeouts with linear backoff (the market endpoint is
+        intermittently flaky); a non-retryable 4xx or an exhausted retry budget
+        re-raises, so the caller (ETL ``fetchData``) fails and the Step
+        Functions retry / ``ExecutionsFailed`` alarm engage rather than the
+        pipeline silently storing no data.
+        """
+        for attempt in range(1, _SUBLIST_MAX_ATTEMPTS + 1):
+            try:
+                # URL is built internally and is always https://api.arsha.io/...
+                with urllib.request.urlopen(  # noqa: S310  # nosec B310
+                    url, timeout=_SUBLIST_TIMEOUT_SECONDS
+                ) as resp:
+                    return json.loads(resp.read().decode())
+            except Exception as exc:
+                if not _is_retryable_fetch_error(exc) or attempt == _SUBLIST_MAX_ATTEMPTS:
+                    logger.error(
+                        "GetWorldMarketSubList fetch failed for %s after %d attempt(s): %s",
+                        url,
+                        attempt,
+                        exc,
+                    )
+                    raise
+                logger.warning(
+                    "GetWorldMarketSubList attempt %d/%d failed for %s: %s; retrying",
+                    attempt,
+                    _SUBLIST_MAX_ATTEMPTS,
+                    url,
+                    exc,
+                )
+                time.sleep(_SUBLIST_BACKOFF_SECONDS * attempt)
+        raise RuntimeError("unreachable: SubList retry loop exhausted")  # pragma: no cover
+
     def fetch_raw(self, item_ids: list[int]) -> list[Any]:
         """Fetch raw arsha.io JSON payloads (one per HTTP request), unparsed.
 
-        Batches into groups of <= 50 IDs, further splitting if the URL
-        exceeds 1900 characters. Network errors are logged and skipped.
-        Used by the ETL ``fetchData`` Lambda so that parsing happens in a
-        separate ``cleanData`` stage (retries never re-hit the network).
+        Batches into groups of <= 50 IDs, further splitting if the URL exceeds
+        1900 characters. Each batch is retried on transient arsha failures
+        (5xx/429/timeout); if a batch still fails the error propagates, so the
+        ETL ``fetchData`` stage fails loudly (Step Functions retry, then the
+        ``ExecutionsFailed`` alarm) instead of silently returning no data.
+        Parsing is deferred to ``cleanData`` so retries never re-parse.
         """
         if not item_ids:
             return []
 
         payloads: list[Any] = []
         for batch in self._plan_batches(item_ids):
-            url = self._build_url(batch)
-            try:
-                # URL is built internally and is always https://api.arsha.io/...
-                with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310  # nosec B310
-                    payloads.append(json.loads(resp.read().decode()))
-            except Exception:
-                logger.exception("Failed to fetch batch from %s", url)
-                continue
+            payloads.append(self._fetch_batch_with_retry(self._build_url(batch)))
         return payloads
 
     def fetch_sub_list(self, item_ids: list[int]) -> list[Record]:
