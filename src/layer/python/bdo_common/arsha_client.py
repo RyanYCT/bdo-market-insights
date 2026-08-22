@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import time
 import urllib.error
 import urllib.request
@@ -17,21 +18,34 @@ logger = logging.getLogger(__name__)
 
 _MAX_BATCH_SIZE = 50
 
+#: Descriptive User-Agent sent on every arsha.io request. arsha.io is fronted by
+#: an Envoy proxy; identifying the client (instead of the default
+#: ``Python-urllib/x.y``) distinguishes this traffic from unlabeled datacenter
+#: callers rather than being lumped in with them.
+_USER_AGENT = "bdo-market-insights/1 (+https://github.com/RyanYCT/bdo-market-insights)"
+
 #: ``util/db`` is a low-traffic, uncached endpoint that intermittently returns
 #: HTTP 500 or times out; transient failures are retried with linear backoff.
 _UTIL_DB_MAX_ATTEMPTS = 4
 _UTIL_DB_TIMEOUT_SECONDS = 30
 _UTIL_DB_BACKOFF_SECONDS = 3.0
 
-#: The v2 ``GetWorldMarketSubList`` endpoint (hourly ETL market fetch) is also
-#: intermittently flaky (transient 5xx / timeouts). It is retried with linear
-#: backoff and, unlike the catalog sync, *raises* if a batch still fails -- so
-#: the ETL fetchData stage fails loudly (Step Functions retry, then the
-#: ExecutionsFailed alarm) instead of silently storing nothing. The budget fits
-#: inside the fetchData Lambda's 60s timeout.
-_SUBLIST_MAX_ATTEMPTS = 3
-_SUBLIST_TIMEOUT_SECONDS = 15
-_SUBLIST_BACKOFF_SECONDS = 2.0
+#: The v2 ``GetWorldMarketSubList`` endpoint (hourly ETL market fetch) is
+#: intermittently flaky: arsha's Envoy front returns transient 5xx (observed
+#: "upstream connect error ... connection timeout") in bursts that can span
+#: several seconds. It is retried with full-jitter exponential backoff and,
+#: unlike the catalog sync, *raises* if a batch still fails -- so the ETL
+#: fetchData stage fails loudly (and the ExecutionsFailed alarm fires) instead
+#: of silently storing nothing. Note the Step Functions FetchData Retry only
+#: matches Lambda infrastructure errors (Lambda.* / States.Timeout), NOT this
+#: application HTTPError, so this in-process retry is the only defense against a
+#: transient arsha outage -- hence the generous budget. Worst case stays inside
+#: the fetchData Lambda's 60s timeout: 5 attempts x 7s (35s) + capped backoff
+#: (<=1+2+4+8s = 15s) = <=50s.
+_SUBLIST_MAX_ATTEMPTS = 5
+_SUBLIST_TIMEOUT_SECONDS = 7
+_SUBLIST_BACKOFF_BASE_SECONDS = 1.0
+_SUBLIST_BACKOFF_MAX_SECONDS = 8.0
 
 
 def _is_retryable_fetch_error(exc: Exception) -> bool:
@@ -42,6 +56,33 @@ def _is_retryable_fetch_error(exc: Exception) -> bool:
     if isinstance(exc, urllib.error.HTTPError):
         return exc.code == 429 or exc.code >= 500
     return True
+
+
+def _sublist_backoff_seconds(attempt: int) -> float:
+    """Full-jitter exponential backoff (seconds) for SubList retries.
+
+    Returns a random sleep in ``[0, min(cap, base * 2 ** (attempt - 1))]``
+    (``attempt`` is 1-indexed). Full jitter decorrelates retries from arsha's
+    transient outage windows; the cap bounds the total wall-clock against the
+    fetchData Lambda's 60s timeout.
+    """
+    ceiling = min(
+        _SUBLIST_BACKOFF_MAX_SECONDS,
+        _SUBLIST_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)),
+    )
+    return random.uniform(0, ceiling)  # noqa: S311  # nosec B311 - not cryptographic
+
+
+def _open_arsha_url(url: str, timeout: int) -> Any:
+    """Open an arsha.io URL with an explicit User-Agent header.
+
+    The URL is always an internally built ``https://api.arsha.io/...`` string;
+    the only reason to wrap :func:`urllib.request.urlopen` is to attach
+    :data:`_USER_AGENT` so arsha sees a labeled client instead of the default
+    ``Python-urllib`` UA.
+    """
+    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})  # noqa: S310
+    return urllib.request.urlopen(request, timeout=timeout)  # noqa: S310  # nosec B310
 
 
 _MAX_URL_LENGTH = 1900
@@ -251,18 +292,15 @@ class ArshaClient:
     def _fetch_batch_with_retry(self, url: str) -> Any:
         """GET and JSON-decode one SubList batch, retrying transient failures.
 
-        Retries 5xx/429/timeouts with linear backoff (the market endpoint is
-        intermittently flaky); a non-retryable 4xx or an exhausted retry budget
-        re-raises, so the caller (ETL ``fetchData``) fails and the Step
-        Functions retry / ``ExecutionsFailed`` alarm engage rather than the
-        pipeline silently storing no data.
+        Retries 5xx/429/timeouts with full-jitter exponential backoff (the
+        market endpoint is intermittently flaky, failing in short bursts); a
+        non-retryable 4xx or an exhausted retry budget re-raises, so the caller
+        (ETL ``fetchData``) fails and the ``ExecutionsFailed`` alarm engages
+        rather than the pipeline silently storing no data.
         """
         for attempt in range(1, _SUBLIST_MAX_ATTEMPTS + 1):
             try:
-                # URL is built internally and is always https://api.arsha.io/...
-                with urllib.request.urlopen(  # noqa: S310  # nosec B310
-                    url, timeout=_SUBLIST_TIMEOUT_SECONDS
-                ) as resp:
+                with _open_arsha_url(url, _SUBLIST_TIMEOUT_SECONDS) as resp:
                     return json.loads(resp.read().decode())
             except Exception as exc:
                 if not _is_retryable_fetch_error(exc) or attempt == _SUBLIST_MAX_ATTEMPTS:
@@ -280,7 +318,7 @@ class ArshaClient:
                     url,
                     exc,
                 )
-                time.sleep(_SUBLIST_BACKOFF_SECONDS * attempt)
+                time.sleep(_sublist_backoff_seconds(attempt))
         raise RuntimeError("unreachable: SubList retry loop exhausted")  # pragma: no cover
 
     def fetch_raw(self, item_ids: list[int]) -> list[Any]:
@@ -332,10 +370,7 @@ class ArshaClient:
         url = self._build_item_db_url(lang)
         for attempt in range(1, _UTIL_DB_MAX_ATTEMPTS + 1):
             try:
-                # URL is built internally and is always https://api.arsha.io/...
-                with urllib.request.urlopen(  # noqa: S310  # nosec B310
-                    url, timeout=_UTIL_DB_TIMEOUT_SECONDS
-                ) as resp:
+                with _open_arsha_url(url, _UTIL_DB_TIMEOUT_SECONDS) as resp:
                     raw = json.loads(resp.read().decode())
                 return normalize_item_db(raw)
             except Exception as exc:
@@ -374,10 +409,7 @@ class ArshaClient:
         url = self._build_market_list_url(main_category, sub_category)
         for attempt in range(1, _UTIL_DB_MAX_ATTEMPTS + 1):
             try:
-                # URL is built internally and is always https://api.arsha.io/...
-                with urllib.request.urlopen(  # noqa: S310  # nosec B310
-                    url, timeout=_UTIL_DB_TIMEOUT_SECONDS
-                ) as resp:
+                with _open_arsha_url(url, _UTIL_DB_TIMEOUT_SECONDS) as resp:
                     raw = json.loads(resp.read().decode())
                 return normalize_market_list(raw)
             except Exception as exc:
