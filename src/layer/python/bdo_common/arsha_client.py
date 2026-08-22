@@ -18,12 +18,6 @@ logger = logging.getLogger(__name__)
 
 _MAX_BATCH_SIZE = 50
 
-#: Descriptive User-Agent sent on every arsha.io request. arsha.io is fronted by
-#: an Envoy proxy; identifying the client (instead of the default
-#: ``Python-urllib/x.y``) distinguishes this traffic from unlabeled datacenter
-#: callers rather than being lumped in with them.
-_USER_AGENT = "bdo-market-insights/1 (+https://github.com/RyanYCT/bdo-market-insights)"
-
 #: ``util/db`` is a low-traffic, uncached endpoint that intermittently returns
 #: HTTP 500 or times out; transient failures are retried with linear backoff.
 _UTIL_DB_MAX_ATTEMPTS = 4
@@ -71,18 +65,6 @@ def _sublist_backoff_seconds(attempt: int) -> float:
         _SUBLIST_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)),
     )
     return random.uniform(0, ceiling)  # noqa: S311  # nosec B311 - not cryptographic
-
-
-def _open_arsha_url(url: str, timeout: int) -> Any:
-    """Open an arsha.io URL with an explicit User-Agent header.
-
-    The URL is always an internally built ``https://api.arsha.io/...`` string;
-    the only reason to wrap :func:`urllib.request.urlopen` is to attach
-    :data:`_USER_AGENT` so arsha sees a labeled client instead of the default
-    ``Python-urllib`` UA.
-    """
-    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})  # noqa: S310
-    return urllib.request.urlopen(request, timeout=timeout)  # noqa: S310  # nosec B310
 
 
 _MAX_URL_LENGTH = 1900
@@ -300,7 +282,10 @@ class ArshaClient:
         """
         for attempt in range(1, _SUBLIST_MAX_ATTEMPTS + 1):
             try:
-                with _open_arsha_url(url, _SUBLIST_TIMEOUT_SECONDS) as resp:
+                # URL is built internally and is always https://api.arsha.io/...
+                with urllib.request.urlopen(  # noqa: S310  # nosec B310
+                    url, timeout=_SUBLIST_TIMEOUT_SECONDS
+                ) as resp:
                     return json.loads(resp.read().decode())
             except Exception as exc:
                 if not _is_retryable_fetch_error(exc) or attempt == _SUBLIST_MAX_ATTEMPTS:
@@ -370,7 +355,10 @@ class ArshaClient:
         url = self._build_item_db_url(lang)
         for attempt in range(1, _UTIL_DB_MAX_ATTEMPTS + 1):
             try:
-                with _open_arsha_url(url, _UTIL_DB_TIMEOUT_SECONDS) as resp:
+                # URL is built internally and is always https://api.arsha.io/...
+                with urllib.request.urlopen(  # noqa: S310  # nosec B310
+                    url, timeout=_UTIL_DB_TIMEOUT_SECONDS
+                ) as resp:
                     raw = json.loads(resp.read().decode())
                 return normalize_item_db(raw)
             except Exception as exc:
@@ -409,7 +397,10 @@ class ArshaClient:
         url = self._build_market_list_url(main_category, sub_category)
         for attempt in range(1, _UTIL_DB_MAX_ATTEMPTS + 1):
             try:
-                with _open_arsha_url(url, _UTIL_DB_TIMEOUT_SECONDS) as resp:
+                # URL is built internally and is always https://api.arsha.io/...
+                with urllib.request.urlopen(  # noqa: S310  # nosec B310
+                    url, timeout=_UTIL_DB_TIMEOUT_SECONDS
+                ) as resp:
                     raw = json.loads(resp.read().decode())
                 return normalize_market_list(raw)
             except Exception as exc:

@@ -376,21 +376,6 @@ class TestFetchRawRetry:
         # Exponential (base 1s, x2), capped at 8s: 1, 2, 4, 8.
         assert sleeps == [1.0, 2.0, 4.0, 8.0]
 
-    def test_sublist_request_sends_user_agent(self) -> None:
-        """Each SubList request carries the descriptive User-Agent header."""
-        client = ArshaClient()
-        good = self._ok([_item(11608, 0)])
-        captured: dict[str, str | None] = {}
-
-        def fake_urlopen(req: Any, timeout: int = 10) -> MagicMock:
-            captured["ua"] = req.get_header("User-agent")
-            return good
-
-        with patch("bdo_common.arsha_client.urllib.request.urlopen", side_effect=fake_urlopen):
-            client.fetch_raw([11608])
-        assert captured["ua"] is not None
-        assert "bdo-market-insights" in captured["ua"]
-
 
 # ---------------------------------------------------------------------------
 # normalize_item_db - util/db catalog rows
