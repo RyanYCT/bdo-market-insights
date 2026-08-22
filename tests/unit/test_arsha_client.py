@@ -352,6 +352,30 @@ class TestFetchRawRetry:
         assert urlopen.call_count == 1  # 4xx is not retried
         sleep.assert_not_called()
 
+    def test_backoff_is_capped_full_jitter_exponential(self) -> None:
+        """Retries back off exponentially with a cap; sleeps stay within budget.
+
+        Patching ``random.uniform`` to return its upper bound exposes the raw
+        (un-jittered) schedule so we can assert it is exponential and capped.
+        """
+        client = ArshaClient()
+        err = urllib.error.HTTPError("u", 503, "boom", {}, None)  # type: ignore[arg-type]
+        sleeps: list[float] = []
+        with (
+            patch("bdo_common.arsha_client.urllib.request.urlopen", side_effect=err),
+            patch(
+                "bdo_common.arsha_client.random.uniform",
+                side_effect=lambda _lo, hi: hi,
+            ),
+            patch("bdo_common.arsha_client.time.sleep", side_effect=sleeps.append),
+            pytest.raises(urllib.error.HTTPError),
+        ):
+            client.fetch_raw([11608])
+        # One sleep between each attempt: MAX_ATTEMPTS - 1 sleeps.
+        assert len(sleeps) == _SUBLIST_MAX_ATTEMPTS - 1
+        # Exponential (base 1s, x2), capped at 8s: 1, 2, 4, 8.
+        assert sleeps == [1.0, 2.0, 4.0, 8.0]
+
 
 # ---------------------------------------------------------------------------
 # normalize_item_db - util/db catalog rows
