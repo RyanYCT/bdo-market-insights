@@ -29,9 +29,9 @@ tracer = Tracer()
 metrics = Metrics(namespace="BdoMarket")
 
 #: Fail the run when more than this fraction of a batch's items are unfetchable
-#: after resilient retry + bisect. Below the threshold the run stores what it
-#: got and skips the rest (the next hourly run picks them up); at or above it,
-#: arsha is treated as broadly down and the stage fails loud.
+#: after resilient retry + bisect. At or below the threshold the run stores what
+#: it got and skips the rest (the next hourly run picks them up); above it, arsha
+#: is treated as broadly down and the stage fails loud.
 _MAX_FAILED_ITEM_FRACTION = 0.2
 
 

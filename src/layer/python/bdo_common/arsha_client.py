@@ -51,10 +51,14 @@ _SUBLIST_BACKOFF_MAX_SECONDS = 8.0
 #: a light retry before being dropped. The whole operation is bounded by a
 #: wall-clock deadline that stays under the 60s fetchData Lambda timeout, so a
 #: broad arsha outage fails fast (and loud) rather than exhausting the bisect
-#: tree.
+#: tree. The deadline is checked before each node issues a request and is set
+#: below the 60s fetchData Lambda timeout by more than one single-id leaf's
+#: worst-case budget (``_RESILIENT_SINGLE_ATTEMPTS`` x ``_SUBLIST_TIMEOUT_SECONDS``
+#: + backoff ~= 15s), so even a leaf that clears the gate just before the
+#: deadline finishes with margin instead of tipping into a Lambda self-timeout.
 _RESILIENT_MULTI_ATTEMPTS = 1
 _RESILIENT_SINGLE_ATTEMPTS = 2
-_RESILIENT_DEADLINE_SECONDS = 45.0
+_RESILIENT_DEADLINE_SECONDS = 40.0
 
 
 def _is_retryable_fetch_error(exc: Exception) -> bool:

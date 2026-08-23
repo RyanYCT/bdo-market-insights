@@ -327,6 +327,36 @@ Resources:
       AlarmActions: [!Ref AlarmTopic]
       OKActions: [!Ref AlarmTopic]
 
+  # Partial fetch degradation: fetchData drops individually blocked items (arsha
+  # proxies an Imperva-protected upstream and fails a whole multi-id request when
+  # any one item is blocked, so the resilient fetch bisects and drops only the
+  # blocked ids) and emits MarketItemsSkipped every run (0 on a clean run). A
+  # single-hour blip self-heals next run and stays under the fail-loud fraction,
+  # so ExecutionsFailed never fires for it; this alarm catches the SUSTAINED case
+  # -- items skipped in >=4 of the last 6 hourly runs -- that would otherwise
+  # thin snapshots invisibly behind a green execution. Matches the default
+  # `service` dimension Powertools attaches. Raise the threshold if a single
+  # chronically-flaky item proves noisy.
+  MarketItemsSkippedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bdo-${Stage}-market-items-skipped'
+      AlarmDescription: 'Market items skipped (arsha upstream blocked) in >=4 of the last 6 hourly ETL runs'
+      Namespace: BdoMarket
+      MetricName: MarketItemsSkipped
+      Dimensions:
+        - Name: service
+          Value: bdo-market-insights
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 6
+      DatapointsToAlarm: 4
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
   # ──────────────────────────────────────────────
   # Dashboard
   # ──────────────────────────────────────────────
@@ -474,7 +504,8 @@ Resources:
                 "view": "timeSeries",
                 "metrics": [
                   [ "BdoMarket", "EtlSuccessfulItems", "service", "bdo-market-insights", { "label": "Successful" } ],
-                  [ "BdoMarket", "EtlFailedItems", "service", "bdo-market-insights", { "label": "Failed" } ]
+                  [ "BdoMarket", "EtlFailedItems", "service", "bdo-market-insights", { "label": "Failed" } ],
+                  [ "BdoMarket", "MarketItemsSkipped", "service", "bdo-market-insights", { "label": "Skipped" } ]
                 ]
               }
             },
