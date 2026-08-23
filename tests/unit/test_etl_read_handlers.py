@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from bdo_common.arsha_client import FetchOutcome
 from bdo_common.models import Item
 
 
@@ -99,11 +100,11 @@ class TestFetchData:
         mod = load_handler("fetch_data")
         captured: dict[str, Any] = {}
 
-        def fake_fetch_raw(self: Any, item_ids: list[int]) -> list[Any]:
+        def fake_fetch(self: Any, item_ids: list[int]) -> FetchOutcome:
             captured["ids"] = item_ids
-            return [[_arsha_item(11608), _arsha_item(11629)]]
+            return FetchOutcome([[_arsha_item(11608), _arsha_item(11629)]], [])
 
-        monkeypatch.setattr(mod.ArshaClient, "fetch_raw", fake_fetch_raw)
+        monkeypatch.setattr(mod.ArshaClient, "fetch_raw_resilient", fake_fetch)
 
         batch = {
             "region": "tw",
@@ -117,6 +118,49 @@ class TestFetchData:
         assert result["snapshot_at"] == "2026-06-01T05:00:00+00:00"
         assert result["items"] == batch["items"]
         assert result["raw"] == [[_arsha_item(11608), _arsha_item(11629)]]
+
+    def test_tolerates_sparse_failures(
+        self,
+        load_handler: Callable[[str], ModuleType],
+        lambda_context: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A few unfetchable items are dropped; the run still returns the rest."""
+        mod = load_handler("fetch_data")
+
+        def fake_fetch(self: Any, item_ids: list[int]) -> FetchOutcome:
+            # 10 items, 1 blocked (10%) -> below the 20% threshold
+            return FetchOutcome([[_arsha_item(i)] for i in item_ids[:-1]], [item_ids[-1]])
+
+        monkeypatch.setattr(mod.ArshaClient, "fetch_raw_resilient", fake_fetch)
+        batch = {
+            "region": "tw",
+            "snapshot_at": "2026-06-01T05:00:00+00:00",
+            "items": [{"id": 100 + i, "name": "X"} for i in range(10)],
+        }
+        result = mod.handler(batch, lambda_context)
+        assert len(result["raw"]) == 9
+
+    def test_fails_loud_when_too_many_unfetchable(
+        self,
+        load_handler: Callable[[str], ModuleType],
+        lambda_context: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When arsha is broadly down (> threshold failed), the stage raises."""
+        mod = load_handler("fetch_data")
+
+        def fake_fetch(self: Any, item_ids: list[int]) -> FetchOutcome:
+            return FetchOutcome([], list(item_ids))  # 100% failed
+
+        monkeypatch.setattr(mod.ArshaClient, "fetch_raw_resilient", fake_fetch)
+        batch = {
+            "region": "tw",
+            "snapshot_at": "2026-06-01T05:00:00+00:00",
+            "items": [{"id": 100 + i, "name": "X"} for i in range(10)],
+        }
+        with pytest.raises(RuntimeError, match="unfetchable"):
+            mod.handler(batch, lambda_context)
 
 
 # ---------------------------------------------------------------------------

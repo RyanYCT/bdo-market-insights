@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from bdo_common.models import CatalogEntry, MarketListItem, Record
 
@@ -40,6 +40,21 @@ _SUBLIST_MAX_ATTEMPTS = 5
 _SUBLIST_TIMEOUT_SECONDS = 7
 _SUBLIST_BACKOFF_BASE_SECONDS = 1.0
 _SUBLIST_BACKOFF_MAX_SECONDS = 8.0
+
+#: Resilient (adaptive-bisect) tuning for the ETL fetchData stage. arsha proxies
+#: the Imperva-protected upstream market API and fails an *entire* multi-id
+#: request if any single item is blocked, so a large batch couples every item to
+#: the unluckiest one. The resilient fetch splits a failing batch and retries the
+#: halves down to single ids, dropping only the id(s) actually blocked instead of
+#: the whole batch. Multi-id nodes get a single attempt (bisecting -- not
+#: re-requesting the same coupled batch -- is the recovery); single-id nodes get
+#: a light retry before being dropped. The whole operation is bounded by a
+#: wall-clock deadline that stays under the 60s fetchData Lambda timeout, so a
+#: broad arsha outage fails fast (and loud) rather than exhausting the bisect
+#: tree.
+_RESILIENT_MULTI_ATTEMPTS = 1
+_RESILIENT_SINGLE_ATTEMPTS = 2
+_RESILIENT_DEADLINE_SECONDS = 45.0
 
 
 def _is_retryable_fetch_error(exc: Exception) -> bool:
@@ -227,6 +242,19 @@ def normalize_market_list(raw: Any) -> list[MarketListItem]:
     ]
 
 
+class FetchOutcome(NamedTuple):
+    """Outcome of a resilient fetch.
+
+    ``payloads`` holds one raw arsha JSON payload per successful (sub-)request;
+    ``failed_ids`` lists item IDs that could not be fetched (dropped after the
+    retry/bisect budget or the deadline). An empty ``failed_ids`` means every
+    requested item was fetched.
+    """
+
+    payloads: list[Any]
+    failed_ids: list[int]
+
+
 class ArshaClient:
     """HTTP client for the arsha.io market data API."""
 
@@ -271,16 +299,16 @@ class ArshaClient:
             batches.extend(self._split_batch_by_url_length(chunk))
         return batches
 
-    def _fetch_batch_with_retry(self, url: str) -> Any:
+    def _fetch_batch_with_retry(self, url: str, max_attempts: int = _SUBLIST_MAX_ATTEMPTS) -> Any:
         """GET and JSON-decode one SubList batch, retrying transient failures.
 
         Retries 5xx/429/timeouts with full-jitter exponential backoff (the
         market endpoint is intermittently flaky, failing in short bursts); a
-        non-retryable 4xx or an exhausted retry budget re-raises, so the caller
-        (ETL ``fetchData``) fails and the ``ExecutionsFailed`` alarm engages
-        rather than the pipeline silently storing no data.
+        non-retryable 4xx or an exhausted retry budget re-raises. ``max_attempts``
+        lets the resilient bisect path use a smaller per-node budget than the
+        default full retry.
         """
-        for attempt in range(1, _SUBLIST_MAX_ATTEMPTS + 1):
+        for attempt in range(1, max_attempts + 1):
             try:
                 # URL is built internally and is always https://api.arsha.io/...
                 with urllib.request.urlopen(  # noqa: S310  # nosec B310
@@ -288,7 +316,7 @@ class ArshaClient:
                 ) as resp:
                     return json.loads(resp.read().decode())
             except Exception as exc:
-                if not _is_retryable_fetch_error(exc) or attempt == _SUBLIST_MAX_ATTEMPTS:
+                if not _is_retryable_fetch_error(exc) or attempt == max_attempts:
                     logger.error(
                         "GetWorldMarketSubList fetch failed for %s after %d attempt(s): %s",
                         url,
@@ -299,7 +327,7 @@ class ArshaClient:
                 logger.warning(
                     "GetWorldMarketSubList attempt %d/%d failed for %s: %s; retrying",
                     attempt,
-                    _SUBLIST_MAX_ATTEMPTS,
+                    max_attempts,
                     url,
                     exc,
                 )
@@ -311,10 +339,11 @@ class ArshaClient:
 
         Batches into groups of <= 50 IDs, further splitting if the URL exceeds
         1900 characters. Each batch is retried on transient arsha failures
-        (5xx/429/timeout); if a batch still fails the error propagates, so the
-        ETL ``fetchData`` stage fails loudly (Step Functions retry, then the
-        ``ExecutionsFailed`` alarm) instead of silently returning no data.
-        Parsing is deferred to ``cleanData`` so retries never re-parse.
+        (5xx/429/timeout); if a batch still fails the error propagates
+        (all-or-nothing). Used by the single-item registration path
+        (:meth:`fetch_sub_list`); the hourly ETL uses :meth:`fetch_raw_resilient`
+        instead, which tolerates a few individually blocked items. Parsing is
+        deferred to ``cleanData`` so retries never re-parse.
         """
         if not item_ids:
             return []
@@ -323,6 +352,60 @@ class ArshaClient:
         for batch in self._plan_batches(item_ids):
             payloads.append(self._fetch_batch_with_retry(self._build_url(batch)))
         return payloads
+
+    def _fetch_with_bisect(self, ids: list[int], deadline: float) -> FetchOutcome:
+        """Fetch ``ids``, splitting on failure to isolate blocked items.
+
+        arsha fails a whole multi-id request if any one item is blocked upstream
+        (Imperva), so on failure the batch is halved and each half retried
+        recursively. A multi-id node gets a single attempt (splitting is the
+        recovery); a single id gets a light retry and, if still failing, is
+        reported in ``failed_ids`` rather than raising. Once ``deadline`` (a
+        :func:`time.monotonic` value) passes, the remaining ids are reported
+        failed without further requests, bounding total wall-clock.
+        """
+        if time.monotonic() >= deadline:
+            logger.error(
+                "resilient fetch deadline exceeded; dropping %d item(s): %s", len(ids), ids
+            )
+            return FetchOutcome([], list(ids))
+
+        attempts = _RESILIENT_SINGLE_ATTEMPTS if len(ids) == 1 else _RESILIENT_MULTI_ATTEMPTS
+        try:
+            payload = self._fetch_batch_with_retry(self._build_url(ids), max_attempts=attempts)
+            return FetchOutcome([payload], [])
+        except Exception as exc:
+            if len(ids) == 1:
+                logger.error("dropping item %d after %d attempt(s): %s", ids[0], attempts, exc)
+                return FetchOutcome([], [ids[0]])
+            mid = len(ids) // 2
+            left = self._fetch_with_bisect(ids[:mid], deadline)
+            right = self._fetch_with_bisect(ids[mid:], deadline)
+            return FetchOutcome(left.payloads + right.payloads, left.failed_ids + right.failed_ids)
+
+    def fetch_raw_resilient(self, item_ids: list[int]) -> FetchOutcome:
+        """Fetch raw payloads, dropping (not raising on) individually blocked ids.
+
+        Like :meth:`fetch_raw` but resilient to arsha's per-item upstream
+        (Imperva) blocking: a batch that fails is bisected down to single ids so
+        only the item(s) actually blocked are dropped, and they are returned in
+        :attr:`FetchOutcome.failed_ids` instead of failing the whole fetch. The
+        work is bounded by a wall-clock deadline (< the fetchData Lambda's 60s
+        timeout), so a broad arsha outage returns quickly with everything failed
+        -- letting the caller decide (by fraction failed) whether to fail loud.
+        Parsing is deferred to ``cleanData`` so retries never re-parse.
+        """
+        if not item_ids:
+            return FetchOutcome([], [])
+
+        deadline = time.monotonic() + _RESILIENT_DEADLINE_SECONDS
+        payloads: list[Any] = []
+        failed: list[int] = []
+        for batch in self._plan_batches(item_ids):
+            outcome = self._fetch_with_bisect(batch, deadline)
+            payloads.extend(outcome.payloads)
+            failed.extend(outcome.failed_ids)
+        return FetchOutcome(payloads, failed)
 
     def fetch_sub_list(self, item_ids: list[int]) -> list[Record]:
         """Fetch and normalize market data for the given item IDs.

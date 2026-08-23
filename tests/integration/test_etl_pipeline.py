@@ -17,6 +17,7 @@ import psycopg
 import pytest
 
 from bdo_common import dynamo
+from bdo_common.arsha_client import FetchOutcome
 from bdo_common.models import Item
 
 pytestmark = pytest.mark.integration
@@ -40,18 +41,19 @@ def _arsha_item(item_id: int, sid: int, *, price: int, total_trades: int) -> dic
     }
 
 
-def _make_fetch_raw(
+def _make_fetch_resilient(
     *, price: int, total_trades: int, sids: tuple[int, ...]
-) -> Callable[[Any, list[int]], list[Any]]:
-    """Build a fake ``ArshaClient.fetch_raw`` returning canned payloads."""
+) -> Callable[[Any, list[int]], FetchOutcome]:
+    """Build a fake ``ArshaClient.fetch_raw_resilient`` returning canned payloads."""
 
-    def _fetch_raw(self: Any, item_ids: list[int]) -> list[Any]:
-        return [
+    def _fetch_resilient(self: Any, item_ids: list[int]) -> FetchOutcome:
+        payloads = [
             [_arsha_item(item_id, sid, price=price, total_trades=total_trades) for sid in sids]
             for item_id in item_ids
         ]
+        return FetchOutcome(payloads, [])
 
-    return _fetch_raw
+    return _fetch_resilient
 
 
 def _scalar(
@@ -104,8 +106,8 @@ def run_cycle(
     ) -> dict[str, Any]:
         monkeypatch.setattr(
             etl.fetch.ArshaClient,
-            "fetch_raw",
-            _make_fetch_raw(price=price, total_trades=total_trades, sids=sids),
+            "fetch_raw_resilient",
+            _make_fetch_resilient(price=price, total_trades=total_trades, sids=sids),
         )
         retrieved: dict[str, Any] = etl.retrieve.handler(
             {"region": region, "execution_start_time": execution_start_time},
