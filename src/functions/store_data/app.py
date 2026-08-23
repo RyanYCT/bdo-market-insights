@@ -87,12 +87,19 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         logger.exception("storeData failed; transaction rolled back", extra={"region": region})
         raise
 
-    metrics.add_metric(name="EtlSuccessfulItems", unit=MetricUnit.Count, value=len(items))
+    # Count items that actually produced a snapshot, not the whole batch: with
+    # the resilient fetch some batch items can be dropped upstream and reach here
+    # with metadata but no market record, so len(items) would overstate success.
+    stored_item_count = len({snap.item_id for snap in snapshots})
+    missing_item_count = len(known_ids) - stored_item_count
+    metrics.add_metric(name="EtlSuccessfulItems", unit=MetricUnit.Count, value=stored_item_count)
     logger.info(
         "storeData complete",
         extra={
             "region": region,
             "item_count": len(items),
+            "stored_item_count": stored_item_count,
+            "missing_item_count": missing_item_count,
             "sid_count": len(snapshots),
             "snapshot_count": snapshot_count,
             "skipped_records": skipped,
