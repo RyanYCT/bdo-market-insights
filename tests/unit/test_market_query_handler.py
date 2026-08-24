@@ -98,6 +98,71 @@ def test_snapshots_caps_limit_and_passes_filters(
     assert captured["limit"] == 1000  # capped at MAX_SNAPSHOT_LIMIT
 
 
+def test_snapshots_uses_default_limit(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Omitting limit uses the smaller default (168), not the 1000 cap."""
+    captured: dict[str, Any] = {}
+
+    def fake(conn: Any, **kwargs: Any) -> list[SnapshotRow]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(mod.SnapshotRepo, "get_snapshots", fake)
+    resp = mod.handler(_event("/v1/market/items/12094/snapshots"), lambda_context)
+
+    assert resp["statusCode"] == 200
+    assert captured["limit"] == mod.DEFAULT_SNAPSHOT_LIMIT == 168
+
+
+def test_snapshots_reports_coverage_with_gap(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """coverage counts distinct hourly buckets and flags the missing hour."""
+
+    def _at(hour: int) -> SnapshotRow:
+        return SnapshotRow(
+            region="tw",
+            snapshot_at=datetime(2026, 3, 15, hour, tzinfo=UTC),
+            item_id=12094,
+            sid=0,
+            base_price=100,
+            current_stock=1,
+            total_trades=1,
+            last_sold_price=99,
+            last_sold_at=datetime(2026, 3, 15, hour, tzinfo=UTC),
+        )
+
+    # newest-first, hours 5,4,2 present -> hour 3 missing over the [2,5] span
+    monkeypatch.setattr(
+        mod.SnapshotRepo, "get_snapshots", lambda conn, **kw: [_at(5), _at(4), _at(2)]
+    )
+    resp = mod.handler(
+        _event("/v1/market/items/12094/snapshots", query={"sid": "0"}), lambda_context
+    )
+
+    body = json.loads(resp["body"])
+    cov = body["coverage"]
+    assert cov["expected_hours"] == 4
+    assert cov["present_hours"] == 3
+    assert cov["missing_hours"] == 1
+    assert cov["window_start"].startswith("2026-03-15T02:00:00")
+    assert cov["window_end"].startswith("2026-03-15T05:00:00")
+    assert cov["truncated"] is False  # 3 rows < default limit
+
+
+def test_snapshots_coverage_null_when_empty_and_unbounded(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No rows and no from/to -> no window to describe, coverage is null."""
+    monkeypatch.setattr(mod.SnapshotRepo, "get_snapshots", lambda conn, **kw: [])
+    resp = mod.handler(_event("/v1/market/items/12094/snapshots"), lambda_context)
+
+    body = json.loads(resp["body"])
+    assert body["count"] == 0
+    assert body["coverage"] is None
+
+
 def test_snapshots_rejects_bad_integer(
     mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
