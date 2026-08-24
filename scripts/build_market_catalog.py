@@ -20,9 +20,9 @@ BDO patch adds items).
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import time
-import urllib.error
 from pathlib import Path
 
 _OUT_DEFAULT = Path(__file__).parent / "data" / "full_items.json"
@@ -30,6 +30,10 @@ _OUT_DEFAULT = Path(__file__).parent / "data" / "full_items.json"
 #: The offline builder is not Lambda-bound, so it retries harder than the ETL
 #: default (``_UTIL_DB_MAX_ATTEMPTS``) to ride out arsha's bursts before giving up.
 _CATALOG_BUILD_ATTEMPTS = 6
+
+#: Circuit breaker: abort the crawl (and fail loud) once more than this many
+#: categories have failed -- arsha is down, so there is no point probing on.
+_CATALOG_MAX_FAILURES = 10
 
 
 def main() -> None:
@@ -65,10 +69,11 @@ def main() -> None:
     def fetch(main: int, sub: int) -> list[MarketListItem]:
         try:
             items = client.fetch_market_list(main, sub, max_attempts=_CATALOG_BUILD_ATTEMPTS)
-        except (urllib.error.URLError, TimeoutError) as exc:
-            # Transient arsha failure after retries: signal a failure (not an
-            # empty boundary) so enumerate_taxonomy records it and the crawl is
-            # never silently truncated.
+        except (OSError, ValueError, http.client.IncompleteRead) as exc:
+            # fetch_market_list returns [] only for a real 404 boundary, so any
+            # error raised here (network, timeout, non-list/JSON body, exhausted
+            # retries) is a genuine failure. Record it as a failure (not an empty
+            # boundary) so enumerate_taxonomy never silently truncates the crawl.
             raise MarketListFetchError(f"{main}:{sub}") from exc
         if items:
             print(f"  {main}:{sub} -> {len(items)} items")
@@ -78,7 +83,9 @@ def main() -> None:
     print(
         f"Enumerating arsha.io market taxonomy (region={args.region}, max-main={args.max_main})..."
     )
-    catalog, failures = enumerate_taxonomy(fetch, max_main=args.max_main)
+    catalog, failures = enumerate_taxonomy(
+        fetch, max_main=args.max_main, max_failures=_CATALOG_MAX_FAILURES
+    )
     print(f"Discovered {len(catalog)} unique marketable items")
 
     # Fail loud on an incomplete crawl: a transient outage that exhausted retries

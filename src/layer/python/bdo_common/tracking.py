@@ -49,7 +49,11 @@ def main_category_codes(max_main: int = 85) -> list[int]:
 
 
 def enumerate_taxonomy(
-    fetch: FetchMarketList, *, max_main: int = 85, max_sub: int = 30
+    fetch: FetchMarketList,
+    *,
+    max_main: int = 85,
+    max_sub: int = 30,
+    max_failures: int | None = None,
 ) -> tuple[list[MarketListItem], list[tuple[int, int]]]:
     """Enumerate the market taxonomy into ``(items, failures)``.
 
@@ -61,6 +65,11 @@ def enumerate_taxonomy(
     fetch never silently truncates the crawl. Items are de-duplicated by id
     (last write wins) and returned sorted by id; ``failures`` lists the
     ``(main, sub)`` pairs that could not be fetched.
+
+    ``max_failures`` (when set) is a circuit breaker: once more than that many
+    fetches have failed, the walk stops early and returns what it has so far plus
+    the failures -- so a broad arsha outage fails fast instead of probing the
+    whole taxonomy at the full retry budget per cell.
     """
     by_id: dict[int, MarketListItem] = {}
     failures: list[tuple[int, int]] = []
@@ -70,6 +79,8 @@ def enumerate_taxonomy(
                 items = fetch(main, sub)
             except MarketListFetchError:
                 failures.append((main, sub))
+                if max_failures is not None and len(failures) > max_failures:
+                    return [by_id[i] for i in sorted(by_id)], failures
                 continue
             if not items:
                 break

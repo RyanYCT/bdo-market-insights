@@ -602,7 +602,7 @@ class TestFetchMarketList:
     """fetch_market_list: 404 is the category boundary ([]); transient 5xx raises."""
 
     @staticmethod
-    def _ok(items: list[dict[str, Any]]) -> MagicMock:
+    def _ok(items: Any) -> MagicMock:
         resp = MagicMock()
         resp.read.return_value = json.dumps(items).encode()
         resp.__enter__ = MagicMock(return_value=resp)
@@ -655,3 +655,31 @@ class TestFetchMarketList:
         assert [i.item_id for i in items] == [1]
         assert urlopen.call_count == 2
         sleep.assert_called_once()
+
+    def test_non_404_client_error_raises(self) -> None:
+        """A non-404 client error (e.g. a WAF 403) raises -- it is not a boundary."""
+        client = ArshaClient()
+        err = urllib.error.HTTPError("u", 403, "forbidden", {}, None)  # type: ignore[arg-type]
+        with (
+            patch("bdo_common.arsha_client.urllib.request.urlopen", side_effect=err) as urlopen,
+            patch("bdo_common.arsha_client.time.sleep") as sleep,
+            pytest.raises(urllib.error.HTTPError),
+        ):
+            client.fetch_market_list(20, 1)
+        assert urlopen.call_count == 1  # non-retryable, non-boundary -> raise at once
+        sleep.assert_not_called()
+
+    def test_non_list_payload_retries_then_raises(self) -> None:
+        """A 200 with a non-list error envelope is retried, then raises (not [])."""
+        client = ArshaClient()
+        envelope = {"error": "blocked", "code": 103}  # arsha 200 error envelope
+        with (
+            patch(
+                "bdo_common.arsha_client.urllib.request.urlopen",
+                return_value=self._ok(envelope),
+            ) as urlopen,
+            patch("bdo_common.arsha_client.time.sleep"),
+            pytest.raises(ValueError, match="non-list"),
+        ):
+            client.fetch_market_list(20, 1, max_attempts=3)
+        assert urlopen.call_count == 3  # retried, then raised -- never returned []

@@ -64,6 +64,18 @@ class TestEnumerateTaxonomy:
         assert [r.item_id for r in result] == [1, 3]
         assert failures == [(5, 2)]
 
+    def test_circuit_breaker_stops_after_max_failures(self) -> None:
+        """Once failures exceed max_failures, the walk stops early (arsha down)."""
+
+        def fetch(main: int, sub: int) -> list[MarketListItem]:
+            raise tracking.MarketListFetchError(f"{main}:{sub}")
+
+        result, failures = tracking.enumerate_taxonomy(
+            fetch, max_main=85, max_sub=30, max_failures=2
+        )
+        assert result == []
+        assert len(failures) == 3  # stops once failures exceed the cap (2)
+
 
 class TestParseCatalog:
     def test_maps_snapshot_rows(self) -> None:

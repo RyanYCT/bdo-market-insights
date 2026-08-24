@@ -506,14 +506,15 @@ class ArshaClient:
         ``GetWorldMarketSubList`` do not. Used by the offline catalog builder to
         enumerate the taxonomy.
 
-        A non-existent ``(main, sub)`` returns HTTP 404 (a non-retryable error),
-        which is not a failure but the *category boundary* -- an empty list is
-        returned to signal it. Transient failures (5xx, timeouts) are retried
-        with full-jitter exponential backoff and, once ``max_attempts`` is
-        exhausted, **raise**. Distinguishing an empty boundary (return) from
-        arsha being unavailable (raise) is what lets the builder's taxonomy walk
-        stop at a real boundary without mistaking a transient outage for one and
-        silently truncating the crawl.
+        Only an HTTP **404** is the *category boundary* (this ``(main, sub)`` does
+        not exist) -- an empty list is returned to signal it. Every other failure
+        raises: transient errors (5xx, 429, timeouts, and a 200 whose body is a
+        non-list error envelope) are retried with full-jitter exponential backoff
+        and raise once ``max_attempts`` is exhausted; any other non-retryable
+        error (e.g. a WAF 403) raises immediately. Reserving the empty return for
+        a genuine 404 is what lets the builder's taxonomy walk stop at a real
+        boundary without mistaking a transient outage for one and silently
+        truncating the crawl.
         """
         url = self._build_market_list_url(main_category, sub_category)
         for attempt in range(1, max_attempts + 1):
@@ -523,13 +524,19 @@ class ArshaClient:
                     url, timeout=_UTIL_DB_TIMEOUT_SECONDS
                 ) as resp:
                     raw = json.loads(resp.read().decode())
+                if not isinstance(raw, list):
+                    # A 200 with a non-list body is an arsha error envelope, not
+                    # the boundary; treat it as transient (retry, then fail loud).
+                    msg = f"non-list payload from {url}"
+                    raise ValueError(msg)
                 return normalize_market_list(raw)
             except Exception as exc:
-                if not _is_retryable_fetch_error(exc):
-                    # Non-retryable (e.g. 404): the category does not exist. This
-                    # is the taxonomy boundary, not a failure -> empty result.
+                if isinstance(exc, urllib.error.HTTPError) and exc.code == 404:
+                    # 404 is the taxonomy boundary: this (main, sub) does not
+                    # exist. ONLY 404 -- any other non-retryable error (e.g. a WAF
+                    # 403) raises, so it is never mistaken for the boundary.
                     return []
-                if attempt == max_attempts:
+                if not _is_retryable_fetch_error(exc) or attempt == max_attempts:
                     logger.error(
                         "GetWorldMarketList fetch failed for %s after %d attempt(s): %s",
                         url,
