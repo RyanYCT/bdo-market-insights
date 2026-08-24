@@ -2,11 +2,11 @@
   "_comment": "Named, self-defined item sets for select_tracked.py, referenced by presets in presets.json. Each set is a list of item ids; an optional 'cron_profile' assigns those items an enhancement cron-stone cost profile (default 'standard'), applied as a cross-cutting override so the items keep that profile no matter which preset selects them (e.g. the Deboreka series stays 'deboreka' even when picked via the broad 'accessories' preset). 'cron_profile' is currently metadata for a future calibrated enhancement-cost model (not yet consumed); series that consume cron stones differently (Deboreka, Apeiron) each get their own profile.",
   "deboreka": {
     "cron_profile": "deboreka",
-    "ids": [12094, 11653, 11882, 12276]
+    "ids": [11653, 11882, 12094, 12276]
   },
   "apeiron": {
     "cron_profile": "apeiron",
-    "ids": [12144, 11898, 12298, 11733]
+    "ids": [11733, 11898, 12144, 12298]
   },
   "buffs": {
     "ids": [17081, 17646, 18927, 47688, 601204]
