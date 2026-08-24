@@ -32,16 +32,37 @@ class TestEnumerateTaxonomy:
         def fetch(main: int, sub: int) -> list[MarketListItem]:
             return data.get((main, sub), [])
 
-        result = tracking.enumerate_taxonomy(fetch, max_main=5, max_sub=10)
+        result, failures = tracking.enumerate_taxonomy(fetch, max_main=5, max_sub=10)
         # Flat, de-duplicated by id, sorted by id.
         assert [r.item_id for r in result] == [1, 2, 3, 4]
+        assert failures == []
 
     def test_empty_first_sub_skips_whole_main(self) -> None:
         def fetch(main: int, sub: int) -> list[MarketListItem]:
             return [_mli(9, 5, 1)] if (main, sub) == (5, 1) else []
 
-        result = tracking.enumerate_taxonomy(fetch, max_main=5, max_sub=5)
+        result, failures = tracking.enumerate_taxonomy(fetch, max_main=5, max_sub=5)
         assert [r.item_id for r in result] == [9]
+        assert failures == []
+
+    def test_transient_failure_recorded_without_truncating_main(self) -> None:
+        """A MarketListFetchError is recorded and does NOT stop the main early."""
+        data = {
+            (5, 1): [_mli(1, 5, 1)],
+            # (5, 2) raises -> recorded as a failure, must keep probing
+            (5, 3): [_mli(3, 5, 3)],
+            # (5, 4) empty -> real boundary
+        }
+
+        def fetch(main: int, sub: int) -> list[MarketListItem]:
+            if (main, sub) == (5, 2):
+                raise tracking.MarketListFetchError("5:2")
+            return data.get((main, sub), [])
+
+        result, failures = tracking.enumerate_taxonomy(fetch, max_main=5, max_sub=10)
+        # 5:3 is still fetched despite the 5:2 failure -> no silent truncation.
+        assert [r.item_id for r in result] == [1, 3]
+        assert failures == [(5, 2)]
 
 
 class TestParseCatalog:

@@ -591,3 +591,67 @@ class TestFetchItemDb:
             assert client.fetch_item_db("en") == []
         assert urlopen.call_count == 1  # 4xx is not retried
         sleep.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# ArshaClient.fetch_market_list (boundary vs. transient failure)
+# ---------------------------------------------------------------------------
+
+
+class TestFetchMarketList:
+    """fetch_market_list: 404 is the category boundary ([]); transient 5xx raises."""
+
+    @staticmethod
+    def _ok(items: list[dict[str, Any]]) -> MagicMock:
+        resp = MagicMock()
+        resp.read.return_value = json.dumps(items).encode()
+        resp.__enter__ = MagicMock(return_value=resp)
+        resp.__exit__ = MagicMock(return_value=False)
+        return resp
+
+    def test_success_returns_items(self) -> None:
+        client = ArshaClient()
+        payload = [{"id": 12094, "name": "Deboreka Ring", "mainCategory": 20, "subCategory": 1}]
+        with patch(
+            "bdo_common.arsha_client.urllib.request.urlopen", return_value=self._ok(payload)
+        ):
+            items = client.fetch_market_list(20, 1)
+        assert [i.item_id for i in items] == [12094]
+
+    def test_404_boundary_returns_empty(self) -> None:
+        client = ArshaClient()
+        err = urllib.error.HTTPError("u", 404, "not found", {}, None)  # type: ignore[arg-type]
+        with (
+            patch("bdo_common.arsha_client.urllib.request.urlopen", side_effect=err) as urlopen,
+            patch("bdo_common.arsha_client.time.sleep") as sleep,
+        ):
+            assert client.fetch_market_list(20, 99) == []
+        assert urlopen.call_count == 1  # non-retryable boundary -> no retry
+        sleep.assert_not_called()
+
+    def test_transient_exhaustion_raises(self) -> None:
+        client = ArshaClient()
+        err = urllib.error.HTTPError("u", 503, "unavailable", {}, None)  # type: ignore[arg-type]
+        with (
+            patch("bdo_common.arsha_client.urllib.request.urlopen", side_effect=err) as urlopen,
+            patch("bdo_common.arsha_client.time.sleep"),
+            pytest.raises(urllib.error.HTTPError),
+        ):
+            client.fetch_market_list(20, 1, max_attempts=3)
+        assert urlopen.call_count == 3  # exhausts, then raises (not [])
+
+    def test_retries_transient_then_succeeds(self) -> None:
+        client = ArshaClient()
+        payload = [{"id": 1, "name": "X", "mainCategory": 20, "subCategory": 1}]
+        err = urllib.error.HTTPError("u", 503, "unavailable", {}, None)  # type: ignore[arg-type]
+        with (
+            patch(
+                "bdo_common.arsha_client.urllib.request.urlopen",
+                side_effect=[err, self._ok(payload)],
+            ) as urlopen,
+            patch("bdo_common.arsha_client.time.sleep") as sleep,
+        ):
+            items = client.fetch_market_list(20, 1)
+        assert [i.item_id for i in items] == [1]
+        assert urlopen.call_count == 2
+        sleep.assert_called_once()

@@ -18,11 +18,15 @@ logger = logging.getLogger(__name__)
 
 _MAX_BATCH_SIZE = 50
 
-#: ``util/db`` is a low-traffic, uncached endpoint that intermittently returns
-#: HTTP 500 or times out; transient failures are retried with linear backoff.
+#: ``util/db`` and ``GetWorldMarketList`` are low-traffic, uncached endpoints
+#: that intermittently return 5xx / time out (worse during arsha's bursts).
+#: Transient failures are retried with full-jitter exponential backoff. The
+#: offline catalog builder passes a larger ``max_attempts`` than this ETL default
+#: because it is not Lambda-bound.
 _UTIL_DB_MAX_ATTEMPTS = 4
 _UTIL_DB_TIMEOUT_SECONDS = 30
-_UTIL_DB_BACKOFF_SECONDS = 3.0
+_UTIL_DB_BACKOFF_BASE_SECONDS = 2.0
+_UTIL_DB_BACKOFF_MAX_SECONDS = 30.0
 
 #: The v2 ``GetWorldMarketSubList`` endpoint (hourly ETL market fetch) is
 #: intermittently flaky: arsha's Envoy front returns transient 5xx (observed
@@ -82,6 +86,19 @@ def _sublist_backoff_seconds(attempt: int) -> float:
     ceiling = min(
         _SUBLIST_BACKOFF_MAX_SECONDS,
         _SUBLIST_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)),
+    )
+    return random.uniform(0, ceiling)  # noqa: S311  # nosec B311 - not cryptographic
+
+
+def _util_db_backoff_seconds(attempt: int) -> float:
+    """Full-jitter exponential backoff (seconds) for util/db + GetWorldMarketList.
+
+    Same full-jitter exponential shape as the SubList retry, with its own base and
+    cap: a random sleep in ``[0, min(cap, base * 2 ** (attempt - 1))]``.
+    """
+    ceiling = min(
+        _UTIL_DB_BACKOFF_MAX_SECONDS,
+        _UTIL_DB_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)),
     )
     return random.uniform(0, ceiling)  # noqa: S311  # nosec B311 - not cryptographic
 
@@ -426,21 +443,25 @@ class ArshaClient:
         """Build the ``util/db`` full-catalog URL for a language."""
         return f"{self._util_base_url}/db?lang={lang}"
 
-    def fetch_item_db(self, lang: str = DEFAULT_LANG) -> list[CatalogEntry]:
+    def fetch_item_db(
+        self, lang: str = DEFAULT_LANG, *, max_attempts: int = _UTIL_DB_MAX_ATTEMPTS
+    ) -> list[CatalogEntry]:
         """Fetch the full BDO item catalog for ``lang`` from arsha.io ``util/db``.
 
         Returns every known item as a CatalogEntry (id, localized name, grade).
         Raises ValueError for an unsupported ``lang``. Transient failures (5xx,
-        timeouts) are retried with linear backoff; if every attempt fails the
-        error is logged and an empty list is returned, so a bad fetch is a no-op
-        for the (upsert-only) catalog sync rather than a destructive event.
+        timeouts) are retried with full-jitter exponential backoff; if every
+        attempt fails the error is logged and an empty list is returned, so a bad
+        fetch is a no-op for the (upsert-only) catalog sync rather than a
+        destructive event. ``max_attempts`` lets the offline catalog builder use a
+        larger budget than the ETL default.
         """
         if lang not in SUPPORTED_LANGS:
             supported = ", ".join(sorted(SUPPORTED_LANGS))
             msg = f"unsupported lang {lang!r}; expected one of: {supported}"
             raise ValueError(msg)
         url = self._build_item_db_url(lang)
-        for attempt in range(1, _UTIL_DB_MAX_ATTEMPTS + 1):
+        for attempt in range(1, max_attempts + 1):
             try:
                 # URL is built internally and is always https://api.arsha.io/...
                 with urllib.request.urlopen(  # noqa: S310  # nosec B310
@@ -449,7 +470,7 @@ class ArshaClient:
                     raw = json.loads(resp.read().decode())
                 return normalize_item_db(raw)
             except Exception as exc:
-                if not _is_retryable_fetch_error(exc) or attempt == _UTIL_DB_MAX_ATTEMPTS:
+                if not _is_retryable_fetch_error(exc) or attempt == max_attempts:
                     logger.error(
                         "util/db fetch failed for %s after %d attempt(s): %s", url, attempt, exc
                     )
@@ -457,11 +478,11 @@ class ArshaClient:
                 logger.warning(
                     "util/db fetch attempt %d/%d failed for %s: %s; retrying",
                     attempt,
-                    _UTIL_DB_MAX_ATTEMPTS,
+                    max_attempts,
                     url,
                     exc,
                 )
-                time.sleep(_UTIL_DB_BACKOFF_SECONDS * attempt)
+                time.sleep(_util_db_backoff_seconds(attempt))
         return []  # unreachable: the loop returns on success or final failure
 
     def _build_market_list_url(self, main_category: int, sub_category: int) -> str:
@@ -471,18 +492,31 @@ class ArshaClient:
             f"?mainCategory={main_category}&subCategory={sub_category}"
         )
 
-    def fetch_market_list(self, main_category: int, sub_category: int) -> list[MarketListItem]:
+    def fetch_market_list(
+        self,
+        main_category: int,
+        sub_category: int,
+        *,
+        max_attempts: int = _UTIL_DB_MAX_ATTEMPTS,
+    ) -> list[MarketListItem]:
         """Fetch every item in one market category, with its taxonomy codes.
 
         ``GetWorldMarketList`` is the only endpoint that returns an item's
         ``mainCategory``/``subCategory``; the catalog (``util/db``) and
-        ``GetWorldMarketSubList`` do not. Used to derive an item's category from
-        the live taxonomy. Transient failures (5xx, timeouts) are retried with
-        linear backoff; if every attempt fails the error is logged and an empty
-        list is returned (the caller reports the affected items as unclassified).
+        ``GetWorldMarketSubList`` do not. Used by the offline catalog builder to
+        enumerate the taxonomy.
+
+        A non-existent ``(main, sub)`` returns HTTP 404 (a non-retryable error),
+        which is not a failure but the *category boundary* -- an empty list is
+        returned to signal it. Transient failures (5xx, timeouts) are retried
+        with full-jitter exponential backoff and, once ``max_attempts`` is
+        exhausted, **raise**. Distinguishing an empty boundary (return) from
+        arsha being unavailable (raise) is what lets the builder's taxonomy walk
+        stop at a real boundary without mistaking a transient outage for one and
+        silently truncating the crawl.
         """
         url = self._build_market_list_url(main_category, sub_category)
-        for attempt in range(1, _UTIL_DB_MAX_ATTEMPTS + 1):
+        for attempt in range(1, max_attempts + 1):
             try:
                 # URL is built internally and is always https://api.arsha.io/...
                 with urllib.request.urlopen(  # noqa: S310  # nosec B310
@@ -491,20 +525,26 @@ class ArshaClient:
                     raw = json.loads(resp.read().decode())
                 return normalize_market_list(raw)
             except Exception as exc:
-                if not _is_retryable_fetch_error(exc) or attempt == _UTIL_DB_MAX_ATTEMPTS:
+                if not _is_retryable_fetch_error(exc):
+                    # Non-retryable (e.g. 404): the category does not exist. This
+                    # is the taxonomy boundary, not a failure -> empty result.
+                    return []
+                if attempt == max_attempts:
                     logger.error(
                         "GetWorldMarketList fetch failed for %s after %d attempt(s): %s",
                         url,
                         attempt,
                         exc,
                     )
-                    return []
+                    raise
                 logger.warning(
                     "GetWorldMarketList attempt %d/%d failed for %s: %s; retrying",
                     attempt,
-                    _UTIL_DB_MAX_ATTEMPTS,
+                    max_attempts,
                     url,
                     exc,
                 )
-                time.sleep(_UTIL_DB_BACKOFF_SECONDS * attempt)
-        return []  # unreachable: the loop returns on success or final failure
+                time.sleep(_util_db_backoff_seconds(attempt))
+        raise RuntimeError(
+            "unreachable: GetWorldMarketList retry loop exhausted"
+        )  # pragma: no cover
