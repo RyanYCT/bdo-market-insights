@@ -129,7 +129,7 @@ class TestFetchData:
         mod = load_handler("fetch_data")
 
         def fake_fetch(self: Any, item_ids: list[int]) -> FetchOutcome:
-            # 10 items, 1 blocked (10%) -> below the 20% threshold
+            # 10 items, 1 blocked -> the 9 fetched are stored, the drop is skipped
             return FetchOutcome([[_arsha_item(i)] for i in item_ids[:-1]], [item_ids[-1]])
 
         monkeypatch.setattr(mod.ArshaClient, "fetch_raw_resilient", fake_fetch)
@@ -141,17 +141,39 @@ class TestFetchData:
         result = mod.handler(batch, lambda_context)
         assert len(result["raw"]) == 9
 
-    def test_fails_loud_when_too_many_unfetchable(
+    def test_stores_partial_even_when_most_failed(
         self,
         load_handler: Callable[[str], ModuleType],
         lambda_context: Any,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """When arsha is broadly down (> threshold failed), the stage raises."""
+        """As long as anything was fetched, the run stores it -- it does not fail."""
         mod = load_handler("fetch_data")
 
         def fake_fetch(self: Any, item_ids: list[int]) -> FetchOutcome:
-            return FetchOutcome([], list(item_ids))  # 100% failed
+            # 10 items, only 2 fetched (80% blocked) -> still store the 2
+            return FetchOutcome([[_arsha_item(i)] for i in item_ids[:2]], list(item_ids[2:]))
+
+        monkeypatch.setattr(mod.ArshaClient, "fetch_raw_resilient", fake_fetch)
+        batch = {
+            "region": "tw",
+            "snapshot_at": "2026-06-01T05:00:00+00:00",
+            "items": [{"id": 100 + i, "name": "X"} for i in range(10)],
+        }
+        result = mod.handler(batch, lambda_context)
+        assert len(result["raw"]) == 2
+
+    def test_fails_loud_when_nothing_fetched(
+        self,
+        load_handler: Callable[[str], ModuleType],
+        lambda_context: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When nothing could be fetched (arsha broadly down), the stage raises."""
+        mod = load_handler("fetch_data")
+
+        def fake_fetch(self: Any, item_ids: list[int]) -> FetchOutcome:
+            return FetchOutcome([], list(item_ids))  # 100% failed, nothing fetched
 
         monkeypatch.setattr(mod.ArshaClient, "fetch_raw_resilient", fake_fetch)
         batch = {

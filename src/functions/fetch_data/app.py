@@ -8,11 +8,12 @@ retries there never re-hit the network (FR-3).
 arsha proxies the Imperva-protected upstream market API and fails an entire
 multi-id request if any single item is blocked. The fetch is therefore
 resilient (adaptive bisect): individually blocked items are dropped and
-reported rather than failing the whole batch. If too large a fraction of the
-batch is unfetchable -- i.e. arsha is broadly down rather than a few items
-being blocked -- the stage fails loudly so Step Functions surfaces it (and the
-``ExecutionsFailed`` alarm fires) instead of the pipeline silently storing a
-near-empty snapshot.
+reported rather than failing the whole batch, and whatever was fetched is
+passed downstream to be stored -- a dropped item simply has no snapshot for
+this hour (surfaced by the ``MarketItemsSkipped`` metric and, if the drops
+persist, the sustained skip alarm). The stage fails loud only when *nothing*
+could be fetched (arsha broadly down): there is no partial data to preserve and
+it warrants immediate visibility via the ``ExecutionsFailed`` alarm.
 """
 
 from __future__ import annotations
@@ -27,12 +28,6 @@ from bdo_common.arsha_client import ArshaClient
 logger = Logger()
 tracer = Tracer()
 metrics = Metrics(namespace="BdoMarket")
-
-#: Fail the run when more than this fraction of a batch's items are unfetchable
-#: after resilient retry + bisect. At or below the threshold the run stores what
-#: it got and skips the rest (the next hourly run picks them up); above it, arsha
-#: is treated as broadly down and the stage fails loud.
-_MAX_FAILED_ITEM_FRACTION = 0.2
 
 
 @logger.inject_lambda_context
@@ -49,20 +44,16 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     metrics.add_metric(name="MarketItemsSkipped", unit=MetricUnit.Count, value=len(failed_ids))
 
-    if item_ids and len(failed_ids) > _MAX_FAILED_ITEM_FRACTION * len(item_ids):
+    # Fail loud only when nothing at all could be fetched for a non-empty batch
+    # (arsha broadly down): no partial data to preserve, so surface it via the
+    # ExecutionsFailed alarm. A partial fetch stores what it got; a transient bad
+    # window self-heals next run, and sustained drops trip the skip alarm.
+    if item_ids and not payloads:
         logger.error(
-            "fetchData failing: too many unfetchable items",
-            extra={
-                "region": region,
-                "id_count": len(item_ids),
-                "failed_count": len(failed_ids),
-                "failed_ids": failed_ids,
-            },
+            "fetchData failing: no items could be fetched",
+            extra={"region": region, "id_count": len(item_ids), "failed_count": len(failed_ids)},
         )
-        msg = (
-            f"{len(failed_ids)}/{len(item_ids)} items unfetchable from arsha "
-            "(upstream broadly blocked)"
-        )
+        msg = f"all {len(item_ids)} items unfetchable from arsha (upstream down)"
         raise RuntimeError(msg)
 
     logger.info(
