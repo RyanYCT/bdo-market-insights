@@ -10,5 +10,6 @@
   "pearl": { "main": 55 },
   "functional": { "main": 55, "sub": 6 },
   "deboreka": { "set": "deboreka" },
+  "apeiron": { "set": "apeiron" },
   "buffs": { "set": "buffs" }
 }

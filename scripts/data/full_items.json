@@ -69270,5 +69270,33 @@
     "main": 55,
     "sub": 8,
     "grade": 3
+  },
+  {
+    "id": 12144,
+    "name": "Apeiron Ring",
+    "main": 20,
+    "sub": 1,
+    "grade": 5
+  },
+  {
+    "id": 11733,
+    "name": "Apeiron Necklace",
+    "main": 20,
+    "sub": 2,
+    "grade": 5
+  },
+  {
+    "id": 11898,
+    "name": "Apeiron Earring",
+    "main": 20,
+    "sub": 3,
+    "grade": 5
+  },
+  {
+    "id": 12298,
+    "name": "Apeiron Belt",
+    "main": 20,
+    "sub": 4,
+    "grade": 5
   }
 ]
