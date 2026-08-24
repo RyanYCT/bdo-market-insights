@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any, Literal
 
 import psycopg
@@ -28,6 +28,7 @@ from aws_lambda_powertools.event_handler.openapi.exceptions import RequestValida
 from aws_lambda_powertools.event_handler.openapi.params import Query
 from aws_lambda_powertools.metrics import MetricUnit
 from aws_lambda_powertools.utilities.typing import LambdaContext
+from pydantic import BaseModel
 
 from bdo_common import analytics, db, pricing
 from bdo_common.insights.models import Period
@@ -42,6 +43,14 @@ app = APIGatewayRestResolver(enable_validation=True)
 
 #: FR-13 hard cap on snapshots returned per request.
 MAX_SNAPSHOT_LIMIT = 1000
+
+#: Default snapshots per request when the caller omits ``limit``. Sized for the
+#: common daily (24) and weekly (168) hourly charts; longer ranges should use the
+#: daily endpoint. Kept well below the FR-13 cap so a bare call is cheap.
+DEFAULT_SNAPSHOT_LIMIT = 168
+
+#: One hour, for hourly-bucket coverage math (snapshots are top-of-hour UTC).
+_ONE_HOUR = timedelta(hours=1)
 
 #: Valid BDO server regions. Mirrors the ``BdoRegion`` AllowedValues enum in
 #: ``template.yaml`` (the IaC source); an unknown region is rejected with 400.
@@ -63,6 +72,37 @@ Region = Literal[
 
 #: Default region when the caller omits ``region``.
 DEFAULT_REGION: Region = "tw"
+
+
+class Coverage(BaseModel):
+    """Hourly coverage of the returned window, so clients can render gaps.
+
+    Computed over the requested window when ``from``/``to`` are supplied, else
+    over the span of the returned rows. ``present_hours`` counts *distinct*
+    hourly ``snapshot_at`` values (snapshots are top-of-hour UTC), so it is
+    correct even for ``sid=null`` responses that carry several rows per hour.
+    Both endpoints are inclusive. ``truncated`` is true when the row ``limit``
+    bounded the result -- i.e. older data exists beyond ``window_start`` -- so a
+    high ``missing_hours`` there reflects the cap, not gaps.
+    """
+
+    window_start: datetime
+    window_end: datetime
+    expected_hours: int
+    present_hours: int
+    missing_hours: int
+    truncated: bool
+
+
+class SnapshotsResponse(BaseModel):
+    """Response body for ``GET /v1/market/items/{item_id}/snapshots`` (FR-13)."""
+
+    item_id: int
+    region: str
+    sid: int | None
+    count: int
+    coverage: Coverage | None
+    snapshots: list[SnapshotRow]
 
 
 def handle_validation_error(exc: RequestValidationError) -> Response[str]:
@@ -96,6 +136,45 @@ def _reading() -> Iterator[psycopg.Connection[tuple[Any, ...]]]:
         yield conn
     finally:
         conn.rollback()
+
+
+def _floor_to_hour(dt: datetime) -> datetime:
+    """Floor a datetime to the top of its UTC hour (tz-aware).
+
+    Naive inputs are treated as UTC so comparisons against the tz-aware
+    ``snapshot_at`` values never mix naive/aware datetimes.
+    """
+    aware = dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+    return aware.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
+
+
+def _snapshot_coverage(
+    rows: list[SnapshotRow],
+    from_: datetime | None,
+    to: datetime | None,
+    limit: int,
+) -> Coverage | None:
+    """Hourly coverage of the returned snapshots, or None if no window is defined.
+
+    The window is the requested ``[from, to]`` when given, else the span of the
+    returned rows. Returns None only when there is neither data nor an explicit
+    window (nothing to describe).
+    """
+    present = {_floor_to_hour(row.snapshot_at) for row in rows}
+    start = _floor_to_hour(from_) if from_ is not None else (min(present) if present else None)
+    end = _floor_to_hour(to) if to is not None else (max(present) if present else None)
+    if start is None or end is None or end < start:
+        return None
+    expected = int((end - start) / _ONE_HOUR) + 1
+    present_in_window = sum(1 for hour in present if start <= hour <= end)
+    return Coverage(
+        window_start=start,
+        window_end=end,
+        expected_hours=expected,
+        present_hours=present_in_window,
+        missing_hours=max(0, expected - present_in_window),
+        truncated=len(rows) == limit,
+    )
 
 
 def _latest_price_by_sid(rows: list[SnapshotRow]) -> dict[int, float]:
@@ -135,12 +214,13 @@ def get_snapshots(
         int,
         Query(
             description=(
-                "Max snapshots returned. Range: 1-1000. Default: 1000. Out-of-range is clamped."
+                "Max snapshots returned. Range: 1-1000. Default: 168 (one week of hourly "
+                "points). Out-of-range is clamped. For longer ranges use the daily endpoint."
             )
         ),
-    ] = MAX_SNAPSHOT_LIMIT,
-) -> dict[str, Any]:
-    """FR-13: raw hourly snapshots (capped at 1000), newest first."""
+    ] = DEFAULT_SNAPSHOT_LIMIT,
+) -> SnapshotsResponse:
+    """FR-13: raw hourly snapshots (default 168, capped at 1000), newest first."""
     limit = max(1, min(limit, MAX_SNAPSHOT_LIMIT))
     with _reading() as conn:
         rows = SnapshotRepo.get_snapshots(
@@ -152,13 +232,14 @@ def get_snapshots(
             to_dt=to,
             limit=limit,
         )
-    return {
-        "item_id": item_id,
-        "region": region,
-        "sid": sid,
-        "count": len(rows),
-        "snapshots": [row.model_dump(mode="json") for row in rows],
-    }
+    return SnapshotsResponse(
+        item_id=item_id,
+        region=region,
+        sid=sid,
+        count=len(rows),
+        coverage=_snapshot_coverage(rows, from_, to, limit),
+        snapshots=rows,
+    )
 
 
 @app.get("/v1/market/items/<item_id>/daily")
