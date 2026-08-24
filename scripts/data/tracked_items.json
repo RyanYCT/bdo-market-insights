@@ -4,12 +4,14 @@
   { "id": 12068, "name": "Ominous Ring" },
   { "id": 12091, "name": "Ocean Haze Ring" },
   { "id": 12094, "name": "Deboreka Ring" },
+  { "id": 12144, "name": "Apeiron Ring" },
 
   { "id": 11629, "name": "Tungrad Necklace" },
   { "id": 11653, "name": "Deboreka Necklace" },
   { "id": 11662, "name": "Revived River Necklace" },
   { "id": 11663, "name": "Revived Lunar Necklace" },
   { "id": 11688, "name": "Asadal Necklace" },
+  { "id": 11733, "name": "Apeiron Necklace" },
 
   { "id": 11828, "name": "Tungrad Earring" },
   { "id": 11834, "name": "Narc Ear Accessory" },
@@ -18,6 +20,7 @@
   { "id": 11856, "name": "Ethereal Earring" },
   { "id": 11875, "name": "Vaha's Dawn" },
   { "id": 11882, "name": "Deboreka Earring" },
+  { "id": 11898, "name": "Apeiron Earring" },
 
   { "id": 12229, "name": "Centaurus Belt" },
   { "id": 12237, "name": "Tungrad Belt" },
@@ -25,6 +28,7 @@
   { "id": 12276, "name": "Deboreka Belt" },
   { "id": 12282, "name": "Taebaek's Belt" },
   { "id": 12285, "name": "Asadal Belt" },
+  { "id": 12298, "name": "Apeiron Belt" },
 
   { "id": 17081, "name": "Blessing of Kamasylve (15 Days)" },
   { "id": 17646, "name": "Sealed Book of Combat (15 Days)" },

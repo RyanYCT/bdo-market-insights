@@ -85,6 +85,12 @@ bdo-market-insights/
   tests `bdo_common/arsha_client.py`.
 - **One root `template.yaml`** that nests `infra/*.yaml`. No second
   SAM template, no parallel Terraform.
+- **Changing what's tracked** (add/remove an item or series, e.g. after a
+  patch) uses the offline data files under `scripts/data/`
+  (`track_sets.json`, `presets.json`, `full_items.json`) resolved by
+  `scripts/select_tracked.py` into `tracked_items.json`, then seeded — see
+  the runbook's "Adding or removing tracked items & series". `tracked_items.json`
+  is hand-formatted, so verify tool edits with a preview run (`+ 0 added`).
 - **SSM parameter names are repo-scoped**:
   `/bdo-market-insights/<stage>/<category>/<key>` — never the bare
   `/bdo/...` root (it is not repo-scoped: `bdo-analytics` and

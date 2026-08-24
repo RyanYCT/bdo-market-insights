@@ -1050,6 +1050,13 @@
     "grade": 3
   },
   {
+    "id": 800,
+    "name": "Viridian Draught",
+    "main": 35,
+    "sub": 3,
+    "grade": 3
+  },
+  {
     "id": 872,
     "name": "Perfume of Bracing Spirits",
     "main": 35,
@@ -1089,6 +1096,13 @@
     "name": "Immortal: Perfume of Charm",
     "main": 35,
     "sub": 2,
+    "grade": 3
+  },
+  {
+    "id": 890,
+    "name": "Perfume of Verdure",
+    "main": 35,
+    "sub": 3,
     "grade": 3
   },
   {
@@ -3878,6 +3892,20 @@
     "grade": 0
   },
   {
+    "id": 4016,
+    "name": "Rough Marble",
+    "main": 25,
+    "sub": 1,
+    "grade": 0
+  },
+  {
+    "id": 4017,
+    "name": "Magnetite Ore",
+    "main": 25,
+    "sub": 1,
+    "grade": 0
+  },
+  {
     "id": 4051,
     "name": "Melted Iron Shard",
     "main": 25,
@@ -4104,6 +4132,41 @@
   {
     "id": 4090,
     "name": "Pure Nickel Crystal",
+    "main": 25,
+    "sub": 1,
+    "grade": 0
+  },
+  {
+    "id": 4096,
+    "name": "Polished Marble",
+    "main": 25,
+    "sub": 1,
+    "grade": 0
+  },
+  {
+    "id": 4097,
+    "name": "Pure Marble",
+    "main": 25,
+    "sub": 1,
+    "grade": 0
+  },
+  {
+    "id": 4098,
+    "name": "Melted Magnetite Shard",
+    "main": 25,
+    "sub": 1,
+    "grade": 0
+  },
+  {
+    "id": 4099,
+    "name": "Magnetite Ingot",
+    "main": 25,
+    "sub": 1,
+    "grade": 0
+  },
+  {
+    "id": 4100,
+    "name": "Pure Magnetite Crystal",
     "main": 25,
     "sub": 1,
     "grade": 0
@@ -4382,6 +4445,13 @@
     "grade": 0
   },
   {
+    "id": 4415,
+    "name": "Olivine Ore",
+    "main": 25,
+    "sub": 1,
+    "grade": 0
+  },
+  {
     "id": 4451,
     "name": "Ruby",
     "main": 25,
@@ -4573,6 +4643,13 @@
   {
     "id": 4494,
     "name": "Resplendent Jade",
+    "main": 25,
+    "sub": 1,
+    "grade": 0
+  },
+  {
+    "id": 4496,
+    "name": "Magical Olivine Powder",
     "main": 25,
     "sub": 1,
     "grade": 0
@@ -12859,6 +12936,13 @@
     "grade": 3
   },
   {
+    "id": 11733,
+    "name": "Apeiron Necklace",
+    "main": 20,
+    "sub": 2,
+    "grade": 5
+  },
+  {
     "id": 11801,
     "name": "Yuria Earring",
     "main": 20,
@@ -13004,6 +13088,13 @@
     "main": 20,
     "sub": 3,
     "grade": 3
+  },
+  {
+    "id": 11898,
+    "name": "Apeiron Earring",
+    "main": 20,
+    "sub": 3,
+    "grade": 5
   },
   {
     "id": 11901,
@@ -13377,6 +13468,13 @@
     "grade": 3
   },
   {
+    "id": 12144,
+    "name": "Apeiron Ring",
+    "main": 20,
+    "sub": 1,
+    "grade": 5
+  },
+  {
     "id": 12201,
     "name": "Yuria Belt",
     "main": 20,
@@ -13515,6 +13613,13 @@
     "main": 20,
     "sub": 4,
     "grade": 3
+  },
+  {
+    "id": 12298,
+    "name": "Apeiron Belt",
+    "main": 20,
+    "sub": 4,
+    "grade": 5
   },
   {
     "id": 12301,
@@ -17064,6 +17169,13 @@
     "main": 50,
     "sub": 3,
     "grade": 3
+  },
+  {
+    "id": 15298,
+    "name": "Fused Crystal of Decimation",
+    "main": 50,
+    "sub": 1,
+    "grade": 4
   },
   {
     "id": 15601,
@@ -43288,6 +43400,13 @@
     "grade": 4
   },
   {
+    "id": 551184,
+    "name": "[Lahn] Checkmate Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
     "id": 551185,
     "name": "[Lahn] Everwaltz Blossom Helmet",
     "main": 55,
@@ -62713,6 +62832,13 @@
     "grade": 4
   },
   {
+    "id": 617067,
+    "name": "[Ranger] Medeia Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
     "id": 617073,
     "name": "[Sorceress] Medeia Outfit Set",
     "main": 55,
@@ -63602,6 +63728,1091 @@
     "grade": 4
   },
   {
+    "id": 620897,
+    "name": "[Warrior] Lifeguard Helmet",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620898,
+    "name": "[Warrior] Lifeguard Armor",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620899,
+    "name": "[Warrior] Lifeguard Gloves",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620900,
+    "name": "[Warrior] Lifeguard Shoes",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620901,
+    "name": "[Warrior] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 1,
+    "grade": 4
+  },
+  {
+    "id": 620902,
+    "name": "[Berserker] Lifeguard Helmet",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620903,
+    "name": "[Berserker] Lifeguard Armor",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620904,
+    "name": "[Berserker] Lifeguard Gloves",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620905,
+    "name": "[Berserker] Lifeguard Shoes",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620906,
+    "name": "[Berserker] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 1,
+    "grade": 4
+  },
+  {
+    "id": 620907,
+    "name": "[Musa] Lifeguard Helmet",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620908,
+    "name": "[Musa] Lifeguard Armor",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620909,
+    "name": "[Musa] Lifeguard Gloves",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620910,
+    "name": "[Musa] Lifeguard Shoes",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620911,
+    "name": "[Musa] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 1,
+    "grade": 4
+  },
+  {
+    "id": 620912,
+    "name": "[Wizard] Lifeguard Helmet",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620913,
+    "name": "[Wizard] Lifeguard Armor",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620914,
+    "name": "[Wizard] Lifeguard Gloves",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620915,
+    "name": "[Wizard] Lifeguard Shoes",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620916,
+    "name": "[Wizard] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 1,
+    "grade": 4
+  },
+  {
+    "id": 620917,
+    "name": "[Archer] Lifeguard Helmet",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620918,
+    "name": "[Archer] Lifeguard Armor",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620919,
+    "name": "[Archer] Lifeguard Gloves",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620920,
+    "name": "[Archer] Lifeguard Shoes",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620921,
+    "name": "[Archer] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 1,
+    "grade": 4
+  },
+  {
+    "id": 620922,
+    "name": "[Ninja] Lifeguard Helmet",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620923,
+    "name": "[Ninja] Lifeguard Armor",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620924,
+    "name": "[Ninja] Lifeguard Gloves",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620925,
+    "name": "[Ninja] Lifeguard Shoes",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620926,
+    "name": "[Ninja] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 1,
+    "grade": 4
+  },
+  {
+    "id": 620927,
+    "name": "[Striker] Lifeguard Helmet",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620928,
+    "name": "[Striker] Lifeguard Armor",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620929,
+    "name": "[Striker] Lifeguard Gloves",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620930,
+    "name": "[Striker] Lifeguard Shoes",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620931,
+    "name": "[Striker] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 1,
+    "grade": 4
+  },
+  {
+    "id": 620932,
+    "name": "[Hashashin] Lifeguard Helmet",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620933,
+    "name": "[Hashashin] Lifeguard Armor",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620934,
+    "name": "[Hashashin] Lifeguard Gloves",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620935,
+    "name": "[Hashashin] Lifeguard Shoes",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620936,
+    "name": "[Hashashin] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 1,
+    "grade": 4
+  },
+  {
+    "id": 620937,
+    "name": "[Sage] Lifeguard Helmet",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620938,
+    "name": "[Sage] Lifeguard Armor",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620939,
+    "name": "[Sage] Lifeguard Gloves",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620940,
+    "name": "[Sage] Lifeguard Shoes",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620941,
+    "name": "[Sage] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 1,
+    "grade": 4
+  },
+  {
+    "id": 620942,
+    "name": "[Dosa] Lifeguard Helmet",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620943,
+    "name": "[Dosa] Lifeguard Armor",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620944,
+    "name": "[Dosa] Lifeguard Gloves",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620945,
+    "name": "[Dosa] Lifeguard Shoes",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620946,
+    "name": "[Dosa] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 1,
+    "grade": 4
+  },
+  {
+    "id": 620947,
+    "name": "[Wukong] Lifeguard Helmet",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620948,
+    "name": "[Wukong] Lifeguard Armor",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620949,
+    "name": "[Wukong] Lifeguard Gloves",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620950,
+    "name": "[Wukong] Lifeguard Shoes",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 620951,
+    "name": "[Wukong] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 1,
+    "grade": 4
+  },
+  {
+    "id": 620952,
+    "name": "[Valkyrie] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620953,
+    "name": "[Valkyrie] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620954,
+    "name": "[Valkyrie] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620955,
+    "name": "[Valkyrie] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620956,
+    "name": "[Valkyrie] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 620957,
+    "name": "[Sorceress] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620958,
+    "name": "[Sorceress] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620959,
+    "name": "[Sorceress] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620960,
+    "name": "[Sorceress] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620961,
+    "name": "[Sorceress] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 620962,
+    "name": "[Ranger] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620963,
+    "name": "[Ranger] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620964,
+    "name": "[Ranger] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620965,
+    "name": "[Ranger] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620966,
+    "name": "[Ranger] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 620967,
+    "name": "[Tamer] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620968,
+    "name": "[Tamer] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620969,
+    "name": "[Tamer] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620970,
+    "name": "[Tamer] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620971,
+    "name": "[Tamer] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 620972,
+    "name": "[Witch] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620973,
+    "name": "[Witch] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620974,
+    "name": "[Witch] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620975,
+    "name": "[Witch] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620976,
+    "name": "[Witch] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 620977,
+    "name": "[Guardian] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620978,
+    "name": "[Guardian] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620979,
+    "name": "[Guardian] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620980,
+    "name": "[Guardian] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620981,
+    "name": "[Guardian] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 620982,
+    "name": "[Kunoichi] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620983,
+    "name": "[Kunoichi] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620984,
+    "name": "[Kunoichi] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620985,
+    "name": "[Kunoichi] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620986,
+    "name": "[Kunoichi] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 620987,
+    "name": "[Mystic] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620988,
+    "name": "[Mystic] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620989,
+    "name": "[Mystic] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620990,
+    "name": "[Mystic] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620991,
+    "name": "[Mystic] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 620992,
+    "name": "[Dark Knight] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620993,
+    "name": "[Dark Knight] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620994,
+    "name": "[Dark Knight] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620995,
+    "name": "[Dark Knight] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620996,
+    "name": "[Dark Knight] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 620997,
+    "name": "[Lahn] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620998,
+    "name": "[Lahn] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 620999,
+    "name": "[Lahn] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621000,
+    "name": "[Lahn] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621001,
+    "name": "[Lahn] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 621002,
+    "name": "[Nova] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621003,
+    "name": "[Nova] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621004,
+    "name": "[Nova] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621005,
+    "name": "[Nova] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621006,
+    "name": "[Nova] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 621007,
+    "name": "[Maehwa] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621008,
+    "name": "[Maehwa] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621009,
+    "name": "[Maehwa] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621010,
+    "name": "[Maehwa] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621011,
+    "name": "[Maehwa] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 621012,
+    "name": "[Corsair] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621013,
+    "name": "[Corsair] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621014,
+    "name": "[Corsair] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621015,
+    "name": "[Corsair] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621016,
+    "name": "[Corsair] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 621017,
+    "name": "[Drakania] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621018,
+    "name": "[Drakania] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621019,
+    "name": "[Drakania] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621020,
+    "name": "[Drakania] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621021,
+    "name": "[Drakania] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 621022,
+    "name": "[Woosa] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621023,
+    "name": "[Woosa] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621024,
+    "name": "[Woosa] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621025,
+    "name": "[Woosa] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621026,
+    "name": "[Woosa] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 621027,
+    "name": "[Maegu] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621028,
+    "name": "[Maegu] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621029,
+    "name": "[Maegu] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621030,
+    "name": "[Maegu] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621031,
+    "name": "[Maegu] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 621032,
+    "name": "[Scholar] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621033,
+    "name": "[Scholar] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621034,
+    "name": "[Scholar] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621035,
+    "name": "[Scholar] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621036,
+    "name": "[Scholar] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 621037,
+    "name": "[Deadeye] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621038,
+    "name": "[Deadeye] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621039,
+    "name": "[Deadeye] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621040,
+    "name": "[Deadeye] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621041,
+    "name": "[Deadeye] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 621042,
+    "name": "[Seraph] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621043,
+    "name": "[Seraph] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621044,
+    "name": "[Seraph] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621045,
+    "name": "[Seraph] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621046,
+    "name": "[Seraph] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 621047,
+    "name": "[Shai] Lifeguard Helmet",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621048,
+    "name": "[Shai] Lifeguard Armor",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621049,
+    "name": "[Shai] Lifeguard Gloves",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621050,
+    "name": "[Shai] Lifeguard Shoes",
+    "main": 55,
+    "sub": 4,
+    "grade": 4
+  },
+  {
+    "id": 621051,
+    "name": "[Shai] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 2,
+    "grade": 4
+  },
+  {
     "id": 621071,
     "name": "[Seraph] Cantabile Headband",
     "main": 55,
@@ -63620,6 +64831,104 @@
     "name": "[Seraph] Cantabile Outfit Set",
     "main": 55,
     "sub": 2,
+    "grade": 4
+  },
+  {
+    "id": 621341,
+    "name": "[Agent] Hexround Reaper Helmet",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 621342,
+    "name": "[Agent] Hexround Reaper Armor",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 621343,
+    "name": "[Agent] Hexround Reaper Gloves",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 621344,
+    "name": "[Agent] Hexround Reaper Shoes",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 621345,
+    "name": "[Agent] Hexround Reaper Revolvers",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 621346,
+    "name": "[Agent] Hexround Reaper Hexround",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 621347,
+    "name": "[Agent] Hexround Reaper Classic Set",
+    "main": 55,
+    "sub": 1,
+    "grade": 4
+  },
+  {
+    "id": 621348,
+    "name": "[Agent] Hexround Reaper Outfit Set",
+    "main": 55,
+    "sub": 1,
+    "grade": 4
+  },
+  {
+    "id": 621390,
+    "name": "[Agent] Corvicanus Robe",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 621699,
+    "name": "[Agent] Lifeguard Helmet",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 621700,
+    "name": "[Agent] Lifeguard Armor",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 621701,
+    "name": "[Agent] Lifeguard Gloves",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 621702,
+    "name": "[Agent] Lifeguard Shoes",
+    "main": 55,
+    "sub": 3,
+    "grade": 4
+  },
+  {
+    "id": 621703,
+    "name": "[Agent] Lifeguard Outfit Set",
+    "main": 55,
+    "sub": 1,
     "grade": 4
   },
   {
@@ -69270,5 +70579,19 @@
     "main": 55,
     "sub": 8,
     "grade": 3
+  },
+  {
+    "id": 933402,
+    "name": "[Agent] Calpheon Noble Suit",
+    "main": 15,
+    "sub": 6,
+    "grade": 2
+  },
+  {
+    "id": 933501,
+    "name": "Margahan's Artifact",
+    "main": 85,
+    "sub": 6,
+    "grade": 4
   }
 ]
