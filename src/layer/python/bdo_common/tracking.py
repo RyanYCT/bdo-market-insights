@@ -26,9 +26,21 @@ MAX_UNGUARDED_SELECTION = 100
 #: (track_sets.json) still override this with their own profile.
 ENHANCEABLE_CATEGORIES = frozenset({"accessory"})
 
-#: A ``fetch(main, sub) -> items`` callable; an empty list marks a nonexistent
-#: (or empty) combination -- the enumeration stop signal.
+#: A ``fetch(main, sub) -> items`` callable. An empty list marks a nonexistent
+#: category -- the enumeration boundary (stop this main). A transient upstream
+#: failure must instead raise :class:`MarketListFetchError` so the walk records
+#: it rather than mistaking it for the boundary and truncating the crawl.
 FetchMarketList = Callable[[int, int], list[MarketListItem]]
+
+
+class MarketListFetchError(Exception):
+    """A market-list fetch failed transiently (as opposed to an empty boundary).
+
+    ``enumerate_taxonomy`` treats an empty fetch result as a category boundary;
+    a raised ``MarketListFetchError`` means arsha was unavailable for that
+    ``(main, sub)`` after retries, so the walk records the failure and keeps
+    going instead of stopping the main early.
+    """
 
 
 def main_category_codes(max_main: int = 85) -> list[int]:
@@ -37,23 +49,44 @@ def main_category_codes(max_main: int = 85) -> list[int]:
 
 
 def enumerate_taxonomy(
-    fetch: FetchMarketList, *, max_main: int = 85, max_sub: int = 30
-) -> list[MarketListItem]:
-    """Enumerate the market taxonomy into a flat, de-duplicated, sorted list.
+    fetch: FetchMarketList,
+    *,
+    max_main: int = 85,
+    max_sub: int = 30,
+    max_failures: int | None = None,
+) -> tuple[list[MarketListItem], list[tuple[int, int]]]:
+    """Enumerate the market taxonomy into ``(items, failures)``.
 
-    For each main code, sub codes are probed ``1, 2, 3, ...`` until ``fetch``
-    returns an empty list (the combination does not exist). Items are
-    de-duplicated by id (last write wins) and returned sorted by id.
+    For each main code, sub codes are probed ``1, 2, 3, ...``. ``fetch`` returns
+    the category's items, an empty list when the ``(main, sub)`` does not exist
+    (the boundary -> stop this main), or raises :class:`MarketListFetchError` on
+    a transient arsha failure. A failure is recorded in ``failures`` and does
+    **not** stop the main -- a transient error is not a boundary, so a flaky
+    fetch never silently truncates the crawl. Items are de-duplicated by id
+    (last write wins) and returned sorted by id; ``failures`` lists the
+    ``(main, sub)`` pairs that could not be fetched.
+
+    ``max_failures`` (when set) is a circuit breaker: once more than that many
+    fetches have failed, the walk stops early and returns what it has so far plus
+    the failures -- so a broad arsha outage fails fast instead of probing the
+    whole taxonomy at the full retry budget per cell.
     """
     by_id: dict[int, MarketListItem] = {}
+    failures: list[tuple[int, int]] = []
     for main in main_category_codes(max_main):
         for sub in range(1, max_sub + 1):
-            items = fetch(main, sub)
+            try:
+                items = fetch(main, sub)
+            except MarketListFetchError:
+                failures.append((main, sub))
+                if max_failures is not None and len(failures) > max_failures:
+                    return [by_id[i] for i in sorted(by_id)], failures
+                continue
             if not items:
                 break
             for item in items:
                 by_id[item.item_id] = item
-    return [by_id[i] for i in sorted(by_id)]
+    return [by_id[i] for i in sorted(by_id)], failures
 
 
 def parse_catalog(rows: list[dict[str, Any]]) -> list[MarketListItem]:
