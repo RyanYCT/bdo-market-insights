@@ -1622,3 +1622,68 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 ### Deferred / open questions
 - Deploy-convergence redesign (slices 1-6) is complete. Prod rollout of the full
   converged flow is the pending operational step (see below).
+
+
+## 2026-08-24 — Fix stale market data: resilient arsha fetch
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `fix/arsha-resilient-bisect-fetch`
+**Commits:** PR #92, PR #93, PR #94
+
+### Done
+- Diagnosed prod stale-market-data / empty-insights: `ArshaClient.fetch_raw`
+  swallowed transient arsha 5xx and stored zero snapshots without failing. Deeper
+  root cause: arsha proxies an Imperva-protected upstream and 500s an *entire*
+  multi-id `GetWorldMarketSubList` when any one item is blocked — worst at the top
+  of the hour (herd traffic).
+- #92 retry transient 5xx/429/timeout then raise (fail loud); #93 widen to 5
+  attempts with full-jitter exponential backoff.
+- #94 `fetch_raw_resilient` bisects a failing batch down to single ids, dropping
+  only the blocked id(s) (`FetchOutcome.failed_ids`) and storing the rest; a
+  wall-clock deadline keeps it under the 60s Lambda timeout. fetchData stores
+  partial results and fails loud only on a total miss. Moved the ETL schedule to
+  `cron(7 * * * ? *)` (off the busy round minutes). Added `MarketItemsSkipped`
+  metric + sustained alarm; `EtlSuccessfulItems` now counts stored (not batch) items.
+- Gate: ruff, mypy, 389 unit tests, bandit, sam validate.
+
+### Decisions
+- Store partial + fail-loud only on total miss (revised the initial 20% threshold
+  once the Imperva root cause was clear) — no ADR (local choice).
+- Fetch at :07 to dodge top-of-hour upstream contention — no ADR.
+
+### Deferred / open questions
+- Per-batch threshold + no cross-batch rollback matters only past 50 tracked items
+  (one Map batch today) — documented, deferred.
+- Tune the `:07` minute / skip-alarm threshold from observed `MarketItemsSkipped`.
+
+
+## 2026-08-24 — Snapshots read-API: default limit + coverage hint
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/snapshots-limit-and-coverage`
+**Commits:** PR #95
+
+### Done
+- Split the `/v1/market/items/{id}/snapshots` default from the FR-13 cap: new
+  `DEFAULT_SNAPSHOT_LIMIT = 168` (a week of hourly points) instead of defaulting
+  to the 1000 cap, so a bare call is cheap and matches the daily/weekly chart
+  tiers; longer ranges use the daily endpoint (hourly retained 90d, cap ~41d).
+- Added an additive `coverage` object (`window_start`, `window_end`,
+  `expected_hours`, `present_hours`, `missing_hours`, `truncated`) so consumers
+  can detect and render gaps left by the partial-store ETL change without
+  fabricating points. Counts distinct hourly buckets (correct for `sid=null`),
+  over the requested `[from,to]` window (else the returned span).
+- Introduced typed `Coverage`/`SnapshotsResponse` models so the response is
+  documented in the regenerated OpenAPI spec.
+- Gate: ruff, mypy, 392 unit tests (3 new), bandit, sam validate, OpenAPI drift.
+
+### Decisions
+- Default 168 (weekly), cap unchanged at 1000 — no ADR (local choice).
+- Coverage computed at read time; storage never fabricates points — no ADR.
+
+### Deferred / open questions
+- `web-react` chart in bdo-analytics not built yet; `coverage` is ready for
+  gap-aware rendering when it is.
+- `/daily` could gain the same coverage hint (missing days) as a follow-up.
