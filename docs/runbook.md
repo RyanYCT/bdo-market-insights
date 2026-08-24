@@ -9,6 +9,7 @@ access, insights evaluation, recovery/teardown, and troubleshooting.
 - [Decision flow](#decision-flow)
 - [First-time bring-up](#first-time-bring-up)
 - [Daily operations](#daily-operations)
+  - [Adding or removing tracked items & series](#adding-or-removing-tracked-items--series)
 - [Deployment](#deployment)
   - [Quick reference](#quick-reference)
   - [Deployment notes](#deployment-notes)
@@ -220,7 +221,8 @@ uv run python scripts/select_tracked.py --main 20 --min-grade 3 --out scripts/da
 
 Presets (`scripts/data/presets.json` + `scripts/data/track_sets.json`): `all`
 (guarded), `high-value` (guarded; every item grade ≥ 3), `accessories`, `ring`,
-`necklace`, `earring`, `belt`, `pearl`, `functional`, `deboreka`, `buffs`.
+`necklace`, `earring`, `belt`, `pearl`, `functional`, `deboreka`, `apeiron`,
+`buffs`.
 
 **Grade filter.** The snapshot carries each item's BDO `grade` (0 White, 1
 Green, 2 Blue, 3 Gold, 4 Orange, 5 Violet), so a selection can be narrowed to a
@@ -388,6 +390,79 @@ Monitor health from the CloudWatch dashboard:
 
 Step Functions console shows full execution history, per-state
 input/output, and retry behaviour.
+
+### Adding or removing tracked items & series
+
+The offline pipeline in [Seed the tracked set](#seed-the-tracked-set-one-time)
+also covers ongoing changes after a BDO patch. The committed data files under
+`scripts/data/` are the source of truth: edit them (via PR), then apply to an
+environment.
+
+**1. If the items are new to the game, refresh the snapshot first.**
+`select_tracked` resolves ids against `full_items.json` and drops any id absent
+from it, so a brand-new item must be in the snapshot before it can be tracked:
+
+```bash
+make market-catalog   # re-crawl the arsha taxonomy -> full_items.json (the only arsha call)
+```
+
+Run it when arsha is healthy — a failed category fetch silently drops items. For
+a single new item you can instead add one `{id, name, main, sub, grade}` entry to
+`full_items.json` by hand, but a full refresh is the canonical mechanism.
+
+**2a. Add an existing item** — select it and regenerate the tracked list:
+
+```bash
+uv run python scripts/select_tracked.py --preset ring --out scripts/data/tracked_items.json
+```
+
+**2b. Add a whole series** — give it a named set (plus a `cron_profile` if it
+enhances with cron stones), expose it as a preset, then select it:
+
+```jsonc
+// scripts/data/track_sets.json
+"apeiron": { "cron_profile": "apeiron", "ids": [12144, 11898, 12298, 11733] }
+// scripts/data/presets.json
+"apeiron": { "set": "apeiron" }
+```
+
+```bash
+uv run python scripts/select_tracked.py --preset apeiron --out scripts/data/tracked_items.json
+```
+
+> `cron_profile` is currently **metadata** — a series' cron-stone cost profile
+> for a future calibrated enhancement model, not yet consumed by pricing. Set it
+> now so the series carries the right profile when that model lands; it needs no
+> `rates.json`/pricing change today.
+
+**3. Regenerate `tracked_items.json`.** `select_tracked` writes a flat
+`json.dumps` list, but the committed file is hand-formatted (compact one-line
+entries, blank-line groups), so the tool's output is a large, noisy diff. Either
+accept the reflow, or add the entries by hand and confirm they match the tool
+with a preview run (omit `--out`) — it should report `+ 0 added`:
+
+```bash
+uv run python scripts/select_tracked.py --preset apeiron   # preview: expect "+ 0 added"
+```
+
+**4. Remove an item or series.** Rebuild the list without it (`--replace`
+overwrites rather than adds), then seed with reconcile so DynamoDB untracks it:
+
+```bash
+uv run python scripts/select_tracked.py --preset <keep…> --replace --out scripts/data/tracked_items.json
+make seed-tracked STAGE=<env> RECONCILE=1   # --reconcile untracks items no longer in the list
+```
+
+**5. Apply to an environment.** After the data-file change is merged and
+deployed:
+
+```bash
+make seed-data STAGE=<env>     # catalog backfill + tracked seed, in order
+# ...or, on a running stack: make bootstrap STAGE=<env>
+```
+
+The ETL starts snapshotting new items on its next run; icons materialize on the
+next daily `iconSync`.
 
 ## Deployment
 
