@@ -16,9 +16,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from bdo_common.arsha_client import (
+    _RESILIENT_SINGLE_ATTEMPTS,
     _SUBLIST_MAX_ATTEMPTS,
     _UTIL_DB_MAX_ATTEMPTS,
     ArshaClient,
+    FetchOutcome,
     normalize_item_db,
     normalize_response,
 )
@@ -375,6 +377,82 @@ class TestFetchRawRetry:
         assert len(sleeps) == _SUBLIST_MAX_ATTEMPTS - 1
         # Exponential (base 1s, x2), capped at 8s: 1, 2, 4, 8.
         assert sleeps == [1.0, 2.0, 4.0, 8.0]
+
+
+class TestFetchRawResilient:
+    """fetch_raw_resilient bisects a failing batch to isolate blocked items."""
+
+    @staticmethod
+    def _ok(payload: Any) -> MagicMock:
+        resp = MagicMock()
+        resp.read.return_value = json.dumps(payload).encode()
+        resp.__enter__ = MagicMock(return_value=resp)
+        resp.__exit__ = MagicMock(return_value=False)
+        return resp
+
+    @staticmethod
+    def _ids_in(url: str) -> list[str]:
+        return url.split("id=")[-1].split(",")
+
+    def test_all_success_no_failed(self) -> None:
+        client = ArshaClient()
+        with patch(
+            "bdo_common.arsha_client.urllib.request.urlopen",
+            return_value=self._ok([_item(11608, 0)]),
+        ):
+            outcome = client.fetch_raw_resilient([11608, 11629])
+        assert isinstance(outcome, FetchOutcome)
+        assert outcome.failed_ids == []
+        assert len(outcome.payloads) == 1  # single batch, fetched whole
+
+    def test_bisects_and_isolates_blocked_id(self) -> None:
+        """A batch containing one blocked id is split so only that id is dropped."""
+        client = ArshaClient()
+        blocked = "103"
+
+        def fake_urlopen(url: str, timeout: int = 10) -> MagicMock:
+            if blocked in self._ids_in(url):
+                raise urllib.error.HTTPError(url, 500, "imperva", {}, None)  # type: ignore[arg-type]
+            return self._ok([_item(11608, 0)])
+
+        with (
+            patch("bdo_common.arsha_client.urllib.request.urlopen", side_effect=fake_urlopen),
+            patch("bdo_common.arsha_client.time.sleep"),
+        ):
+            outcome = client.fetch_raw_resilient([11, 22, 103, 44])
+
+        assert outcome.failed_ids == [103]
+        # the three good ids were still fetched (as [11,22] and [44])
+        assert len(outcome.payloads) == 2
+
+    def test_blocked_single_retried_then_dropped(self) -> None:
+        """A persistently blocked id is retried then reported, never raised."""
+        client = ArshaClient()
+        err = urllib.error.HTTPError("u", 500, "imperva", {}, None)  # type: ignore[arg-type]
+        with (
+            patch("bdo_common.arsha_client.urllib.request.urlopen", side_effect=err) as urlopen,
+            patch("bdo_common.arsha_client.time.sleep"),
+        ):
+            outcome = client.fetch_raw_resilient([101, 102])
+
+        assert outcome.payloads == []
+        assert sorted(outcome.failed_ids) == [101, 102]
+        # 1 attempt on the pair + _RESILIENT_SINGLE_ATTEMPTS on each single
+        assert urlopen.call_count == 1 + 2 * _RESILIENT_SINGLE_ATTEMPTS
+
+    def test_deadline_drops_remaining_without_fetching(self) -> None:
+        """Once the wall-clock deadline passes, remaining ids are dropped, not fetched."""
+        client = ArshaClient()
+        with (
+            # first monotonic() sets the deadline; the next is already past it
+            patch("bdo_common.arsha_client.time.monotonic", side_effect=[0.0, 100.0]),
+            patch("bdo_common.arsha_client.urllib.request.urlopen") as urlopen,
+        ):
+            outcome = client.fetch_raw_resilient([1, 2])
+
+        assert outcome.payloads == []
+        assert outcome.failed_ids == [1, 2]
+        urlopen.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

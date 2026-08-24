@@ -1624,6 +1624,40 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   converged flow is the pending operational step (see below).
 
 
+## 2026-08-24 — Fix stale market data: resilient arsha fetch
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `fix/arsha-resilient-bisect-fetch`
+**Commits:** PR #92, PR #93, PR #94
+
+### Done
+- Diagnosed prod stale-market-data / empty-insights: `ArshaClient.fetch_raw`
+  swallowed transient arsha 5xx and stored zero snapshots without failing. Deeper
+  root cause: arsha proxies an Imperva-protected upstream and 500s an *entire*
+  multi-id `GetWorldMarketSubList` when any one item is blocked — worst at the top
+  of the hour (herd traffic).
+- #92 retry transient 5xx/429/timeout then raise (fail loud); #93 widen to 5
+  attempts with full-jitter exponential backoff.
+- #94 `fetch_raw_resilient` bisects a failing batch down to single ids, dropping
+  only the blocked id(s) (`FetchOutcome.failed_ids`) and storing the rest; a
+  wall-clock deadline keeps it under the 60s Lambda timeout. fetchData stores
+  partial results and fails loud only on a total miss. Moved the ETL schedule to
+  `cron(7 * * * ? *)` (off the busy round minutes). Added `MarketItemsSkipped`
+  metric + sustained alarm; `EtlSuccessfulItems` now counts stored (not batch) items.
+- Gate: ruff, mypy, 389 unit tests, bandit, sam validate.
+
+### Decisions
+- Store partial + fail-loud only on total miss (revised the initial 20% threshold
+  once the Imperva root cause was clear) — no ADR (local choice).
+- Fetch at :07 to dodge top-of-hour upstream contention — no ADR.
+
+### Deferred / open questions
+- Per-batch threshold + no cross-batch rollback matters only past 50 tracked items
+  (one Map batch today) — documented, deferred.
+- Tune the `:07` minute / skip-alarm threshold from observed `MarketItemsSkipped`.
+
+
 ## 2026-08-24 — Snapshots read-API: default limit + coverage hint
 
 **Agent:** Kiro

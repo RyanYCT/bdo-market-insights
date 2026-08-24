@@ -121,6 +121,47 @@ class TestStoreData:
         assert sid_ids == [11608, 11608]  # the stray 99999 record was skipped
         assert result["sid_count"] == 2
 
+    def test_successful_items_metric_counts_stored_not_batch(
+        self,
+        load_handler: Callable[[str], ModuleType],
+        lambda_context: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """EtlSuccessfulItems reflects items that produced a snapshot, not len(items).
+
+        With the resilient fetch, a batch item can be dropped upstream and arrive
+        with metadata but no record; it must not be counted as a success.
+        """
+        mod = load_handler("store_data")
+        conn = MagicMock()
+        monkeypatch.setattr(mod.db, "get_connection", lambda: conn)
+        monkeypatch.setattr(mod.ItemRepo, "upsert", staticmethod(lambda c, **kw: None))
+        monkeypatch.setattr(mod.ItemSidRepo, "upsert", staticmethod(lambda c, **kw: None))
+        monkeypatch.setattr(
+            mod.SnapshotRepo, "bulk_insert", staticmethod(lambda c, rows: len(rows))
+        )
+
+        metric_calls: list[dict[str, Any]] = []
+        monkeypatch.setattr(mod.metrics, "add_metric", lambda **kw: metric_calls.append(kw))
+
+        event = {
+            "region": "tw",
+            "snapshot_at": "2026-06-01T05:00:00+00:00",
+            # 3 items in the batch, but 11608 was dropped upstream (no record)
+            "items": [
+                {"id": 11608, "name": "A"},
+                {"id": 11629, "name": "B"},
+                {"id": 11630, "name": "C"},
+            ],
+            "records": [_record_dict(11629, 0), _record_dict(11630, 0)],
+        }
+        result = mod.handler(event, lambda_context)
+
+        successful = [m for m in metric_calls if m["name"] == "EtlSuccessfulItems"]
+        assert len(successful) == 1
+        assert successful[0]["value"] == 2  # stored items, not the batch size of 3
+        assert result["item_count"] == 3  # return still reports the full batch
+
     def test_rolls_back_and_reraises_on_error(
         self,
         load_handler: Callable[[str], ModuleType],
