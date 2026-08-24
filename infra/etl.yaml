@@ -307,7 +307,11 @@ Resources:
         HourlyEtl:
           Type: Schedule
           Properties:
-            Schedule: cron(0 * * * ? *)
+            # Fire at :07, not the top of the hour: arsha's Imperva-protected
+            # upstream is contended by the herd of tools that run on :00 (and
+            # other round minutes), which blocks most of a batch. :07 is early
+            # (snapshot_at still floors to the hour) but off the busy minutes.
+            Schedule: cron(7 * * * ? *)
             Input: !Sub '{"region": "${BdoRegion}"}'
             Description: Hourly market snapshot ingestion (FR-1)
       Definition:
