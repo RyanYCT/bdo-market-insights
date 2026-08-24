@@ -1622,3 +1622,34 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 ### Deferred / open questions
 - Deploy-convergence redesign (slices 1-6) is complete. Prod rollout of the full
   converged flow is the pending operational step (see below).
+
+
+## 2026-08-24 — Snapshots read-API: default limit + coverage hint
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/snapshots-limit-and-coverage`
+**Commits:** PR #95
+
+### Done
+- Split the `/v1/market/items/{id}/snapshots` default from the FR-13 cap: new
+  `DEFAULT_SNAPSHOT_LIMIT = 168` (a week of hourly points) instead of defaulting
+  to the 1000 cap, so a bare call is cheap and matches the daily/weekly chart
+  tiers; longer ranges use the daily endpoint (hourly retained 90d, cap ~41d).
+- Added an additive `coverage` object (`window_start`, `window_end`,
+  `expected_hours`, `present_hours`, `missing_hours`, `truncated`) so consumers
+  can detect and render gaps left by the partial-store ETL change without
+  fabricating points. Counts distinct hourly buckets (correct for `sid=null`),
+  over the requested `[from,to]` window (else the returned span).
+- Introduced typed `Coverage`/`SnapshotsResponse` models so the response is
+  documented in the regenerated OpenAPI spec.
+- Gate: ruff, mypy, 392 unit tests (3 new), bandit, sam validate, OpenAPI drift.
+
+### Decisions
+- Default 168 (weekly), cap unchanged at 1000 — no ADR (local choice).
+- Coverage computed at read time; storage never fabricates points — no ADR.
+
+### Deferred / open questions
+- `web-react` chart in bdo-analytics not built yet; `coverage` is ready for
+  gap-aware rendering when it is.
+- `/daily` could gain the same coverage hint (missing days) as a follow-up.
