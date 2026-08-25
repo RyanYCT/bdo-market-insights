@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from types import ModuleType
 from typing import Any
 from unittest.mock import MagicMock
@@ -95,13 +95,13 @@ def test_snapshots_caps_limit_and_passes_filters(
     assert captured["region"] == "tw"  # default
     assert captured["item_id"] == 12094
     assert captured["sid"] == 0
-    assert captured["limit"] == 1000  # capped at MAX_SNAPSHOT_LIMIT
+    assert captured["limit"] == 2000  # capped at MAX_SNAPSHOT_LIMIT
 
 
-def test_snapshots_uses_default_limit(
+def test_snapshots_default_window_and_cap(
     mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Omitting limit uses the smaller default (168), not the 1000 cap."""
+    """A bare call defaults to a trailing 168h time window and the full row cap."""
     captured: dict[str, Any] = {}
 
     def fake(conn: Any, **kwargs: Any) -> list[SnapshotRow]:
@@ -112,7 +112,11 @@ def test_snapshots_uses_default_limit(
     resp = mod.handler(_event("/v1/market/items/12094/snapshots"), lambda_context)
 
     assert resp["statusCode"] == 200
-    assert captured["limit"] == mod.DEFAULT_SNAPSHOT_LIMIT == 168
+    assert captured["limit"] == mod.MAX_SNAPSHOT_LIMIT == 2000
+    assert captured["to_dt"] is None  # upper bound left unbounded
+    # from defaulted to ~168h before now (a time window, independent of sid count)
+    delta = datetime.now(tz=UTC) - captured["from_dt"]
+    assert abs(delta - timedelta(hours=168)) < timedelta(minutes=1)
 
 
 def test_snapshots_reports_coverage_with_gap(
@@ -138,7 +142,11 @@ def test_snapshots_reports_coverage_with_gap(
         mod.SnapshotRepo, "get_snapshots", lambda conn, **kw: [_at(5), _at(4), _at(2)]
     )
     resp = mod.handler(
-        _event("/v1/market/items/12094/snapshots", query={"sid": "0"}), lambda_context
+        _event(
+            "/v1/market/items/12094/snapshots",
+            query={"sid": "0", "from": "2026-03-15T02:00:00Z", "to": "2026-03-15T05:00:00Z"},
+        ),
+        lambda_context,
     )
 
     body = json.loads(resp["body"])
@@ -148,7 +156,7 @@ def test_snapshots_reports_coverage_with_gap(
     assert cov["missing_hours"] == 1
     assert cov["window_start"].startswith("2026-03-15T02:00:00")
     assert cov["window_end"].startswith("2026-03-15T05:00:00")
-    assert cov["truncated"] is False  # 3 rows < default limit
+    assert cov["truncated"] is False  # 3 rows < cap
 
 
 def test_snapshots_coverage_null_when_empty_and_unbounded(

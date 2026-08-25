@@ -744,7 +744,8 @@ paths:
           - type: 'null'
           description: 'Enhancement sub-id. Default: all sids.'
           title: Sid
-      - description: 'Lower bound, inclusive, ISO-8601 datetime. Default: unbounded.'
+      - description: 'Lower bound, inclusive, ISO-8601 datetime. Default: 168 hours
+          before now when neither from nor to is given.'
         in: query
         name: from
         required: false
@@ -753,7 +754,8 @@ paths:
           - format: date-time
             type: string
           - type: 'null'
-          description: 'Lower bound, inclusive, ISO-8601 datetime. Default: unbounded.'
+          description: 'Lower bound, inclusive, ISO-8601 datetime. Default: 168 hours
+            before now when neither from nor to is given.'
           title: From
       - description: 'Upper bound, inclusive, ISO-8601 datetime. Default: unbounded.'
         in: query
@@ -766,17 +768,17 @@ paths:
           - type: 'null'
           description: 'Upper bound, inclusive, ISO-8601 datetime. Default: unbounded.'
           title: To
-      - description: 'Max snapshots returned. Range: 1-1000. Default: 168 (one week
-          of hourly points). Out-of-range is clamped. For longer ranges use the daily
-          endpoint.'
+      - description: 'Max snapshots returned (hard cap). Range: 1-2000, clamped. The
+          returned span is normally bounded by the default 168-hour window rather
+          than by limit; set it only to cap rows explicitly.'
         in: query
         name: limit
         required: false
         schema:
-          default: 168
-          description: 'Max snapshots returned. Range: 1-1000. Default: 168 (one week
-            of hourly points). Out-of-range is clamped. For longer ranges use the
-            daily endpoint.'
+          default: 2000
+          description: 'Max snapshots returned (hard cap). Range: 1-2000, clamped.
+            The returned span is normally bounded by the default 168-hour window rather
+            than by limit; set it only to cap rows explicitly.'
           title: Limit
           type: integer
       responses:
