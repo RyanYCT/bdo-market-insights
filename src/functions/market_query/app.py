@@ -41,10 +41,10 @@ tracer = Tracer()
 metrics = Metrics(namespace="BdoMarket")
 app = APIGatewayRestResolver(enable_validation=True)
 
-#: FR-13 hard cap on snapshots returned per request. Sized so one item's full
-#: enhancement ladder over the default window fits: up to ~11 sids x 168 hourly
-#: points = 1848 rows, rounded up for headroom.
-MAX_SNAPSHOT_LIMIT = 2000
+#: FR-13 hard cap on snapshots returned per request. Sized to fit one item's
+#: full enhancement ladder over the default 168h window: the max-sid item
+#: (11 sids, 0-10) x 168 hourly points = 1848 rows.
+MAX_SNAPSHOT_LIMIT = 1848
 
 #: One hour, for hourly-bucket coverage math (snapshots are top-of-hour UTC).
 _ONE_HOUR = timedelta(hours=1)
@@ -220,7 +220,7 @@ def get_snapshots(
         int,
         Query(
             description=(
-                "Max snapshots returned (hard cap). Range: 1-2000, clamped. The returned "
+                "Max snapshots returned (hard cap). Range: 1-1848, clamped. The returned "
                 "span is normally bounded by the default 168-hour window rather than by "
                 "limit; set it only to cap rows explicitly."
             )

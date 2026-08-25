@@ -768,15 +768,15 @@ paths:
           - type: 'null'
           description: 'Upper bound, inclusive, ISO-8601 datetime. Default: unbounded.'
           title: To
-      - description: 'Max snapshots returned (hard cap). Range: 1-2000, clamped. The
+      - description: 'Max snapshots returned (hard cap). Range: 1-1848, clamped. The
           returned span is normally bounded by the default 168-hour window rather
           than by limit; set it only to cap rows explicitly.'
         in: query
         name: limit
         required: false
         schema:
-          default: 2000
-          description: 'Max snapshots returned (hard cap). Range: 1-2000, clamped.
+          default: 1848
+          description: 'Max snapshots returned (hard cap). Range: 1-1848, clamped.
             The returned span is normally bounded by the default 168-hour window rather
             than by limit; set it only to cap rows explicitly.'
           title: Limit

@@ -95,7 +95,7 @@ def test_snapshots_caps_limit_and_passes_filters(
     assert captured["region"] == "tw"  # default
     assert captured["item_id"] == 12094
     assert captured["sid"] == 0
-    assert captured["limit"] == 2000  # capped at MAX_SNAPSHOT_LIMIT
+    assert captured["limit"] == 1848  # capped at MAX_SNAPSHOT_LIMIT
 
 
 def test_snapshots_default_window_and_cap(
@@ -112,7 +112,7 @@ def test_snapshots_default_window_and_cap(
     resp = mod.handler(_event("/v1/market/items/12094/snapshots"), lambda_context)
 
     assert resp["statusCode"] == 200
-    assert captured["limit"] == mod.MAX_SNAPSHOT_LIMIT == 2000
+    assert captured["limit"] == mod.MAX_SNAPSHOT_LIMIT == 1848
     assert captured["to_dt"] is None  # upper bound left unbounded
     # from defaulted to ~168h before now (a time window, independent of sid count)
     delta = datetime.now(tz=UTC) - captured["from_dt"]
