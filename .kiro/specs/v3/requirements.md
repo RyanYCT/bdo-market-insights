@@ -52,8 +52,11 @@ EventBridge rule, with no code or schema change.
 ### Market Query API (`/v1/market`)
 
 - **FR-13** `GET /v1/market/items/{id}/snapshots?region=&sid=&from=&to=&limit=`
-  returns raw hourly snapshots, capped at 1000 per request. Default
-  `region=tw`.
+  returns raw hourly snapshots, newest first. With neither `from` nor `to`
+  given it defaults to a trailing 168-hour (7-day) window — a *time* window, so
+  it covers the same span regardless of sid count. A hard per-request cap
+  bounds the response (1848 rows = one item's full enhancement ladder over that
+  window); `limit` may lower it. Default `region=tw`.
 - **FR-14** `GET /v1/market/items/{id}/daily?region=&sid=&from=&to=`
   returns daily rollups.
 - **FR-15** `GET /v1/market/items/{id}/analysis?region=&sid=&window_days=14`

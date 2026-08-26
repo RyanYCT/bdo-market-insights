@@ -41,16 +41,19 @@ tracer = Tracer()
 metrics = Metrics(namespace="BdoMarket")
 app = APIGatewayRestResolver(enable_validation=True)
 
-#: FR-13 hard cap on snapshots returned per request.
-MAX_SNAPSHOT_LIMIT = 1000
-
-#: Default snapshots per request when the caller omits ``limit``. Sized for the
-#: common daily (24) and weekly (168) hourly charts; longer ranges should use the
-#: daily endpoint. Kept well below the FR-13 cap so a bare call is cheap.
-DEFAULT_SNAPSHOT_LIMIT = 168
+#: FR-13 hard cap on snapshots returned per request. Sized to fit one item's
+#: full enhancement ladder over the default 168h window: the max-sid item
+#: (11 sids, 0-10) x 168 hourly points = 1848 rows.
+MAX_SNAPSHOT_LIMIT = 1848
 
 #: One hour, for hourly-bucket coverage math (snapshots are top-of-hour UTC).
 _ONE_HOUR = timedelta(hours=1)
+
+#: Default trailing window: a bare call returns the last 7 days. This is a
+#: *time* window, not a row count, so it means the same 168 hours regardless of
+#: how many sids an item has (a per-sid query is 168 rows; an all-sids query is
+#: 168 x sids). ``limit`` stays only the hard safety cap.
+_DEFAULT_WINDOW = timedelta(hours=168)
 
 #: Valid BDO server regions. Mirrors the ``BdoRegion`` AllowedValues enum in
 #: ``template.yaml`` (the IaC source); an unknown region is rejected with 400.
@@ -203,7 +206,10 @@ def get_snapshots(
         datetime | None,
         Query(
             alias="from",
-            description="Lower bound, inclusive, ISO-8601 datetime. Default: unbounded.",
+            description=(
+                "Lower bound, inclusive, ISO-8601 datetime. Default: 168 hours before now "
+                "when neither from nor to is given."
+            ),
         ),
     ] = None,
     to: Annotated[
@@ -214,14 +220,25 @@ def get_snapshots(
         int,
         Query(
             description=(
-                "Max snapshots returned. Range: 1-1000. Default: 168 (one week of hourly "
-                "points). Out-of-range is clamped. For longer ranges use the daily endpoint."
+                "Max snapshots returned (hard cap). Range: 1-1848, clamped. The returned "
+                "span is normally bounded by the default 168-hour window rather than by "
+                "limit; set it only to cap rows explicitly."
             )
         ),
-    ] = DEFAULT_SNAPSHOT_LIMIT,
+    ] = MAX_SNAPSHOT_LIMIT,
 ) -> SnapshotsResponse:
-    """FR-13: raw hourly snapshots (default 168, capped at 1000), newest first."""
+    """FR-13: raw hourly snapshots, newest first.
+
+    A bare call returns the last 168 hours (7 days) as a *time* window -- the
+    same span no matter how many sids an item has -- capped at
+    ``MAX_SNAPSHOT_LIMIT`` rows. Pass ``sid`` for one enhancement variant (a week
+    is 168 rows), or ``from``/``to`` for an explicit window.
+    """
     limit = max(1, min(limit, MAX_SNAPSHOT_LIMIT))
+    # Bare call (neither bound given) -> default to a trailing 168h window, so the
+    # response covers a fixed time span rather than a fixed row count.
+    if from_ is None and to is None:
+        from_ = datetime.now(tz=UTC) - _DEFAULT_WINDOW
     with _reading() as conn:
         rows = SnapshotRepo.get_snapshots(
             conn,
