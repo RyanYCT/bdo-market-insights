@@ -57,8 +57,11 @@ EventBridge rule, with no code or schema change.
   it covers the same span regardless of sid count. A hard per-request cap
   bounds the response (1848 rows = one item's full enhancement ladder over that
   window); `limit` may lower it. Default `region=tw`.
-- **FR-14** `GET /v1/market/items/{id}/daily?region=&sid=&from=&to=`
-  returns daily rollups.
+- **FR-14** `GET /v1/market/items/{id}/daily?region=&sid=&from=&to=&limit=`
+  returns daily rollups, newest first. With neither `from` nor `to` given it
+  defaults to a trailing 90-day window (a *time* window, so the same span
+  regardless of sid count). A hard per-request cap bounds the response (990
+  rows = one item's ladder over that window); `limit` may lower it.
 - **FR-15** `GET /v1/market/items/{id}/analysis?region=&sid=&window_days=14`
   returns `expected_enhance_cost` per sid step (BDO base-rate model),
   rolling-window volatility (σ, CV), liquidity, and `is_anomalous`

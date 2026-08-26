@@ -192,6 +192,79 @@ def test_daily_returns_rows(
     assert json.loads(resp["body"])["count"] == 2
 
 
+def test_daily_default_window_and_cap(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bare /daily call defaults to a trailing 90-day window and the full cap."""
+    captured: dict[str, Any] = {}
+
+    def fake(conn: Any, **kwargs: Any) -> list[DailyRow]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(mod.DailyRepo, "get_daily", fake)
+    resp = mod.handler(_event("/v1/market/items/12094/daily"), lambda_context)
+
+    assert resp["statusCode"] == 200
+    assert captured["limit"] == mod.MAX_DAILY_LIMIT == 990
+    assert captured["to_date"] is None
+    delta = datetime.now(tz=UTC).date() - captured["from_date"]
+    assert abs(delta.days - 90) <= 1
+
+
+def test_daily_reports_coverage_with_gap(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """coverage counts distinct trade_date days and flags the missing day."""
+
+    def _at(day: int) -> DailyRow:
+        return DailyRow(
+            region="tw",
+            trade_date=date(2026, 3, day),
+            item_id=12094,
+            sid=0,
+            open_price=1,
+            high_price=1,
+            low_price=1,
+            close_price=1,
+            avg_price=1,
+            total_trades_delta=1,
+            avg_stock=1,
+            snapshot_count=24,
+        )
+
+    # days 1,2,4 present -> day 3 missing over the [1,4] window
+    monkeypatch.setattr(mod.DailyRepo, "get_daily", lambda conn, **kw: [_at(4), _at(2), _at(1)])
+    resp = mod.handler(
+        _event(
+            "/v1/market/items/12094/daily",
+            query={"sid": "0", "from": "2026-03-01", "to": "2026-03-04"},
+        ),
+        lambda_context,
+    )
+
+    body = json.loads(resp["body"])
+    cov = body["coverage"]
+    assert cov["expected_days"] == 4
+    assert cov["present_days"] == 3
+    assert cov["missing_days"] == 1
+    assert cov["window_start"] == "2026-03-01"
+    assert cov["window_end"] == "2026-03-04"
+    assert cov["truncated"] is False
+
+
+def test_daily_coverage_null_when_empty_and_unbounded(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No rows and no explicit window -> nothing to describe, coverage is null."""
+    monkeypatch.setattr(mod.DailyRepo, "get_daily", lambda conn, **kw: [])
+    resp = mod.handler(_event("/v1/market/items/12094/daily"), lambda_context)
+
+    body = json.loads(resp["body"])
+    assert body["count"] == 0
+    assert body["coverage"] is None
+
+
 def test_analysis_combines_pricing_and_analytics(
     mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
