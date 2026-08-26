@@ -50,6 +50,137 @@ components:
       - truncated
       title: Coverage
       type: object
+    DailyCoverage:
+      description: 'Daily coverage of the returned window, so clients can render gaps.
+
+
+        The daily analogue of :class:`Coverage`: ``present_days`` counts *distinct*
+
+        ``trade_date`` values in the window (correct even for ``sid=null`` responses
+
+        that carry several rows per day). Both endpoints are inclusive. ``truncated``
+
+        is true when the row ``limit`` bounded the result.'
+      properties:
+        expected_days:
+          title: Expected Days
+          type: integer
+        missing_days:
+          title: Missing Days
+          type: integer
+        present_days:
+          title: Present Days
+          type: integer
+        truncated:
+          title: Truncated
+          type: boolean
+        window_end:
+          format: date
+          title: Window End
+          type: string
+        window_start:
+          format: date
+          title: Window Start
+          type: string
+      required:
+      - window_start
+      - window_end
+      - expected_days
+      - present_days
+      - missing_days
+      - truncated
+      title: DailyCoverage
+      type: object
+    DailyResponse:
+      description: Response body for ``GET /v1/market/items/{item_id}/daily`` (FR-14).
+      properties:
+        count:
+          title: Count
+          type: integer
+        coverage:
+          anyOf:
+          - $ref: '#/components/schemas/DailyCoverage'
+          - type: 'null'
+        daily:
+          items:
+            $ref: '#/components/schemas/DailyRow'
+          title: Daily
+          type: array
+        item_id:
+          title: Item Id
+          type: integer
+        region:
+          title: Region
+          type: string
+        sid:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Sid
+      required:
+      - item_id
+      - region
+      - sid
+      - count
+      - coverage
+      - daily
+      title: DailyResponse
+      type: object
+    DailyRow:
+      description: market_daily table row.
+      properties:
+        avg_price:
+          title: Avg Price
+          type: integer
+        avg_stock:
+          title: Avg Stock
+          type: integer
+        close_price:
+          title: Close Price
+          type: integer
+        high_price:
+          title: High Price
+          type: integer
+        item_id:
+          title: Item Id
+          type: integer
+        low_price:
+          title: Low Price
+          type: integer
+        open_price:
+          title: Open Price
+          type: integer
+        region:
+          title: Region
+          type: string
+        sid:
+          title: Sid
+          type: integer
+        snapshot_count:
+          title: Snapshot Count
+          type: integer
+        total_trades_delta:
+          title: Total Trades Delta
+          type: integer
+        trade_date:
+          format: date
+          title: Trade Date
+          type: string
+      required:
+      - region
+      - trade_date
+      - item_id
+      - sid
+      - open_price
+      - high_price
+      - low_price
+      - close_price
+      - avg_price
+      - total_trades_delta
+      - avg_stock
+      - snapshot_count
+      title: DailyRow
+      type: object
     HTTPValidationError:
       properties:
         detail:
@@ -658,7 +789,7 @@ paths:
           description: 'Enhancement sub-id. Default: all sids.'
           title: Sid
       - description: 'Lower bound, inclusive, ISO-8601 date (YYYY-MM-DD). Default:
-          unbounded.'
+          90 days before today when neither from nor to is given.'
         in: query
         name: from
         required: false
@@ -668,7 +799,7 @@ paths:
             type: string
           - type: 'null'
           description: 'Lower bound, inclusive, ISO-8601 date (YYYY-MM-DD). Default:
-            unbounded.'
+            90 days before today when neither from nor to is given.'
           title: From
       - description: 'Upper bound, inclusive, ISO-8601 date (YYYY-MM-DD). Default:
           unbounded.'
@@ -683,14 +814,25 @@ paths:
           description: 'Upper bound, inclusive, ISO-8601 date (YYYY-MM-DD). Default:
             unbounded.'
           title: To
+      - description: 'Max daily rows returned (hard cap). Range: 1-990, clamped. The
+          returned span is normally bounded by the default 90-day window rather than
+          by limit.'
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 990
+          description: 'Max daily rows returned (hard cap). Range: 1-990, clamped.
+            The returned span is normally bounded by the default 90-day window rather
+            than by limit.'
+          title: Limit
+          type: integer
       responses:
         '200':
           content:
             application/json:
               schema:
-                additionalProperties: true
-                title: Return
-                type: object
+                $ref: '#/components/schemas/DailyResponse'
           description: Successful Response
         '422':
           content:

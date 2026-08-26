@@ -33,7 +33,7 @@ from pydantic import BaseModel
 from bdo_common import analytics, db, pricing
 from bdo_common.insights.models import Period
 from bdo_common.insights.repositories import SummaryRepo
-from bdo_common.models import SnapshotRow
+from bdo_common.models import DailyRow, SnapshotRow
 from bdo_common.repositories import DailyRepo, SnapshotRepo
 
 logger = Logger()
@@ -54,6 +54,14 @@ _ONE_HOUR = timedelta(hours=1)
 #: how many sids an item has (a per-sid query is 168 rows; an all-sids query is
 #: 168 x sids). ``limit`` stays only the hard safety cap.
 _DEFAULT_WINDOW = timedelta(hours=168)
+
+#: FR-14 hard cap on daily rows per request. Sized like the snapshots cap: the
+#: max-sid item (11 sids) over the default 90-day window = 990 rows.
+MAX_DAILY_LIMIT = 990
+
+#: Default trailing window for daily rollups: a bare call returns the last 90
+#: days (a time window, so the same span regardless of sid count).
+_DEFAULT_DAILY_WINDOW = timedelta(days=90)
 
 #: Valid BDO server regions. Mirrors the ``BdoRegion`` AllowedValues enum in
 #: ``template.yaml`` (the IaC source); an unknown region is rejected with 400.
@@ -106,6 +114,34 @@ class SnapshotsResponse(BaseModel):
     count: int
     coverage: Coverage | None
     snapshots: list[SnapshotRow]
+
+
+class DailyCoverage(BaseModel):
+    """Daily coverage of the returned window, so clients can render gaps.
+
+    The daily analogue of :class:`Coverage`: ``present_days`` counts *distinct*
+    ``trade_date`` values in the window (correct even for ``sid=null`` responses
+    that carry several rows per day). Both endpoints are inclusive. ``truncated``
+    is true when the row ``limit`` bounded the result.
+    """
+
+    window_start: date
+    window_end: date
+    expected_days: int
+    present_days: int
+    missing_days: int
+    truncated: bool
+
+
+class DailyResponse(BaseModel):
+    """Response body for ``GET /v1/market/items/{item_id}/daily`` (FR-14)."""
+
+    item_id: int
+    region: str
+    sid: int | None
+    count: int
+    coverage: DailyCoverage | None
+    daily: list[DailyRow]
 
 
 def handle_validation_error(exc: RequestValidationError) -> Response[str]:
@@ -176,6 +212,34 @@ def _snapshot_coverage(
         expected_hours=expected,
         present_hours=present_in_window,
         missing_hours=max(0, expected - present_in_window),
+        truncated=len(rows) == limit,
+    )
+
+
+def _daily_coverage(
+    rows: list[DailyRow],
+    from_date: date | None,
+    to_date: date | None,
+    limit: int,
+) -> DailyCoverage | None:
+    """Daily coverage of the returned rows, or None if no window is defined.
+
+    Mirrors :func:`_snapshot_coverage` at day granularity: the window is the
+    requested ``[from, to]`` when given, else the span of the returned rows.
+    """
+    present = {row.trade_date for row in rows}
+    start = from_date if from_date is not None else (min(present) if present else None)
+    end = to_date if to_date is not None else (max(present) if present else None)
+    if start is None or end is None or end < start:
+        return None
+    expected = (end - start).days + 1
+    present_in_window = sum(1 for day in present if start <= day <= end)
+    return DailyCoverage(
+        window_start=start,
+        window_end=end,
+        expected_days=expected,
+        present_days=present_in_window,
+        missing_days=max(0, expected - present_in_window),
         truncated=len(rows) == limit,
     )
 
@@ -276,7 +340,10 @@ def get_daily(
         date | None,
         Query(
             alias="from",
-            description="Lower bound, inclusive, ISO-8601 date (YYYY-MM-DD). Default: unbounded.",
+            description=(
+                "Lower bound, inclusive, ISO-8601 date (YYYY-MM-DD). Default: 90 days before "
+                "today when neither from nor to is given."
+            ),
         ),
     ] = None,
     to: Annotated[
@@ -285,8 +352,26 @@ def get_daily(
             description="Upper bound, inclusive, ISO-8601 date (YYYY-MM-DD). Default: unbounded."
         ),
     ] = None,
-) -> dict[str, Any]:
-    """FR-14: daily rollups, newest first."""
+    limit: Annotated[
+        int,
+        Query(
+            description=(
+                "Max daily rows returned (hard cap). Range: 1-990, clamped. The returned "
+                "span is normally bounded by the default 90-day window rather than by limit."
+            )
+        ),
+    ] = MAX_DAILY_LIMIT,
+) -> DailyResponse:
+    """FR-14: daily rollups, newest first.
+
+    A bare call returns the last 90 days as a *time* window -- the same span
+    regardless of sid count -- capped at ``MAX_DAILY_LIMIT`` rows. Pass ``sid``
+    for one enhancement variant, or ``from``/``to`` for an explicit window.
+    """
+    limit = max(1, min(limit, MAX_DAILY_LIMIT))
+    # Bare call (neither bound given) -> default to a trailing 90-day window.
+    if from_ is None and to is None:
+        from_ = datetime.now(tz=UTC).date() - _DEFAULT_DAILY_WINDOW
     with _reading() as conn:
         rows = DailyRepo.get_daily(
             conn,
@@ -295,14 +380,16 @@ def get_daily(
             sid=sid,
             from_date=from_,
             to_date=to,
+            limit=limit,
         )
-    return {
-        "item_id": item_id,
-        "region": region,
-        "sid": sid,
-        "count": len(rows),
-        "daily": [row.model_dump(mode="json") for row in rows],
-    }
+    return DailyResponse(
+        item_id=item_id,
+        region=region,
+        sid=sid,
+        count=len(rows),
+        coverage=_daily_coverage(rows, from_, to, limit),
+        daily=rows,
+    )
 
 
 @app.get("/v1/market/items/<item_id>/analysis")

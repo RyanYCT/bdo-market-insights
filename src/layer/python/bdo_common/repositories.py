@@ -322,8 +322,9 @@ class DailyRepo:
         sid: int | None = None,
         from_date: date | None = None,
         to_date: date | None = None,
+        limit: int = 990,
     ) -> list[DailyRow]:
-        """SELECT daily rows with parameterized filters."""
+        """SELECT daily rows with parameterized filters (newest first, capped)."""
         conditions = ["region = %s", "item_id = %s"]
         params: list[object] = [region, item_id]
 
@@ -337,6 +338,8 @@ class DailyRepo:
             conditions.append("trade_date <= %s")
             params.append(to_date)
 
+        params.append(limit)
+
         sql = f"""
             SELECT region, trade_date, item_id, sid, open_price, high_price,
                    low_price, close_price, avg_price, total_trades_delta,
@@ -344,6 +347,7 @@ class DailyRepo:
             FROM market_daily
             WHERE {" AND ".join(conditions)}
             ORDER BY trade_date DESC
+            LIMIT %s
         """  # nosec B608 - conditions are fixed fragments; all values are %s params
         rows = conn.execute(sql, params).fetchall()
         return [
