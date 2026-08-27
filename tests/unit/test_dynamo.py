@@ -90,8 +90,10 @@ class TestPutAndListItems:
         put_item(Item(id=2, name="Item B", category="weapons", tracked=False))
         put_item(Item(id=3, name="Item C", category="armor", tracked=True))
 
-        all_items = list_items()
+        # No filter, no limit -> full scan, cursor exhausted.
+        all_items, cursor = list_items()
         assert len(all_items) == 3
+        assert cursor is None
 
     def test_list_items_with_category_filter(self, dynamodb_table: Any) -> None:
         from bdo_common.dynamo import list_items, put_item
@@ -100,9 +102,57 @@ class TestPutAndListItems:
         put_item(Item(id=2, name="Item B", category="weapons", tracked=False))
         put_item(Item(id=3, name="Item C", category="armor", tracked=True))
 
-        weapons = list_items(category="weapons")
+        weapons, _ = list_items(category="weapons")
         assert len(weapons) == 2
         assert all(i.category == "weapons" for i in weapons)
+
+    def test_tracked_true_uses_sparse_index(self, dynamodb_table: Any) -> None:
+        from bdo_common.dynamo import list_items, put_item
+
+        put_item(Item(id=1, name="Tracked A", tracked=True))
+        put_item(Item(id=2, name="Untracked", tracked=False))
+        put_item(Item(id=3, name="Tracked B", tracked=True))
+
+        # tracked=True routes through the sparse tracked-index (untracked rows
+        # lack the marker and are excluded), never a full-table scan.
+        tracked, cursor = list_items(tracked=True)
+        assert {i.id for i in tracked} == {1, 3}
+        assert cursor is None
+
+    def test_tracked_false_scans_with_filter(self, dynamodb_table: Any) -> None:
+        from bdo_common.dynamo import list_items, put_item
+
+        put_item(Item(id=1, name="Tracked", tracked=True))
+        put_item(Item(id=2, name="Untracked A", tracked=False))
+        put_item(Item(id=3, name="Untracked B", tracked=False))
+
+        untracked, _ = list_items(tracked=False)
+        assert {i.id for i in untracked} == {2, 3}
+
+    def test_limit_returns_page_and_cursor(self, dynamodb_table: Any) -> None:
+        from bdo_common.dynamo import list_items, put_item
+
+        for i in range(1, 6):
+            put_item(Item(id=i, name=f"Item {i}", tracked=True))
+
+        # First bounded page via the sparse index; a cursor resumes the rest.
+        page1, cursor = list_items(tracked=True, limit=2)
+        assert len(page1) == 2
+        assert cursor is not None
+
+        seen = {i.id for i in page1}
+        while cursor is not None:
+            page, cursor = list_items(tracked=True, limit=2, cursor=cursor)
+            assert len(page) <= 2
+            seen.update(i.id for i in page)
+        # Paging through with the cursor visits every tracked item exactly once.
+        assert seen == {1, 2, 3, 4, 5}
+
+    def test_invalid_cursor_raises_value_error(self, dynamodb_table: Any) -> None:
+        from bdo_common.dynamo import list_items
+
+        with pytest.raises(ValueError, match="invalid pagination cursor"):
+            list_items(tracked=True, limit=2, cursor="!!!not-base64!!!")
 
 
 class TestUpsertCatalogItem:

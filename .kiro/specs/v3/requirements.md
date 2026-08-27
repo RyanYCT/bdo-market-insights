@@ -38,8 +38,13 @@ EventBridge rule, with no code or schema change.
 
 ### Item Registry API (`/v1/items`)
 
-- **FR-8** `GET /v1/items` lists items; query params: `category`,
-  `tracked`. Source: DynamoDB.
+- **FR-8** `GET /v1/items` lists items, one bounded page at a time; query
+  params: `category`, `tracked`, `limit` (1-1000, default 200), `next`
+  (opaque pagination cursor). A bare call defaults to `tracked=true` and is
+  served from the sparse `tracked-index` GSI, so it never scans the full
+  catalog; the response carries a `next` cursor when more pages remain. The
+  full catalog is delivered as a separate CDN artifact, not by this endpoint.
+  Source: DynamoDB.
 - **FR-9** `GET /v1/items/{id}` returns one item or 404. Source: DynamoDB.
 - **FR-10** `POST /v1/items` registers a new item; the handler validates
   the ID via arsha.io and writes to DynamoDB. Postgres `item` is
