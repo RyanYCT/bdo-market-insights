@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import logging
 import os
 import threading
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 import boto3
@@ -63,49 +67,107 @@ def get_item(item_id: int) -> Item | None:
     return _item_to_model(raw)
 
 
-def list_items(*, category: str | None = None, tracked: bool | None = None) -> list[Item]:
-    """List items, optionally filtering by category and/or tracked status."""
+def _encode_cursor(key: dict[str, Any] | None) -> str | None:
+    """Encode a DynamoDB LastEvaluatedKey as an opaque pagination token.
+
+    Number keys come back as ``Decimal``; they are narrowed to ``int`` (item ids
+    and index keys are integral) so the token is plain JSON, then URL-safe
+    base64-encoded. ``None``/empty (no more pages) yields ``None``.
+    """
+    if not key:
+        return None
+
+    def _default(obj: Any) -> Any:
+        if isinstance(obj, Decimal):
+            return int(obj)
+        raise TypeError(f"unencodable cursor value: {obj!r}")
+
+    raw = json.dumps(key, default=_default, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode()
+
+
+def _decode_cursor(token: str | None) -> dict[str, Any] | None:
+    """Decode an opaque pagination token back into an ExclusiveStartKey.
+
+    Returns ``None`` for an absent token and raises :class:`ValueError` for a
+    malformed one, so the handler can map it to a 400 rather than a 500.
+    """
+    if not token:
+        return None
+    try:
+        decoded = base64.urlsafe_b64decode(token.encode())
+        key = json.loads(decoded)
+    except (binascii.Error, ValueError, UnicodeDecodeError) as exc:
+        raise ValueError("invalid pagination cursor") from exc
+    if not isinstance(key, dict):
+        raise ValueError("invalid pagination cursor")
+    return key
+
+
+def list_items(
+    *,
+    category: str | None = None,
+    tracked: bool | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> tuple[list[Item], str | None]:
+    """List items with GSI-aware routing and optional bounded pagination.
+
+    Routing (cheapest index that satisfies the filter):
+
+    * ``tracked=True`` (no category) -> the sparse ``tracked-index`` GSI, which
+      holds only the polled subset, so the read never scales with catalog size
+      (ADR-0018). This is the API default (the handler defaults ``tracked`` to
+      ``True`` when no filter is given).
+    * ``category`` given -> the ``category-tracked-index`` GSI (with the
+      ``tracked`` sort key when both are supplied), bounded by the category.
+    * otherwise (e.g. ``tracked=False``) -> a table ``Scan`` with an optional
+      ``tracked`` filter. This is the only unbounded access path, so callers
+      should pass ``limit`` to bound it.
+
+    When ``limit`` is given a single page of at most ``limit`` items is returned
+    with an opaque ``next`` cursor (``None`` when exhausted); ``cursor`` resumes
+    a previous page. When ``limit`` is ``None`` the full result is paginated
+    internally and the cursor is always ``None``.
+    """
     table = _get_table()
+    kwargs: dict[str, Any] = {}
+    run = table.scan
 
-    if category is not None and tracked is not None:
-        # Use the GSI
-        query_kwargs: dict[str, Any] = {
-            "IndexName": _GSI_NAME,
-            "KeyConditionExpression": Key("category").eq(category)
-            & Key("tracked").eq(str(tracked).lower()),
-        }
-        response: dict[str, Any] = table.query(**query_kwargs)
-        items_raw: list[dict[str, Any]] = response.get("Items", [])
-        while "LastEvaluatedKey" in response:
-            query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-            response = table.query(**query_kwargs)
-            items_raw.extend(response.get("Items", []))
-    elif category is not None:
-        # Query GSI with just partition key
-        query_kwargs = {
-            "IndexName": _GSI_NAME,
-            "KeyConditionExpression": Key("category").eq(category),
-        }
-        response = table.query(**query_kwargs)
-        items_raw = response.get("Items", [])
-        while "LastEvaluatedKey" in response:
-            query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-            response = table.query(**query_kwargs)
-            items_raw.extend(response.get("Items", []))
-    else:
-        # Scan (with optional filter)
-        scan_kwargs: dict[str, Any] = {}
+    if category is not None:
+        kce: Any = Key("category").eq(category)
         if tracked is not None:
-            scan_kwargs["FilterExpression"] = Attr("tracked").eq(str(tracked).lower())
-        response = table.scan(**scan_kwargs)
-        items_raw = response.get("Items", [])
-        # Handle pagination
-        while "LastEvaluatedKey" in response:
-            scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-            response = table.scan(**scan_kwargs)
-            items_raw.extend(response.get("Items", []))
+            kce = kce & Key("tracked").eq(str(tracked).lower())
+        kwargs["IndexName"] = _GSI_NAME
+        kwargs["KeyConditionExpression"] = kce
+        run = table.query
+    elif tracked is True:
+        kwargs["IndexName"] = _TRACKED_GSI_NAME
+        kwargs["KeyConditionExpression"] = Key(_TRACKED_MARKER_ATTR).eq(_TRACKED_MARKER_VALUE)
+        run = table.query
+    elif tracked is False:
+        kwargs["FilterExpression"] = Attr("tracked").eq("false")
 
-    return [_item_to_model(raw) for raw in items_raw]
+    start_key = _decode_cursor(cursor)
+    if start_key is not None:
+        kwargs["ExclusiveStartKey"] = start_key
+
+    if limit is not None:
+        # Single bounded page; hand back the LastEvaluatedKey as an opaque token.
+        kwargs["Limit"] = limit
+        response: dict[str, Any] = run(**kwargs)
+        items_raw: list[dict[str, Any]] = response.get("Items", [])
+        next_cursor = _encode_cursor(response.get("LastEvaluatedKey"))
+        return [_item_to_model(raw) for raw in items_raw], next_cursor
+
+    # Unbounded: walk every page (no caller passes this from the API path).
+    response = run(**kwargs)
+    items_raw = response.get("Items", [])
+    while "LastEvaluatedKey" in response:
+        kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        response = run(**kwargs)
+        items_raw.extend(response.get("Items", []))
+    return [_item_to_model(raw) for raw in items_raw], None
 
 
 def put_item(item: Item) -> None:

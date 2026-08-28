@@ -64,19 +64,22 @@ def test_list_items_filters(
 ) -> None:
     captured: dict[str, Any] = {}
 
-    def fake_list(**kwargs: Any) -> list[Item]:
+    def fake_list(**kwargs: Any) -> tuple[list[Item], str | None]:
         captured.update(kwargs)
-        return [
-            Item(
-                id=12094,
-                name="Deboreka Ring",
-                names={"tw": "\u5fb7\u6ce2\u96f7\u5361\u6212\u6307"},
-                grade=4,
-                category="ring",
-                tracked=True,
-                icon_status="stored",
-            )
-        ]
+        return (
+            [
+                Item(
+                    id=12094,
+                    name="Deboreka Ring",
+                    names={"tw": "\u5fb7\u6ce2\u96f7\u5361\u6212\u6307"},
+                    grade=4,
+                    category="ring",
+                    tracked=True,
+                    icon_status="stored",
+                )
+            ],
+            None,
+        )
 
     monkeypatch.setattr(mod.dynamo, "list_items", fake_list)
     resp = mod.handler(
@@ -86,6 +89,7 @@ def test_list_items_filters(
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])
     assert body["count"] == 1
+    assert body["next"] is None
     item = body["items"][0]
     assert item["id"] == 12094
     # Catalog fields (ADR-0018) are part of the documented response contract.
@@ -95,7 +99,83 @@ def test_list_items_filters(
     # Internal fields are omitted from the public contract.
     assert "model_id" not in item
     assert "cron_profile" not in item
-    assert captured == {"category": "ring", "tracked": True}
+    # Explicit filters pass through; the bounded default page size is applied.
+    assert captured == {
+        "category": "ring",
+        "tracked": True,
+        "limit": mod.DEFAULT_ITEM_LIMIT,
+        "cursor": None,
+    }
+
+
+def test_list_items_defaults_to_tracked(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bare call (no filter) defaults to the tracked set, not a full scan."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(**kwargs: Any) -> tuple[list[Item], str | None]:
+        captured.update(kwargs)
+        return ([], None)
+
+    monkeypatch.setattr(mod.dynamo, "list_items", fake_list)
+    resp = mod.handler(_event("GET", "/v1/items"), lambda_context)
+
+    assert resp["statusCode"] == 200
+    assert captured["tracked"] is True
+    assert captured["category"] is None
+
+
+def test_list_items_paginates_with_cursor(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ``next`` cursor is forwarded to the repo and echoed in the response."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(**kwargs: Any) -> tuple[list[Item], str | None]:
+        captured.update(kwargs)
+        return ([Item(id=1, name="A", tracked=True)], "next-token-abc")
+
+    monkeypatch.setattr(mod.dynamo, "list_items", fake_list)
+    resp = mod.handler(
+        _event("GET", "/v1/items", query={"limit": "50", "next": "prev-token"}), lambda_context
+    )
+
+    assert resp["statusCode"] == 200
+    body = json.loads(resp["body"])
+    assert body["next"] == "next-token-abc"
+    assert captured["limit"] == 50
+    assert captured["cursor"] == "prev-token"
+
+
+def test_list_items_clamps_limit(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An over-cap ``limit`` is clamped to MAX_ITEM_LIMIT before the repo call."""
+    captured: dict[str, Any] = {}
+
+    def fake_list(**kwargs: Any) -> tuple[list[Item], str | None]:
+        captured.update(kwargs)
+        return ([], None)
+
+    monkeypatch.setattr(mod.dynamo, "list_items", fake_list)
+    resp = mod.handler(_event("GET", "/v1/items", query={"limit": "999999"}), lambda_context)
+
+    assert resp["statusCode"] == 200
+    assert captured["limit"] == mod.MAX_ITEM_LIMIT
+
+
+def test_list_items_invalid_cursor_returns_400(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A malformed cursor maps to 400, not a 500."""
+
+    def fake_list(**kwargs: Any) -> tuple[list[Item], str | None]:
+        raise ValueError("invalid pagination cursor")
+
+    monkeypatch.setattr(mod.dynamo, "list_items", fake_list)
+    resp = mod.handler(_event("GET", "/v1/items", query={"next": "garbage"}), lambda_context)
+    assert resp["statusCode"] == 400
 
 
 def test_get_item_found(

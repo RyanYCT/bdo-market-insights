@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from aws_lambda_powertools import Logger, Metrics, Tracer
 from aws_lambda_powertools.event_handler import (
@@ -24,6 +24,7 @@ from aws_lambda_powertools.event_handler.exceptions import (
     ForbiddenError,
     NotFoundError,
 )
+from aws_lambda_powertools.event_handler.openapi.params import Query
 from aws_lambda_powertools.metrics import MetricUnit
 from aws_lambda_powertools.utilities.typing import LambdaContext
 from pydantic import BaseModel, Field
@@ -39,6 +40,13 @@ from bdo_common.models import Item
 #: ``None`` for every item (the icon bytes exist in a private bucket but are not
 #: publicly served yet).
 ICON_BASE_URL = os.environ.get("ICON_BASE_URL", "")
+
+#: Default and hard-cap page size for ``GET /v1/items``. The full catalog (tens
+#: of thousands of items) is delivered as a separate CDN artifact, not through
+#: this endpoint, so a single page stays small and well within the API Gateway
+#: timeout; larger result sets are walked via the ``next`` cursor.
+DEFAULT_ITEM_LIMIT = 200
+MAX_ITEM_LIMIT = 1000
 
 logger = Logger()
 tracer = Tracer()
@@ -113,17 +121,16 @@ class ItemResponse(BaseModel):
 
 
 class ItemListResponse(BaseModel):
-    """Response body for ``GET /v1/items``: the matching items plus a count."""
+    """Response body for ``GET /v1/items``: one page of items plus a cursor.
+
+    ``count`` is the number of items in *this* page. ``next`` is an opaque
+    pagination cursor to fetch the following page, or ``None`` when the result
+    is exhausted.
+    """
 
     items: list[ItemResponse]
     count: int
-
-
-def _parse_bool(value: str | None) -> bool | None:
-    """Parse a query-string flag into a tri-state bool (None = unset)."""
-    if value is None:
-        return None
-    return value.lower() in ("1", "true", "yes")
+    next: str | None = None
 
 
 def _dynamo_updates(body: ItemUpdate) -> dict[str, Any]:
@@ -151,15 +158,50 @@ def _reject_demo_writes() -> None:
 
 
 @app.get("/v1/items")
-def list_items() -> ItemListResponse:
-    """FR-8: list items, optionally filtered by ``category`` and ``tracked``."""
-    category = app.current_event.get_query_string_value(name="category", default_value=None)
-    tracked = _parse_bool(
-        app.current_event.get_query_string_value(name="tracked", default_value=None)
-    )
-    items = dynamo.list_items(category=category, tracked=tracked)
+def list_items(
+    category: Annotated[
+        str | None,
+        Query(description="Filter by item category (e.g. 'accessories')."),
+    ] = None,
+    tracked: Annotated[
+        bool | None,
+        Query(
+            description=(
+                "Filter by tracked flag. Defaults to true when neither category nor tracked "
+                "is given, so a bare call returns the tracked set (the full catalog is served "
+                "as a separate CDN artifact, not by this endpoint)."
+            )
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Query(description="Max items per page (1-1000, clamped)."),
+    ] = DEFAULT_ITEM_LIMIT,
+    next_cursor: Annotated[
+        str | None,
+        Query(alias="next", description="Opaque pagination cursor from a previous response."),
+    ] = None,
+) -> ItemListResponse:
+    """FR-8: list items, filtered by ``category``/``tracked``, one bounded page.
+
+    A bare call defaults to ``tracked=true`` and is served from the sparse
+    ``tracked-index`` GSI, so it never scans the full catalog. Results are
+    paginated: pass ``next`` to fetch the following page.
+    """
+    limit = max(1, min(limit, MAX_ITEM_LIMIT))
+    # Bare call (no filter) -> the tracked set, a small bounded read via the GSI.
+    if category is None and tracked is None:
+        tracked = True
+    try:
+        items, cursor = dynamo.list_items(
+            category=category, tracked=tracked, limit=limit, cursor=next_cursor
+        )
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
     return ItemListResponse(
-        items=[ItemResponse.from_item(item) for item in items], count=len(items)
+        items=[ItemResponse.from_item(item) for item in items],
+        count=len(items),
+        next=cursor,
     )
 
 

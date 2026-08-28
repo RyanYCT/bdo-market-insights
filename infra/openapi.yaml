@@ -228,8 +228,15 @@ components:
       title: ItemCreate
       type: object
     ItemListResponse:
-      description: 'Response body for ``GET /v1/items``: the matching items plus a
-        count.'
+      description: 'Response body for ``GET /v1/items``: one page of items plus a
+        cursor.
+
+
+        ``count`` is the number of items in *this* page. ``next`` is an opaque
+
+        pagination cursor to fetch the following page, or ``None`` when the result
+
+        is exhausted.'
       properties:
         count:
           title: Count
@@ -239,6 +246,11 @@ components:
             $ref: '#/components/schemas/ItemResponse'
           title: Items
           type: array
+        next:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next
       required:
       - items
       - count
@@ -555,6 +567,50 @@ paths:
   /v1/items:
     get:
       operationId: list_items_v1_items_get
+      parameters:
+      - description: Filter by item category (e.g. 'accessories').
+        in: query
+        name: category
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Filter by item category (e.g. 'accessories').
+          title: Category
+      - description: Filter by tracked flag. Defaults to true when neither category
+          nor tracked is given, so a bare call returns the tracked set (the full catalog
+          is served as a separate CDN artifact, not by this endpoint).
+        in: query
+        name: tracked
+        required: false
+        schema:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          description: Filter by tracked flag. Defaults to true when neither category
+            nor tracked is given, so a bare call returns the tracked set (the full
+            catalog is served as a separate CDN artifact, not by this endpoint).
+          title: Tracked
+      - description: Max items per page (1-1000, clamped).
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 200
+          description: Max items per page (1-1000, clamped).
+          title: Limit
+          type: integer
+      - description: Opaque pagination cursor from a previous response.
+        in: query
+        name: next
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Opaque pagination cursor from a previous response.
+          title: Next
       responses:
         '200':
           content:
