@@ -247,10 +247,15 @@ Resources:
         CommonLayerArn: !GetAtt EtlStack.Outputs.CommonLayerArn
         DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
         CatalogSyncSchedule: !Ref CatalogSyncSchedule
+        # Icons bucket + CDN base from the icons stack: catalogSync publishes the
+        # full-catalog artifact into the bucket, served via the icons CDN, with
+        # icon_url values pointing at that base (ADR-0031).
+        IconsBucketName: !GetAtt IconsStack.Outputs.IconsBucketName
+        IconBaseUrl: !GetAtt IconsStack.Outputs.IconBaseUrl
         LogRetentionInDays: !Ref LogRetentionInDays
-    # Ordering after Data/Etl is enforced by the !GetAtt *.Outputs references
-    # above (incl. the shared CommonLayerArn); an explicit DependsOn would be
-    # redundant (cfn-lint W3005).
+    # Ordering after Data/Etl/Icons is enforced by the !GetAtt *.Outputs
+    # references above (incl. the shared CommonLayerArn and the icons outputs);
+    # an explicit DependsOn would be redundant (cfn-lint W3005).
 
   IconsStack:
     Type: AWS::CloudFormation::Stack
