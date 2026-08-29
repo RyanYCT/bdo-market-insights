@@ -16,7 +16,7 @@ reach a shared resource:
   **`etl`** stack, yet consumed by `insights`, `api`, `catalog`, and
   `bootstrap`. Four stacks depend on `etl` only for the layer.
 - **The delivery CDN** (icons S3 bucket + CloudFront distribution + OAC + CORS +
-  the `cdn.ryanyct.com` cert/record) is defined in the **`icons`** stack, yet
+  the `cdn.example.com` cert/record) is defined in the **`icons`** stack, yet
   consumed by `api` (icon base URL) and, more recently, `catalog` (publishes the
   catalog artifact into the same bucket). `icons` is really two concerns fused
   together: the shared *delivery* infrastructure and the *icon producer*
@@ -52,7 +52,7 @@ Applied:
   `catalog`, and `bootstrap` consume `CommonLayerArn` from it. `etl` stops
   owning it.
 - **`cdn`** (new, Tier 0) owns the delivery bucket, CloudFront distribution,
-  OAC, bucket policy, CORS behaviors, and the `cdn.ryanyct.com` cert + Route 53
+  OAC, bucket policy, CORS behaviors, and the `cdn.example.com` cert + Route 53
   record. It outputs the bucket name + base URL. `api` and `catalog` consume
   those; the `icons` stack is reduced to the icon *producer* (iconSync + janitor)
   writing `icons/*` into the shared bucket.
@@ -62,12 +62,12 @@ Applied:
 Three separate concerns, deliberately not lumped together ("own your subdomain,
 share the zone"):
 
-- **Hosted zone** (`ryanyct.com`) — account-wide, long-lived, shared. Owned by
+- **Hosted zone** (`example.com`) — account-wide, long-lived, shared. Owned by
   no application stack; referenced via the `HostedZoneId` parameter resolved
   from SSM (ADR-0024). Unchanged.
 - **ACM cert + custom-domain binding** — lives with the stack that owns the
-  endpoint it terminates on. `api.ryanyct.com`'s cert + API Gateway
-  `DomainName` stay in `api`; `cdn.ryanyct.com`'s cert (us-east-1, required by
+  endpoint it terminates on. `api.example.com`'s cert + API Gateway
+  `DomainName` stay in `api`; `cdn.example.com`'s cert (us-east-1, required by
   CloudFront) + distribution alias move to `cdn`.
 - **Route 53 record** — lives with the endpoint's stack (it needs the endpoint
   target). `api.*` record in `api`; `cdn.*` record in `cdn`.
@@ -86,12 +86,22 @@ Executed as separate, independently reviewable changes, sequenced by risk:
    the new ARN, the old version drops. No stateful data. Deploy the platform
    stack first.
 2. **`cdn` extraction (medium risk).** Moving a retained bucket-with-data and a
-   live CloudFront distribution (`cdn.ryanyct.com` + ACM + Route 53) between
+   live CloudFront distribution (`cdn.example.com` + ACM + Route 53) between
    stacks would normally force replacement. Use **CloudFormation stack
    refactoring** to move resources without recreation. Sequence with the
    read-through icon cache work so the icons bucket contents are disposable
    (self-healing), leaving only the distribution + domain as the sticky piece
    the refactor must preserve.
+
+**Declarative target vs. one-time migration.** The end state is pure IaC: a
+fresh environment deploys straight into the tiered topology (`platform`/`cdn` as
+Tier-0 stacks) with no manual steps, and `main` only ever carries the
+declarative templates. The only imperative part is reconciling the *already
+deployed* resources with the new layout without recreation. That one-time
+migration (the stack-refactor / resource-import commands, run against an
+existing environment) is captured as a **runbook executed from a disposable
+branch and is never merged to `main`**. `main` stays reproducible from scratch;
+the migration is an operational step, not permanent code.
 
 ## Consequences
 
