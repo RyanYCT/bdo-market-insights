@@ -438,6 +438,32 @@ def scan_catalog_fingerprints() -> dict[int, tuple[str, int | None, dict[str, st
     return fingerprints
 
 
+def scan_catalog_items() -> list[Item]:
+    """Scan every item, projecting the public catalog fields for the artifact.
+
+    Backs the static ``catalog.json`` published by ``catalogSync`` (the full
+    catalog is delivered as a CDN artifact, not through the paginated
+    ``/v1/items`` API). Projects only the fields the artifact exposes -- the
+    internal ETL-owned attributes (``model_id``/``cron_profile``/``tracked``) are
+    left out of the read. Ordering is left to the caller.
+    """
+    table = _get_table()
+    scan_kwargs: dict[str, Any] = {
+        "ProjectionExpression": (
+            "id, #name, #names, grade, category, main_category, sub_category, icon_status"
+        ),
+        "ExpressionAttributeNames": {"#name": "name", "#names": "names"},
+    }
+    items_raw: list[dict[str, Any]] = []
+    response = table.scan(**scan_kwargs)
+    items_raw.extend(response.get("Items", []))
+    while "LastEvaluatedKey" in response:
+        scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        response = table.scan(**scan_kwargs)
+        items_raw.extend(response.get("Items", []))
+    return [_item_to_model(raw) for raw in items_raw]
+
+
 def catalog_is_empty() -> bool:
     """Return True if the items table has no rows.
 

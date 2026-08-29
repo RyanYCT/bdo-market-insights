@@ -15,7 +15,7 @@ from typing import Any
 from aws_lambda_powertools import Logger, Metrics, Tracer
 from aws_lambda_powertools.metrics import MetricUnit
 
-from bdo_common import catalog
+from bdo_common import catalog, catalog_artifact
 from bdo_common.arsha_client import DEFAULT_LANG, ArshaClient
 
 logger = Logger()
@@ -57,6 +57,24 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     metrics.add_metric(
         name="CatalogLangFetchFailures", unit=MetricUnit.Count, value=len(failed_langs)
     )
+
+    # Republish the full-catalog CDN artifact (ADR-0031). Skipped when the run
+    # itself was skipped (default-language fetch failed, so the table state this
+    # run reflects is untrustworthy) or when no artifact bucket is configured
+    # (e.g. local invocation). Always republished otherwise -- including on the
+    # checksum-unchanged fast-path -- so the artifact reflects current icon
+    # materialization and is self-healing if a prior publish was missed.
+    artifact_items = 0
+    artifact_bucket = os.environ.get("CATALOG_ARTIFACT_BUCKET", "")
+    if artifact_bucket and not stats.skipped:
+        artifact_items = catalog_artifact.publish_catalog_artifact(
+            bucket=artifact_bucket,
+            icon_base=os.environ.get("ICON_BASE_URL", ""),
+        )
+        metrics.add_metric(
+            name="CatalogArtifactItems", unit=MetricUnit.Count, value=artifact_items
+        )
+
     logger.info(
         "catalogSync complete",
         extra={
@@ -67,6 +85,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             "failed_langs": failed_langs,
             "skipped": stats.skipped,
             "unchanged": stats.unchanged,
+            "artifact_items": artifact_items,
         },
     )
     return {
@@ -77,4 +96,5 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         "failed_langs": failed_langs,
         "skipped": stats.skipped,
         "unchanged": stats.unchanged,
+        "artifact_items": artifact_items,
     }

@@ -148,6 +148,23 @@ Resources:
           # AWS managed "CachingOptimized" policy (honours the bucket's
           # Cache-Control: public, max-age=604800 on stored icons).
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        # Serve the full-catalog artifact (catalog/catalog.json) from the same
+        # bucket/CDN (ADR-0031). Unlike icons (loaded via <img>, no CORS), the
+        # frontend fetches this JSON via fetch(), so it needs CORS headers.
+        # Stored as plain JSON; Compress lets CloudFront gzip/brotli it on the
+        # wire. CachingOptimized honours the object's Cache-Control (max-age=3600).
+        CacheBehaviors:
+          - PathPattern: catalog/*
+            TargetOriginId: IconsBucketOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+            # AWS managed "SimpleCORS" response-headers policy
+            # (Access-Control-Allow-Origin: *) -- the catalog is public,
+            # read-only reference data.
+            ResponseHeadersPolicyId: 60669652-455b-4ae9-85a4-c4c02393f86c
 
   # Grant read to only this distribution (OAC + SourceArn). Not a public policy
   # (service principal, not "*"), so it coexists with block-public-access.
