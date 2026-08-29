@@ -16,6 +16,17 @@ Parameters:
   DynamoDbTableName:
     Type: String
     Description: per-stage items table name (bdo-<stage>-items)
+  IconsBucketName:
+    Type: String
+    Description: >
+      Icons bucket name (from the icons stack). catalogSync writes the static
+      catalog artifact under catalog/* here, served via the shared icons CDN
+      (ADR-0031).
+  IconBaseUrl:
+    Type: String
+    Description: >
+      Public base URL of the icons CDN (from the icons stack), baked into the
+      artifact's icon_url values so a catalog entry's icon resolves directly.
   CatalogSyncSchedule:
     Type: String
     Default: 'cron(0 8 ? * THU *)'
@@ -72,6 +83,10 @@ Resources:
           # SSM parameter holding the last-synced catalog content checksum; the
           # sync skips all writes when the fetched catalog matches it.
           CATALOG_CHECKSUM_PARAM: !Sub '/bdo-market-insights/${Stage}/catalog/checksum'
+          # Publish the full-catalog CDN artifact into the icons bucket, with
+          # icon_url values pointing at the icons CDN (ADR-0031).
+          CATALOG_ARTIFACT_BUCKET: !Ref IconsBucketName
+          ICON_BASE_URL: !Ref IconBaseUrl
       Policies:
         # Read (Scan) to diff current state + write the changed items.
         - DynamoDBCrudPolicy:
@@ -83,6 +98,11 @@ Resources:
                 - ssm:GetParameter
                 - ssm:PutParameter
               Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/bdo-market-insights/${Stage}/catalog/checksum'
+        # Write only the catalog artifact prefix in the icons bucket.
+        - Statement:
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub 'arn:${AWS::Partition}:s3:::${IconsBucketName}/catalog/*'
       Events:
         WeeklyCatalogSync:
           Type: Schedule

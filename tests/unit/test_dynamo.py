@@ -154,6 +154,34 @@ class TestPutAndListItems:
         with pytest.raises(ValueError, match="invalid pagination cursor"):
             list_items(tracked=True, limit=2, cursor="!!!not-base64!!!")
 
+    def test_scan_catalog_items_projects_public_fields(self, dynamodb_table: Any) -> None:
+        from bdo_common.dynamo import put_item, scan_catalog_items
+
+        put_item(
+            Item(
+                id=1,
+                name="Item A",
+                names={"tw": "\u7269\u4ef6A"},
+                grade=3,
+                category="accessories",
+                main_category="15",
+                sub_category="2",
+                tracked=True,
+                icon_status="stored",
+            )
+        )
+        put_item(Item(id=2, name="Item B", category="weapons", tracked=False))
+
+        items = {i.id: i for i in scan_catalog_items()}
+        assert set(items) == {1, 2}
+        assert items[1].name == "Item A"
+        assert items[1].names == {"tw": "\u7269\u4ef6A"}
+        assert items[1].grade == 3
+        assert items[1].category == "accessories"
+        assert items[1].main_category == "15"
+        assert items[1].sub_category == "2"
+        assert items[1].icon_status == "stored"
+
 
 class TestUpsertCatalogItem:
     """Test upsert_catalog_item partial-upsert semantics."""

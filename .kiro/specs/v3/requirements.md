@@ -54,6 +54,17 @@ EventBridge rule, with no code or schema change.
 - **FR-12** `DELETE /v1/items/{id}` soft-deletes (sets `tracked = false`)
   in DynamoDB.
 
+### Catalog artifact (CDN)
+
+- **FR-18** `catalogSync` publishes the full item catalog as a static
+  `catalog/catalog.json` object into the icons bucket, delivered via the same
+  CloudFront CDN (CORS-enabled) at `{IconBaseUrl}/catalog/catalog.json`. Each
+  entry carries `{id, name, names, grade, category, main_category,
+  sub_category, icon_url}`, so the frontend browses/searches the whole catalog
+  client-side without an unbounded API scan; `/v1/items` serves only the
+  mutable tracked subset (ADR-0031). Stored as plain JSON (CloudFront
+  compresses on the wire); republished on every non-skipped run.
+
 ### Market Query API (`/v1/market`)
 
 - **FR-13** `GET /v1/market/items/{id}/snapshots?region=&sid=&from=&to=&limit=`
