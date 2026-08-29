@@ -173,6 +173,15 @@ Resources:
         PrivateSubnetAAZ: !GetAtt NetworkStack.Outputs.PrivateSubnetAAZ
         RdsSecurityGroupId: !GetAtt NetworkStack.Outputs.RdsSecurityGroupId
 
+  # Tier-0 platform stack (ADR-0032): owns cross-cutting shared assets (the
+  # bdo-common Lambda layer) below all their consumers. Depends only on Stage.
+  PlatformStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: infra/platform.yaml
+      Parameters:
+        Stage: !Ref Stage
+
   EtlStack:
     Type: AWS::CloudFormation::Stack
     Properties:
@@ -180,6 +189,7 @@ Resources:
       Parameters:
         Stage: !Ref Stage
         BdoRegion: !Ref BdoRegion
+        CommonLayerArn: !GetAtt PlatformStack.Outputs.CommonLayerArn
         LambdaSecurityGroupId: !GetAtt NetworkStack.Outputs.LambdaSecurityGroupId
         PrivateSubnetA: !GetAtt NetworkStack.Outputs.PrivateSubnetA
         DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
@@ -200,7 +210,7 @@ Resources:
       Parameters:
         Stage: !Ref Stage
         BdoRegion: !Ref BdoRegion
-        CommonLayerArn: !GetAtt EtlStack.Outputs.CommonLayerArn
+        CommonLayerArn: !GetAtt PlatformStack.Outputs.CommonLayerArn
         LambdaSecurityGroupId: !GetAtt NetworkStack.Outputs.LambdaSecurityGroupId
         PrivateSubnetA: !GetAtt NetworkStack.Outputs.PrivateSubnetA
         RdsEndpoint: !GetAtt DataStack.Outputs.RdsEndpoint
@@ -209,9 +219,9 @@ Resources:
         BedrockModelId: !Ref BedrockModelId
         BedrockFoundationModelId: !Ref BedrockFoundationModelId
         LogRetentionInDays: !Ref LogRetentionInDays
-    # Ordering after Network/Data/Etl is enforced by the !GetAtt *.Outputs
-    # references above (incl. the shared CommonLayerArn); an explicit
-    # DependsOn would be redundant (cfn-lint W3005).
+    # Ordering after Network/Data/Platform is enforced by the !GetAtt *.Outputs
+    # references above (incl. CommonLayerArn from the platform stack); an
+    # explicit DependsOn would be redundant (cfn-lint W3005).
 
   ApiStack:
     Type: AWS::CloudFormation::Stack
@@ -220,7 +230,7 @@ Resources:
       Parameters:
         Stage: !Ref Stage
         BdoRegion: !Ref BdoRegion
-        CommonLayerArn: !GetAtt EtlStack.Outputs.CommonLayerArn
+        CommonLayerArn: !GetAtt PlatformStack.Outputs.CommonLayerArn
         DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
         LambdaSecurityGroupId: !GetAtt NetworkStack.Outputs.LambdaSecurityGroupId
         PrivateSubnetA: !GetAtt NetworkStack.Outputs.PrivateSubnetA
@@ -234,9 +244,9 @@ Resources:
         IconBaseUrl: !GetAtt IconsStack.Outputs.IconBaseUrl
         EnableDemoKey: !Ref EnableDemoKey
         LogRetentionInDays: !Ref LogRetentionInDays
-    # Ordering after Network/Data/Etl is enforced by the !GetAtt *.Outputs
-    # references above (incl. the shared CommonLayerArn); an explicit
-    # DependsOn would be redundant (cfn-lint W3005).
+    # Ordering after Network/Data/Platform/Icons is enforced by the
+    # !GetAtt *.Outputs references above (incl. CommonLayerArn from the platform
+    # stack); an explicit DependsOn would be redundant (cfn-lint W3005).
 
   CatalogStack:
     Type: AWS::CloudFormation::Stack
@@ -244,7 +254,7 @@ Resources:
       TemplateURL: infra/catalog.yaml
       Parameters:
         Stage: !Ref Stage
-        CommonLayerArn: !GetAtt EtlStack.Outputs.CommonLayerArn
+        CommonLayerArn: !GetAtt PlatformStack.Outputs.CommonLayerArn
         DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
         CatalogSyncSchedule: !Ref CatalogSyncSchedule
         # Icons bucket + CDN base from the icons stack: catalogSync publishes the
@@ -253,9 +263,9 @@ Resources:
         IconsBucketName: !GetAtt IconsStack.Outputs.IconsBucketName
         IconBaseUrl: !GetAtt IconsStack.Outputs.IconBaseUrl
         LogRetentionInDays: !Ref LogRetentionInDays
-    # Ordering after Data/Etl/Icons is enforced by the !GetAtt *.Outputs
-    # references above (incl. the shared CommonLayerArn and the icons outputs);
-    # an explicit DependsOn would be redundant (cfn-lint W3005).
+    # Ordering after Data/Platform/Icons is enforced by the !GetAtt *.Outputs
+    # references above (incl. CommonLayerArn from the platform stack and the
+    # icons outputs); an explicit DependsOn would be redundant (cfn-lint W3005).
 
   IconsStack:
     Type: AWS::CloudFormation::Stack
@@ -264,7 +274,7 @@ Resources:
       Parameters:
         Stage: !Ref Stage
         BdoRegion: !Ref BdoRegion
-        CommonLayerArn: !GetAtt EtlStack.Outputs.CommonLayerArn
+        CommonLayerArn: !GetAtt PlatformStack.Outputs.CommonLayerArn
         DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
         IconSyncSchedule: !Ref IconSyncSchedule
         IconDomainName: !Ref IconDomainName
@@ -277,14 +287,15 @@ Resources:
       TemplateURL: infra/bootstrap.yaml
       Parameters:
         Stage: !Ref Stage
-        CommonLayerArn: !GetAtt EtlStack.Outputs.CommonLayerArn
+        CommonLayerArn: !GetAtt PlatformStack.Outputs.CommonLayerArn
         DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
         CatalogSyncFunctionArn: !GetAtt CatalogStack.Outputs.CatalogSyncFunctionArn
         IconSyncFunctionArn: !GetAtt IconsStack.Outputs.IconSyncFunctionArn
         AutoBootstrap: !Ref AutoBootstrap
         LogRetentionInDays: !Ref LogRetentionInDays
-    # Ordering after Etl/Data/Catalog/Icons is enforced by the !GetAtt *.Outputs
-    # references above; an explicit DependsOn would be redundant (cfn-lint W3005).
+    # Ordering after Platform/Data/Catalog/Icons is enforced by the
+    # !GetAtt *.Outputs references above; an explicit DependsOn would be
+    # redundant (cfn-lint W3005).
 
   ObservabilityStack:
     Type: AWS::CloudFormation::Stack

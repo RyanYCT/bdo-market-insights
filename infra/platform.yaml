@@ -1,0 +1,38 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Platform layer (Tier 0, ADR-0032) for bdo-market-insights: cross-cutting
+  shared runtime assets that other stacks build on. Currently the shared
+  bdo-common Lambda layer, consumed by the etl, insights, api, catalog, and
+  icons stacks. Owned here (below its consumers) rather than by any workload
+  stack.
+
+Parameters:
+  Stage:
+    Type: String
+    AllowedValues: [dev, prod]
+
+Resources:
+  # ──────────────────────────────────────────────
+  # Shared layer (ADR-0003) — bdo_common + runtime deps
+  # ──────────────────────────────────────────────
+  # build_layer.py bundles the hand-authored bdo_common package alongside the
+  # pip deps under python/. The stock `BuildMethod: python3.12` installs only
+  # requirements.txt and omits bdo_common, breaking every function at import.
+  CommonLayer:
+    Type: AWS::Serverless::LayerVersion
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      LayerName: !Sub 'bdo-${Stage}-common'
+      Description: Shared bdo_common code and runtime dependencies
+      ContentUri: ../src/layer
+      CompatibleRuntimes:
+        - python3.12
+      RetentionPolicy: Delete
+
+Outputs:
+  CommonLayerArn:
+    Value: !Ref CommonLayer
+    Export:
+      Name: !Sub '${AWS::StackName}-CommonLayerArn'
