@@ -27,8 +27,8 @@ MIGRATIONS_FINGERPRINT := $(shell find migrations/versions -type f -name '*.py' 
 
 DEPLOY_PARAMS := Stage=$(STAGE) BdoRegion=$(BDO_REGION) UseRdsProxy=$(USE_RDS_PROXY) AutoMigrate=$(AUTO_MIGRATE) MigrationsFingerprint=$(MIGRATIONS_FINGERPRINT) AutoBootstrap=$(AUTO_BOOTSTRAP) EnableDemoKey=/bdo-market-insights/$(STAGE)/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/$(STAGE)/domain/api-domain-name IconDomainName=/bdo-market-insights/$(STAGE)/domain/icon-domain-name HostedZoneId=/bdo-market-insights/$(STAGE)/domain/hosted-zone-id
 
-# Built layer artifacts (CommonLayer is nested under EtlStack).
-LAYER_PYTHON := .aws-sam/build/EtlStack/CommonLayer/python
+# Built layer artifacts (CommonLayer is nested under PlatformStack, ADR-0032).
+LAYER_PYTHON := .aws-sam/build/PlatformStack/CommonLayer/python
 
 lint:
 	uv run ruff check . && uv run ruff format --check .

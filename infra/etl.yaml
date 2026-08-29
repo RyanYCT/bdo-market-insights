@@ -1,9 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  ETL pipeline for bdo-market-insights: the shared bdo-common Lambda layer,
-  six ETL functions, the Step Functions state machine (hourly), and the
-  daily retention sweep (EventBridge).
+  ETL pipeline for bdo-market-insights: six ETL functions, the Step Functions
+  state machine (hourly), and the daily retention sweep (EventBridge). The
+  shared bdo-common Lambda layer is owned by the platform stack (ADR-0032) and
+  passed in via CommonLayerArn.
 
 Parameters:
   Stage:
@@ -18,6 +19,9 @@ Parameters:
   PrivateSubnetA:
     Type: AWS::EC2::Subnet::Id
     Description: Primary private subnet; in-VPC Lambdas run here only (ADR-0011)
+  CommonLayerArn:
+    Type: String
+    Description: ARN of the shared bdo-common Lambda layer (from the platform stack, ADR-0032)
   DynamoDbTableName:
     Type: String
     Description: per-stage items table name (bdo-<stage>-items)
@@ -65,7 +69,7 @@ Globals:
     MemorySize: 256
     Tracing: Active
     Layers:
-      - !Ref CommonLayer
+      - !Ref CommonLayerArn
     Environment:
       Variables:
         STAGE: !Ref Stage
@@ -74,24 +78,6 @@ Globals:
         POWERTOOLS_METRICS_NAMESPACE: BdoMarket
 
 Resources:
-  # ──────────────────────────────────────────────
-  # Shared layer (ADR-0003) — bdo_common + runtime deps
-  # ──────────────────────────────────────────────
-  # build_layer.py bundles the hand-authored bdo_common package alongside the
-  # pip deps under python/. The stock `BuildMethod: python3.12` installs only
-  # requirements.txt and omits bdo_common, breaking every function at import.
-  CommonLayer:
-    Type: AWS::Serverless::LayerVersion
-    Metadata:
-      BuildMethod: makefile
-    Properties:
-      LayerName: !Sub 'bdo-${Stage}-common'
-      Description: Shared bdo_common code and runtime dependencies
-      ContentUri: ../src/layer
-      CompatibleRuntimes:
-        - python3.12
-      RetentionPolicy: Delete
-
   # ──────────────────────────────────────────────
   # ETL functions — not in VPC (DynamoDB / arsha.io / pure)
   # ──────────────────────────────────────────────
@@ -465,11 +451,6 @@ Resources:
       RetentionInDays: !Ref LogRetentionInDays
 
 Outputs:
-  CommonLayerArn:
-    Value: !Ref CommonLayer
-    Export:
-      Name: !Sub '${AWS::StackName}-CommonLayerArn'
-
   EtlStateMachineArn:
     Value: !Ref EtlStateMachine
     Export:

@@ -13,7 +13,7 @@ Parameters:
     AllowedValues: [dev, prod]
   CommonLayerArn:
     Type: String
-    Description: ARN of the shared bdo-common Lambda layer (from the ETL stack)
+    Description: ARN of the shared bdo-common Lambda layer (from the platform stack, ADR-0032)
   DynamoDbTableName:
     Type: String
     Description: per-stage items table name (bdo-<stage>-items)

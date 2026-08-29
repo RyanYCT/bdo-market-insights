@@ -3,7 +3,7 @@ Transform: AWS::Serverless-2016-10-31
 Description: >
   REST API for bdo-market-insights: itemRegistry (DynamoDB, /v1/items) and
   marketQuery (RDS, /v1/market) Lambdas behind API Gateway with an API key and
-  usage plan (FR-8..17, ADR-0005). Shares the bdo-common layer from the ETL stack.
+  usage plan (FR-8..17, ADR-0005). Shares the bdo-common layer from the platform stack.
 
 # W3005: the SAM transform expands Auth.ApiKeyRequired + Auth.UsagePlan into
 # ApiKey / UsagePlan / UsagePlanKey resources that carry both a Ref and an
@@ -25,7 +25,7 @@ Parameters:
     Description: Default BDO region (arsha.io validation in itemRegistry POST)
   CommonLayerArn:
     Type: String
-    Description: ARN of the shared bdo-common Lambda layer (from the ETL stack)
+    Description: ARN of the shared bdo-common Lambda layer (from the platform stack, ADR-0032)
   DynamoDbTableName:
     Type: String
     Description: per-stage items table name (bdo-<stage>-items)
