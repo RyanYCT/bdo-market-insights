@@ -29,7 +29,8 @@ The stack below is locked. Any change requires an ADR in `docs/adr/`.
 ## Infrastructure
 
 - **AWS SAM** — one root `template.yaml` with nested stacks
-  (`network`, `data`, `etl`, `api`, `observability`).
+  (`network`, `data`, `platform`, `etl`, `api`, `insights`, `catalog`,
+  `icons`, `cdn`, `bootstrap`, `observability`; ADR-0032).
   Not CDK, not raw CFN, not Terraform (ADR-0001).
 - **IAM database authentication** for Lambdas (ADR-0008). Ad-hoc human
   DB access uses the in-VPC `adminQuery` Lambda (ADR-0026); there is no

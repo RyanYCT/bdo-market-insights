@@ -59,8 +59,10 @@ The shared Lambda layer (`bdo-common`) packages the reusable modules —
 The system runs 16 Lambdas: the 8 ETL/API handlers, the in-VPC `migrator`, the
 `docs` API, the four insights functions (`computeDigest`, `summarize`,
 `storeSummary`, `discordNotifier`), the weekly `catalogSync`, and the daily
-`iconSync`. SAM nests them as `network`, `data`, `etl`, `api`, `insights`,
-`catalog`, `icons`, and `observability` stacks.
+`iconSync`. SAM nests them as `network`, `data`, `platform`, `etl`, `api`,
+`insights`, `catalog`, `icons`, `cdn`, `bootstrap`, and `observability` stacks
+(ADR-0032). The shared Lambda layer lives in `platform`; the delivery bucket +
+CloudFront CDN in `cdn`.
 
 ### ETL state machine
 

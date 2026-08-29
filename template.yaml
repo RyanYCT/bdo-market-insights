@@ -89,8 +89,9 @@ Parameters:
     Type: AWS::SSM::Parameter::Value<String>
     Default: /bdo-market-insights/dev/domain/icon-domain-name
     Description: >
-      SSM key holding the custom icons-CDN hostname, or "none" for the default
-      CloudFront domain. Resolved from SSM at deploy.
+      SSM key holding the custom CDN hostname (serves icons + the catalog
+      artifact), or "none" for the default CloudFront domain. Resolved from SSM
+      at deploy. (SSM key kept as icon-domain-name for continuity, ADR-0032.)
   BedrockModelId:
     Type: String
     Default: 'us.amazon.nova-lite-v1:0'
@@ -239,12 +240,12 @@ Resources:
         LambdaRdsAuthRoleArn: !GetAtt DataStack.Outputs.LambdaRdsAuthRoleArn
         ApiDomainName: !Ref ApiDomainName
         HostedZoneId: !Ref HostedZoneId
-        # CloudFront base URL from the icons stack -> itemRegistry ICON_BASE_URL,
-        # so /v1/items icon_url resolves once deployed (ADR-0023).
-        IconBaseUrl: !GetAtt IconsStack.Outputs.IconBaseUrl
+        # CDN base URL from the cdn stack -> itemRegistry ICON_BASE_URL, so
+        # /v1/items icon_url resolves once deployed (ADR-0023/0032).
+        IconBaseUrl: !GetAtt CdnStack.Outputs.BaseUrl
         EnableDemoKey: !Ref EnableDemoKey
         LogRetentionInDays: !Ref LogRetentionInDays
-    # Ordering after Network/Data/Platform/Icons is enforced by the
+    # Ordering after Network/Data/Platform/Cdn is enforced by the
     # !GetAtt *.Outputs references above (incl. CommonLayerArn from the platform
     # stack); an explicit DependsOn would be redundant (cfn-lint W3005).
 
@@ -257,15 +258,29 @@ Resources:
         CommonLayerArn: !GetAtt PlatformStack.Outputs.CommonLayerArn
         DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
         CatalogSyncSchedule: !Ref CatalogSyncSchedule
-        # Icons bucket + CDN base from the icons stack: catalogSync publishes the
-        # full-catalog artifact into the bucket, served via the icons CDN, with
-        # icon_url values pointing at that base (ADR-0031).
-        IconsBucketName: !GetAtt IconsStack.Outputs.IconsBucketName
-        IconBaseUrl: !GetAtt IconsStack.Outputs.IconBaseUrl
+        # Delivery bucket + CDN base from the cdn stack: catalogSync publishes the
+        # full-catalog artifact into the bucket, served via the CDN, with
+        # icon_url values pointing at that base (ADR-0031/0032).
+        CdnBucketName: !GetAtt CdnStack.Outputs.BucketName
+        CdnBaseUrl: !GetAtt CdnStack.Outputs.BaseUrl
         LogRetentionInDays: !Ref LogRetentionInDays
-    # Ordering after Data/Platform/Icons is enforced by the !GetAtt *.Outputs
+    # Ordering after Data/Platform/Cdn is enforced by the !GetAtt *.Outputs
     # references above (incl. CommonLayerArn from the platform stack and the
-    # icons outputs); an explicit DependsOn would be redundant (cfn-lint W3005).
+    # cdn outputs); an explicit DependsOn would be redundant (cfn-lint W3005).
+
+  # Tier-0 delivery CDN (ADR-0032): owns the shared static-asset bucket +
+  # CloudFront distribution serving icons and the catalog artifact. The icons
+  # and catalog producers and the api stack consume its outputs.
+  CdnStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: infra/cdn.yaml
+      Parameters:
+        Stage: !Ref Stage
+        # SSM key kept as icon-domain-name (ADR-0032); value is the CDN host.
+        CdnDomainName: !Ref IconDomainName
+        HostedZoneId: !Ref HostedZoneId
+        LogRetentionInDays: !Ref LogRetentionInDays
 
   IconsStack:
     Type: AWS::CloudFormation::Stack
@@ -277,8 +292,8 @@ Resources:
         CommonLayerArn: !GetAtt PlatformStack.Outputs.CommonLayerArn
         DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
         IconSyncSchedule: !Ref IconSyncSchedule
-        IconDomainName: !Ref IconDomainName
-        HostedZoneId: !Ref HostedZoneId
+        # Delivery bucket from the cdn stack; iconSync writes icons/* into it.
+        CdnBucketName: !GetAtt CdnStack.Outputs.BucketName
         LogRetentionInDays: !Ref LogRetentionInDays
 
   BootstrapStack:
