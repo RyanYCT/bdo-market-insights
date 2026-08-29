@@ -31,7 +31,7 @@ Parameters:
     Description: Execution role for in-VPC Lambdas (VPC + X-Ray + rds-db:connect)
   CommonLayerArn:
     Type: String
-    Description: ARN of the shared bdo-common Lambda layer (from the ETL stack)
+    Description: ARN of the shared bdo-common Lambda layer (from the platform stack, ADR-0032)
   BedrockModelId:
     Type: String
     Default: 'us.amazon.nova-lite-v1:0'

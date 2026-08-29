@@ -3,9 +3,9 @@ Transform: AWS::Serverless-2016-10-31
 Description: >
   Platform layer (Tier 0, ADR-0032) for bdo-market-insights: cross-cutting
   shared runtime assets that other stacks build on. Currently the shared
-  bdo-common Lambda layer, consumed by the etl, insights, api, catalog, and
-  icons stacks. Owned here (below its consumers) rather than by any workload
-  stack.
+  bdo-common Lambda layer, consumed by the etl, insights, api, catalog, icons,
+  and bootstrap stacks. Owned here (below its consumers) rather than by any
+  workload stack.
 
 Parameters:
   Stage:

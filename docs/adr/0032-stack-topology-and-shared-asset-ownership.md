@@ -13,8 +13,8 @@ ownership and forces unrelated stacks to depend on a feature stack purely to
 reach a shared resource:
 
 - **`CommonLayer`** (the shared `bdo-common` Lambda layer) is defined in the
-  **`etl`** stack, yet consumed by `insights`, `api`, `catalog`, and
-  `bootstrap`. Four stacks depend on `etl` only for the layer.
+  **`etl`** stack, yet consumed by `insights`, `api`, `catalog`, `icons`, and
+  `bootstrap`. Five stacks depend on `etl` only for the layer.
 - **The delivery CDN** (icons S3 bucket + CloudFront distribution + OAC + CORS +
   the `cdn.example.com` cert/record) is defined in the **`icons`** stack, yet
   consumed by `api` (icon base URL) and, more recently, `catalog` (publishes the
@@ -49,8 +49,8 @@ Adopt an explicit, tiered stack topology and a single ownership rule.
 Applied:
 
 - **`platform`** (new, Tier 0) owns the `CommonLayer`. `etl`, `insights`, `api`,
-  `catalog`, and `bootstrap` consume `CommonLayerArn` from it. `etl` stops
-  owning it.
+  `catalog`, `icons`, and `bootstrap` consume `CommonLayerArn` from it. `etl`
+  stops owning it.
 - **`cdn`** (new, Tier 0) owns the delivery bucket, CloudFront distribution,
   OAC, bucket policy, CORS behaviors, and the `cdn.example.com` cert + Route 53
   record. It outputs the bucket name + base URL. `api` and `catalog` consume
