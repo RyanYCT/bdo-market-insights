@@ -1,12 +1,12 @@
-"""iconsBucketJanitor: CloudFormation custom resource that empties the
-``bdo-<stage>-icons`` bucket before a non-prod stack delete.
+"""deliveryBucketJanitor: CloudFormation custom resource that empties the
+``bdo-<stage>-icons`` delivery bucket before a non-prod stack delete.
 
-``infra/icons.yaml`` sets ``IconsBucket``'s ``DeletionPolicy``/
+``infra/cdn.yaml`` sets ``DeliveryBucket``'s ``DeletionPolicy``/
 ``UpdateReplacePolicy`` to ``Delete`` on dev (``Retain`` on prod, ADR-0019). S3
 refuses to delete a non-empty bucket, so this custom resource -- wired only on
 non-prod (``Condition: IsNotProd``) -- empties the bucket on the CloudFormation
 ``Delete`` event, right before CloudFormation attempts the bucket's own delete.
-Prod never creates this resource, so prod's materialized icons are never
+Prod never creates this resource, so prod's materialized assets are never
 touched by a stack delete.
 
 This is the classic Lambda-backed custom resource protocol: CloudFormation
@@ -18,20 +18,25 @@ logged, but the response is always ``SUCCESS`` so the janitor never blocks a
 stack delete. If objects genuinely remain, CloudFormation's own bucket delete
 fails loudly with ``BucketNotEmpty`` -- a clearer signal than a stuck custom
 resource retry loop.
+
+Intentionally depends only on the Python standard library and boto3 (both in
+the Lambda runtime), not on the shared bdo-common layer: as a custom resource
+it must always send a response, and fewer imports means fewer init-time failure
+modes. This also keeps the cdn stack (ADR-0032) free of a layer dependency.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import urllib.request
 from typing import Any
 
 import boto3
-from aws_lambda_powertools import Logger, Tracer
 from botocore.exceptions import ClientError
 
-logger = Logger()
-tracer = Tracer()
+logger = logging.getLogger("bucket_janitor")
+logger.setLevel(logging.INFO)
 
 
 def _send_response(
@@ -52,7 +57,7 @@ def _send_response(
             "Status": status,
             "Reason": reason or f"See CloudWatch Logs: {getattr(context, 'log_stream_name', '')}",
             "PhysicalResourceId": event.get("PhysicalResourceId")
-            or event.get("LogicalResourceId", "icons-bucket-janitor"),
+            or event.get("LogicalResourceId", "delivery-bucket-janitor"),
             "StackId": event["StackId"],
             "RequestId": event["RequestId"],
             "LogicalResourceId": event["LogicalResourceId"],
@@ -92,29 +97,25 @@ def _empty_bucket(bucket: str, s3_client: Any) -> int:
             deleted += len(keys)
     except ClientError as exc:
         if exc.response.get("Error", {}).get("Code") == "NoSuchBucket":
-            logger.info("bucket does not exist; nothing to empty", extra={"bucket": bucket})
+            logger.info("bucket does not exist; nothing to empty: %s", bucket)
             return deleted
         raise
     return deleted
 
 
-@logger.inject_lambda_context
-@tracer.capture_lambda_handler
 def handler(event: dict[str, Any], context: Any) -> None:
     """Empty the bucket on ``Delete``; no-op on ``Create``/``Update``."""
     request_type = event.get("RequestType", "")
     bucket = event.get("ResourceProperties", {}).get("BucketName", "")
-    logger.info(
-        "iconsBucketJanitor invoked", extra={"request_type": request_type, "bucket": bucket}
-    )
+    logger.info("deliveryBucketJanitor invoked: request_type=%s bucket=%s", request_type, bucket)
 
     if request_type == "Delete" and bucket:
         try:
             deleted = _empty_bucket(bucket, boto3.client("s3"))
-            logger.info("emptied icons bucket", extra={"bucket": bucket, "deleted": deleted})
+            logger.info("emptied delivery bucket %s: deleted=%d", bucket, deleted)
         except Exception:
             # See module docstring: never block the stack delete on the
             # janitor itself.
-            logger.exception("failed to empty bucket; continuing", extra={"bucket": bucket})
+            logger.exception("failed to empty bucket; continuing: %s", bucket)
 
     _send_response(event, context, "SUCCESS")
