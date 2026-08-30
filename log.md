@@ -1365,7 +1365,7 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 - Continue the deploy-convergence slices (auto-migrations next).
 
 
-## 2026-07-05 — Deploy convergence P2: auto-migrations on deploy
+## 2026-08-02 — Deploy convergence P2: auto-migrations on deploy
 
 **Agent:** Kiro
 **Mode:** Vibe
@@ -1409,7 +1409,7 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   small/fast.
 
 
-## 2026-07-05 (follow-up) — Auto-migrate dev test: findings + hardening
+## 2026-08-02 (follow-up) — Auto-migrate dev test: findings + hardening
 
 **Agent:** Kiro
 **Mode:** Vibe
@@ -1439,7 +1439,7 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   → ADR-0025.
 
 
-## 2026-07-05 — CI prod deploy: SSM-resolved params + auto-migrate
+## 2026-08-03 — CI prod deploy: SSM-resolved params + auto-migrate
 
 **Agent:** Kiro
 **Mode:** Vibe
@@ -1472,7 +1472,7 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   (ADR-0025), so the tag deploy is steady-state.
 
 
-## 2026-07-05 — Deploy convergence P3: admin-query Lambda
+## 2026-08-04 — Deploy convergence P3: admin-query Lambda
 
 **Agent:** Kiro
 **Mode:** Vibe
@@ -1508,7 +1508,7 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   break-glass becomes ephemeral, not a standing resource.
 
 
-## 2026-07-05 — Deploy convergence P4: remove the standing bastion
+## 2026-08-06 — Deploy convergence P4: remove the standing bastion
 
 **Agent:** Kiro
 **Mode:** Vibe
@@ -1548,7 +1548,7 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   runbook rewrite.
 
 
-## 2026-07-05 — Deploy convergence P5: bootstrap orchestrator
+## 2026-08-06 — Deploy convergence P5: bootstrap orchestrator
 
 **Agent:** Kiro
 **Mode:** Vibe
@@ -1586,7 +1586,7 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   must tolerate a just-started (async) bootstrap on a fresh env.
 
 
-## 2026-07-05 — Deploy convergence P6: verify + thin deploy (final slice)
+## 2026-08-10 — Deploy convergence P6: verify + thin deploy (final slice)
 
 **Agent:** Kiro
 **Mode:** Vibe
