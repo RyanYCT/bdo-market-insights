@@ -1365,7 +1365,7 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 - Continue the deploy-convergence slices (auto-migrations next).
 
 
-## 2026-07-05 — Deploy convergence P2: auto-migrations on deploy
+## 2026-08-02 — Deploy convergence P2: auto-migrations on deploy
 
 **Agent:** Kiro
 **Mode:** Vibe
@@ -1409,7 +1409,7 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   small/fast.
 
 
-## 2026-07-05 (follow-up) — Auto-migrate dev test: findings + hardening
+## 2026-08-02 (follow-up) — Auto-migrate dev test: findings + hardening
 
 **Agent:** Kiro
 **Mode:** Vibe
@@ -1439,7 +1439,7 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   → ADR-0025.
 
 
-## 2026-07-05 — CI prod deploy: SSM-resolved params + auto-migrate
+## 2026-08-03 — CI prod deploy: SSM-resolved params + auto-migrate
 
 **Agent:** Kiro
 **Mode:** Vibe
@@ -1472,7 +1472,7 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   (ADR-0025), so the tag deploy is steady-state.
 
 
-## 2026-07-05 — Deploy convergence P3: admin-query Lambda
+## 2026-08-04 — Deploy convergence P3: admin-query Lambda
 
 **Agent:** Kiro
 **Mode:** Vibe
@@ -1508,7 +1508,7 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   break-glass becomes ephemeral, not a standing resource.
 
 
-## 2026-07-05 — Deploy convergence P4: remove the standing bastion
+## 2026-08-06 — Deploy convergence P4: remove the standing bastion
 
 **Agent:** Kiro
 **Mode:** Vibe
@@ -1548,7 +1548,7 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   runbook rewrite.
 
 
-## 2026-07-05 — Deploy convergence P5: bootstrap orchestrator
+## 2026-08-06 — Deploy convergence P5: bootstrap orchestrator
 
 **Agent:** Kiro
 **Mode:** Vibe
@@ -1586,7 +1586,7 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
   must tolerate a just-started (async) bootstrap on a fresh env.
 
 
-## 2026-07-05 — Deploy convergence P6: verify + thin deploy (final slice)
+## 2026-08-10 — Deploy convergence P6: verify + thin deploy (final slice)
 
 **Agent:** Kiro
 **Mode:** Vibe
@@ -1687,3 +1687,189 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 - `web-react` chart in bdo-analytics not built yet; `coverage` is ready for
   gap-aware rendering when it is.
 - `/daily` could gain the same coverage hint (missing days) as a follow-up.
+
+
+
+_Entries #96–#103 below were backfilled on 2026-08-29 from git history and PR
+records (the sessions did not log at the time); dates are the merge dates._
+
+
+## 2026-08-25 — Track the Apeiron accessory series
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/track-apeiron-series`
+**Phase:** catalog / tracking
+**Commits:** PR #96
+
+### Done
+- Added the Apeiron set to `scripts/data/presets.json` and its ids
+  (12144, 11898, 12298, 11733) to `scripts/data/track_sets.json`; regenerated
+  `scripts/data/full_items.json` from a fresh arsha `util/db` pull (a full
+  refresh, not just appending the four items) plus `tracked_items.json`.
+- Documented the add/remove item-and-series workflow.
+
+### Decisions
+- Full catalog refresh over appending, so unrelated new game items land too —
+  no ADR (local choice).
+
+
+## 2026-08-25 — Harden the offline market-catalog builder
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/harden-market-catalog-builder`
+**Phase:** tooling
+**Commits:** PR #97
+
+### Done
+- Made `scripts/build_market_catalog.py` resilient to arsha flakiness (retry
+  with backoff; a failed subcategory no longer aborts the run), so the offline
+  taxonomy build survives 503s / timeouts / SSL EOFs.
+
+### Decisions
+- Offline-only tooling resilience — no ADR (local choice).
+
+
+## 2026-08-26 — Snapshots read-API: trailing-window default + higher cap
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/snapshots-window-default`
+**Phase:** market-query API
+**Commits:** PR #98
+
+### Done
+- Changed `/v1/market/items/{id}/snapshots` to default to a trailing 168h *time*
+  window (same span regardless of sid count) and raised the hard cap to 1848
+  (11 sids × 168h). Updated FR-13.
+
+### Decisions
+- Cap derived exactly as an 11-sid full week (1848), not a round 2000 — no ADR.
+
+
+## 2026-08-27 — /daily: default window + cap + coverage
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/daily-time-window-and-coverage`
+**Phase:** market-query API
+**Commits:** PR #99
+
+### Done
+- Gave `/v1/market/items/{id}/daily` a trailing 90-day default window, a hard
+  cap of 990 (11 sids × 90d), and a typed `DailyResponse` with a `DailyCoverage`
+  object (distinct trade-days present/missing, truncated) for gap-aware charts.
+  Updated FR-14.
+
+### Decisions
+- Mirror the snapshots bounding pattern at day granularity — no ADR.
+
+
+## 2026-08-28 — /v1/items: bounded + index-routed listing
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `fix/items-bounded-listing`
+**Phase:** item-registry API
+**Commits:** PR #100
+
+### Done
+- Fixed the `/v1/items` full-table-scan timeout: route `tracked=true` (the new
+  default) via the sparse `tracked-index` GSI and `category` via its GSI; bound
+  the residual scan with a `limit` (1-1000, default 200) + opaque `next` cursor.
+  Typed query params now documented in OpenAPI. Updated FR-8.
+
+### Decisions
+- Endpoint narrows to the mutable tracked subset; the full catalog moves to a
+  CDN artifact (#101) — no ADR (local choice).
+
+
+## 2026-08-29 — Catalog artifact on the CDN
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/catalog-artifact`
+**Phase:** catalog delivery
+**Commits:** PR #101
+
+### Done
+- `catalogSync` now publishes the full catalog as a static
+  `catalog/catalog.json` into the icons bucket, served via the shared CloudFront
+  CDN (CORS-enabled), so the frontend browses the whole catalog client-side
+  without an API scan. Added `bdo_common.catalog_artifact`,
+  `dynamo.scan_catalog_items`, the `CatalogArtifactItems` metric, FR-18.
+
+### Decisions
+- Plain JSON + CloudFront wire compression (not pre-gzip) → ADR-0031.
+- Reused the icons bucket/CDN (a temporary `Catalog → Icons` edge later split by
+  ADR-0032) → ADR-0031.
+
+
+## 2026-08-29 — Stack topology ADR
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `docs/adr-stack-topology`
+**Phase:** infra topology
+**Commits:** PR #102
+
+### Done
+- Recorded ADR-0032: a tiered stack topology + shared-asset ownership rule
+  (extract Tier-0 `platform` + `cdn` stacks; own-your-subdomain DNS convention;
+  declarative target with one-time migrations kept out of main).
+
+### Decisions
+- Shared assets live one tier below their consumers; dependencies flow downward
+  → ADR-0032.
+
+
+## 2026-08-29 — Extract the platform (CommonLayer) stack
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `refactor/platform-stack-common-layer`
+**Phase:** infra topology (ADR-0032)
+**Commits:** PR #103
+
+### Done
+- Moved the shared `bdo-common` Lambda layer out of the `etl` stack into a new
+  Tier-0 `platform` stack; repointed `etl` plus the five consumers (insights,
+  api, catalog, icons, bootstrap) to `PlatformStack.Outputs.CommonLayerArn`.
+  Fixed the Makefile verify-layer build path. Declarative, no migration.
+
+### Decisions
+- Step 1 of ADR-0032; the layer move is publish-new-version + repoint,
+  low-risk — no additional ADR.
+
+
+## 2026-08-29 — Stack topology: extract the cdn (delivery) stack
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `refactor/cdn-stack-extraction`
+**Phase:** infra topology (ADR-0032)
+**Commits:** PR #104
+
+### Done
+- Extracted the delivery CDN (S3 bucket + CloudFront distribution + OAC +
+  bucket policy + CDN cert/DNS + non-prod janitor) out of the `icons` stack into
+  a new Tier-0 `cdn` stack (`infra/cdn.yaml`). `icons` is now the iconSync
+  producer only, writing `icons/*` into the cdn bucket via `CdnBucketName`.
+- Repointed `api` (icon base URL) and `catalog` (artifact publish) to `CdnStack`
+  outputs; neither depends on `icons` anymore. Wired `CdnStack` into
+  `template.yaml`; moved the domain params to it.
+- Clean `Delivery*` logical IDs; physical bucket name `bdo-<stage>-icons` and SSM
+  key `icon-domain-name` retained so the migration is a no-recreation move.
+- Reconciled the nested-stack lists in README, `docs/architecture.md`, `tech.md`
+  (adds `platform` + `cdn`).
+- Gate: cfn-lint, sam validate, `make build` + verify-layer, 418 unit tests.
+
+### Decisions
+- Delivery CDN is Tier-0, owned below its producers/consumers → ADR-0032.
+- Step 2 of ADR-0032; follows the `platform` (CommonLayer) extraction (#103).
+
+### Deferred / open questions
+- One-time re-parent of the live bucket/distribution (CloudFormation stack
+  refactoring) is an out-of-band runbook, deliberately not merged to main.
+- Next: A2 read-through icons (universal `icon_url`) lands in the cdn stack.

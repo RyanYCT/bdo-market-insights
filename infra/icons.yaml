@@ -1,12 +1,12 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  Item-icon materialization + public delivery for bdo-market-insights: a private
-  S3 bucket for self-hosted icons, a daily Lambda that fetches icons from the
-  Pearl Abyss CDN for tracked items missing them (icon_status=unset), and a
-  CloudFront distribution (Origin Access Control) that serves the private bucket
-  publicly so the API's icon_url resolves (ADR-0023). Not in a VPC -- needs the
-  public internet (Pearl CDN), DynamoDB, and S3 only.
+  Item-icon materializer for bdo-market-insights: a daily Lambda that fetches
+  icons from the Pearl Abyss CDN for tracked items missing them
+  (icon_status=unset) and writes them to the shared delivery bucket. The bucket
+  and its CloudFront distribution are owned by the cdn stack (ADR-0032); this
+  stack is a producer that writes icons/<id>.png into it. Not in a VPC -- needs
+  the public internet (Pearl CDN), DynamoDB, and S3 only.
 
 Parameters:
   Stage:
@@ -21,6 +21,9 @@ Parameters:
   DynamoDbTableName:
     Type: String
     Description: per-stage items table name (bdo-<stage>-items)
+  CdnBucketName:
+    Type: String
+    Description: Delivery bucket name (from the cdn stack, ADR-0032); iconSync writes icons/* here.
   IconSyncSchedule:
     Type: String
     Default: 'cron(0 9 ? * * *)'
@@ -29,34 +32,11 @@ Parameters:
       Only processes tracked items with icon_status=unset, so it is a no-op once
       every tracked item's icon is stored/missing; new tracked items get an icon
       by the next run.
-  IconDomainName:
-    Type: String
-    Default: 'none'
-    Description: >
-      Custom hostname for the icons CDN (e.g. icons.example.com). "none" uses the
-      CloudFront default *.cloudfront.net domain. Resolved from SSM by the parent
-      (ADR-0024); not stored in committed config (ADR-0013 convention).
-  HostedZoneId:
-    Type: String
-    Default: 'none'
-    Description: >
-      Route 53 hosted zone ID for the parent domain (shared infra; ADR-0013).
-      Required when IconDomainName is set.
   LogRetentionInDays:
     Type: Number
     Default: 30
     AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 180, 365, 400, 545, 731, 1827, 3653]
     Description: Retention for this stack's Lambda log groups (default 30, matches the API SLO window)
-
-Conditions:
-  # See ADR-0019: prod keeps materialized icons across a stack delete (Retain);
-  # dev is disposable, so a stack delete also removes the bucket (Delete),
-  # unblocking a later fresh CREATE with the same fixed bucket name.
-  IsProd: !Equals [!Ref Stage, 'prod']
-  IsNotProd: !Not [!Equals [!Ref Stage, 'prod']]
-  # Custom domain is opt-in (ADR-0013): "none" -> serve on the CloudFront default
-  # domain, no ACM cert / Route 53 record ("none" is the SSM sentinel, ADR-0024).
-  HasIconDomain: !Not [!Equals [!Ref IconDomainName, 'none']]
 
 Globals:
   Function:
@@ -75,142 +55,8 @@ Globals:
 
 Resources:
   # ──────────────────────────────────────────────
-  # Icons bucket — private; served publicly only through CloudFront OAC below.
-  # ──────────────────────────────────────────────
-  IconsBucket:
-    Type: AWS::S3::Bucket
-    # Prod retains materialized icons across a stack delete (re-fetchable from
-    # the CDN, but keeping them avoids a re-scrape of the whole tracked set).
-    # Dev is disposable: Delete lets the bucket actually go away on teardown,
-    # so a later fresh CREATE with this same fixed name does not collide with
-    # a retained leftover (ADR-0019). S3 refuses to delete a non-empty bucket,
-    # so IconsBucketJanitor (below, non-prod only) empties it first.
-    DeletionPolicy: !If [IsProd, Retain, Delete]
-    UpdateReplacePolicy: !If [IsProd, Retain, Delete]
-    Properties:
-      BucketName: !Sub 'bdo-${Stage}-icons'
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-
-  # ──────────────────────────────────────────────
-  # Icons CDN — CloudFront + Origin Access Control over the private bucket
-  # (ADR-0023). The bucket stays fully private (block-public-access on); only
-  # this distribution can read it, via a SigV4-signed OAC request scoped by
-  # SourceArn in the bucket policy. Object keys are icons/<id>.png, so the API's
-  # icon_url = <IconBaseUrl>/icons/<id>.png resolves through here.
-  # ──────────────────────────────────────────────
-  IconsOriginAccessControl:
-    Type: AWS::CloudFront::OriginAccessControl
-    Properties:
-      OriginAccessControlConfig:
-        Name: !Sub 'bdo-${Stage}-icons-oac'
-        OriginAccessControlOriginType: s3
-        SigningBehavior: always
-        SigningProtocol: sigv4
-
-  IconsDistribution:
-    Type: AWS::CloudFront::Distribution
-    Properties:
-      DistributionConfig:
-        Enabled: true
-        Comment: !Sub 'bdo-${Stage} item icons'
-        # NA + EU edges only — cheapest tier; icons are small and cache well.
-        PriceClass: PriceClass_100
-        HttpVersion: http2and3
-        IPV6Enabled: true
-        Aliases: !If [HasIconDomain, [!Ref IconDomainName], !Ref 'AWS::NoValue']
-        ViewerCertificate: !If
-          - HasIconDomain
-          - AcmCertificateArn: !Ref IconsCertificate
-            SslSupportMethod: sni-only
-            MinimumProtocolVersion: TLSv1.2_2021
-          - CloudFrontDefaultCertificate: true
-        Origins:
-          - Id: IconsBucketOrigin
-            DomainName: !GetAtt IconsBucket.RegionalDomainName
-            OriginAccessControlId: !GetAtt IconsOriginAccessControl.Id
-            # OAC (not the legacy OAI) -> empty OriginAccessIdentity.
-            S3OriginConfig:
-              OriginAccessIdentity: ''
-        DefaultCacheBehavior:
-          TargetOriginId: IconsBucketOrigin
-          ViewerProtocolPolicy: redirect-to-https
-          AllowedMethods: [GET, HEAD]
-          CachedMethods: [GET, HEAD]
-          Compress: true
-          # AWS managed "CachingOptimized" policy (honours the bucket's
-          # Cache-Control: public, max-age=604800 on stored icons).
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
-        # Serve the full-catalog artifact (catalog/catalog.json) from the same
-        # bucket/CDN (ADR-0031). Unlike icons (loaded via <img>, no CORS), the
-        # frontend fetches this JSON via fetch(), so it needs CORS headers.
-        # Stored as plain JSON; Compress lets CloudFront gzip/brotli it on the
-        # wire. CachingOptimized honours the object's Cache-Control (max-age=3600).
-        CacheBehaviors:
-          - PathPattern: catalog/*
-            TargetOriginId: IconsBucketOrigin
-            ViewerProtocolPolicy: redirect-to-https
-            AllowedMethods: [GET, HEAD]
-            CachedMethods: [GET, HEAD]
-            Compress: true
-            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
-            # AWS managed "SimpleCORS" response-headers policy
-            # (Access-Control-Allow-Origin: *) -- the catalog is public,
-            # read-only reference data.
-            ResponseHeadersPolicyId: 60669652-455b-4ae9-85a4-c4c02393f86c
-
-  # Grant read to only this distribution (OAC + SourceArn). Not a public policy
-  # (service principal, not "*"), so it coexists with block-public-access.
-  IconsBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref IconsBucket
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: AllowCloudFrontOACRead
-            Effect: Allow
-            Principal:
-              Service: cloudfront.amazonaws.com
-            Action: s3:GetObject
-            Resource: !Sub 'arn:aws:s3:::bdo-${Stage}-icons/*'
-            Condition:
-              StringEquals:
-                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${IconsDistribution}'
-
-  # Custom domain (opt-in). CloudFront requires the cert in us-east-1; this
-  # stack deploys there (samconfig), so an in-stack cert is valid.
-  IconsCertificate:
-    Type: AWS::CertificateManager::Certificate
-    Condition: HasIconDomain
-    Properties:
-      DomainName: !Ref IconDomainName
-      ValidationMethod: DNS
-      DomainValidationOptions:
-        - DomainName: !Ref IconDomainName
-          HostedZoneId: !Ref HostedZoneId
-
-  IconsDnsRecord:
-    Type: AWS::Route53::RecordSet
-    Condition: HasIconDomain
-    Properties:
-      HostedZoneId: !Ref HostedZoneId
-      Name: !Ref IconDomainName
-      Type: A
-      AliasTarget:
-        DNSName: !GetAtt IconsDistribution.DomainName
-        # Fixed global CloudFront hosted-zone ID (all distributions).
-        HostedZoneId: Z2FDTNDATAQYW2
-
-  # ──────────────────────────────────────────────
-  # iconSync — daily materializer, not in VPC (Pearl CDN + DynamoDB + S3)
+  # iconSync — daily materializer, not in VPC (Pearl CDN + DynamoDB + S3).
+  # Writes into the cdn stack's delivery bucket (icons/<id>.png).
   # ──────────────────────────────────────────────
   IconSyncFunction:
     Type: AWS::Serverless::Function
@@ -222,14 +68,14 @@ Resources:
       Environment:
         Variables:
           DYNAMODB_TABLE: !Ref DynamoDbTableName
-          ICONS_BUCKET: !Ref IconsBucket
+          ICONS_BUCKET: !Ref CdnBucketName
       Policies:
         # Read tracked items (Query tracked-index) + set icon_status (UpdateItem).
         - DynamoDBCrudPolicy:
             TableName: !Ref DynamoDbTableName
-        # Write materialized icons.
+        # Write materialized icons into the shared delivery bucket.
         - S3WritePolicy:
-            BucketName: !Sub 'bdo-${Stage}-icons'
+            BucketName: !Ref CdnBucketName
       Events:
         DailyIconSync:
           Type: Schedule
@@ -237,84 +83,16 @@ Resources:
             Schedule: !Ref IconSyncSchedule
             Description: Daily icon materialization for tracked items (icon_status=unset)
 
-  # ──────────────────────────────────────────────
-  # iconsBucketJanitor — non-prod only. Empties IconsBucket on stack Delete so
-  # CloudFormation's own (non-retaining) bucket delete can succeed; S3 refuses
-  # to delete a non-empty bucket. See ADR-0019.
-  # ──────────────────────────────────────────────
-  IconsBucketJanitorFunction:
-    Type: AWS::Serverless::Function
-    Condition: IsNotProd
-    Properties:
-      FunctionName: !Sub 'bdo-${Stage}-icons-bucket-janitor'
-      CodeUri: ../src/functions/bucket_janitor
-      Handler: app.handler
-      Timeout: 300
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action: s3:ListBucket
-              Resource: !Sub 'arn:aws:s3:::bdo-${Stage}-icons'
-            - Effect: Allow
-              Action:
-                - s3:DeleteObject
-                - s3:DeleteObjectVersion
-              Resource: !Sub 'arn:aws:s3:::bdo-${Stage}-icons/*'
-
-  IconsBucketJanitor:
-    Type: Custom::IconsBucketJanitor
-    Condition: IsNotProd
-    # CloudFormation invokes the backing Lambda for the Create event during the
-    # deploy, so its log group must already exist -- otherwise the Lambda runtime
-    # auto-creates an unmanaged group that the managed one then collides with.
-    DependsOn: IconsBucketJanitorLogGroup
-    Properties:
-      ServiceToken: !GetAtt IconsBucketJanitorFunction.Arn
-      # !Ref on the bucket also creates the dependency that makes
-      # CloudFormation invoke this custom resource's Delete *before* it
-      # attempts to delete IconsBucket -- the ordering the janitor relies on.
-      BucketName: !Ref IconsBucket
-
-  # ──────────────────────────────────────────────
-  # Log groups — co-located with their functions (ADR-0030). iconSync's group is
-  # created before the bootstrap orchestrator can invoke it; the janitor group
-  # follows the janitor's non-prod condition.
-  # ──────────────────────────────────────────────
+  # Log group co-located with the function (ADR-0030); created before the
+  # bootstrap orchestrator can invoke iconSync.
   IconSyncLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-icon-sync'
       RetentionInDays: !Ref LogRetentionInDays
 
-  IconsBucketJanitorLogGroup:
-    Type: AWS::Logs::LogGroup
-    Condition: IsNotProd
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-icons-bucket-janitor'
-      RetentionInDays: !Ref LogRetentionInDays
-
 Outputs:
-  IconsBucketName:
-    Value: !Ref IconsBucket
-    Export:
-      Name: !Sub '${AWS::StackName}-IconsBucketName'
-
   IconSyncFunctionArn:
     Value: !GetAtt IconSyncFunction.Arn
     Export:
       Name: !Sub '${AWS::StackName}-IconSyncFunctionArn'
-
-  # Public delivery base for item icons; the API appends /icons/<id>.png.
-  # Custom domain when set, else the CloudFront default domain. Consumed by the
-  # API stack (itemRegistry ICON_BASE_URL), so icon_url resolves once deployed.
-  IconBaseUrl:
-    Description: Public base URL for item icons (append /icons/<id>.png).
-    Value: !If
-      - HasIconDomain
-      - !Sub 'https://${IconDomainName}'
-      - !Sub 'https://${IconsDistribution.DomainName}'
-
-  IconsDistributionId:
-    Value: !Ref IconsDistribution
-    Export:
-      Name: !Sub '${AWS::StackName}-IconsDistributionId'

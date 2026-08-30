@@ -101,7 +101,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the subsystem diagrams (E
 - **Data:** Amazon RDS for PostgreSQL (time series), DynamoDB (item registry), Alembic (schema migrations)
 - **API:** API Gateway (REST) with API-key usage plans
   - OpenAPI 3.1 spec auto-generated from the handlers and served via interactive Swagger UI
-- **IaC:** AWS SAM — one root `template.yaml` with nested stacks (`network`, `data`, `etl`, `api`, `insights`, `observability`)
+- **IaC:** AWS SAM — one root `template.yaml` with nested stacks (`network`, `data`, `platform`, `etl`, `api`, `insights`, `catalog`, `icons`, `cdn`, `bootstrap`, `observability`)
 - **Libraries:** AWS Lambda Powertools (logging, tracing, metrics, validation), Pydantic v2, psycopg 3, PyYAML (spec parsing)
 - **Observability:** CloudWatch dashboard + SLO alarms, X-Ray tracing, EMF custom metrics (`BdoMarket/*`)
 - **Tooling:** `uv` (deps), `ruff` (lint/format), `pytest` + `moto` (tests)
