@@ -1687,3 +1687,36 @@ migrator/layer makefile builds, Linux-target wheels, and powertools[tracer]
 - `web-react` chart in bdo-analytics not built yet; `coverage` is ready for
   gap-aware rendering when it is.
 - `/daily` could gain the same coverage hint (missing days) as a follow-up.
+
+
+
+## 2026-08-29 — Stack topology: extract the cdn (delivery) stack
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `refactor/cdn-stack-extraction`
+**Phase:** infra topology (ADR-0032)
+**Commits:** PR #104
+
+### Done
+- Extracted the delivery CDN (S3 bucket + CloudFront distribution + OAC +
+  bucket policy + CDN cert/DNS + non-prod janitor) out of the `icons` stack into
+  a new Tier-0 `cdn` stack (`infra/cdn.yaml`). `icons` is now the iconSync
+  producer only, writing `icons/*` into the cdn bucket via `CdnBucketName`.
+- Repointed `api` (icon base URL) and `catalog` (artifact publish) to `CdnStack`
+  outputs; neither depends on `icons` anymore. Wired `CdnStack` into
+  `template.yaml`; moved the domain params to it.
+- Clean `Delivery*` logical IDs; physical bucket name `bdo-<stage>-icons` and SSM
+  key `icon-domain-name` retained so the migration is a no-recreation move.
+- Reconciled the nested-stack lists in README, `docs/architecture.md`, `tech.md`
+  (adds `platform` + `cdn`).
+- Gate: cfn-lint, sam validate, `make build` + verify-layer, 418 unit tests.
+
+### Decisions
+- Delivery CDN is Tier-0, owned below its producers/consumers → ADR-0032.
+- Step 2 of ADR-0032; follows the `platform` (CommonLayer) extraction (#103).
+
+### Deferred / open questions
+- One-time re-parent of the live bucket/distribution (CloudFormation stack
+  refactoring) is an out-of-band runbook, deliberately not merged to main.
+- Next: A2 read-through icons (universal `icon_url`) lands in the cdn stack.
