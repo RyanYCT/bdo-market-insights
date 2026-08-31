@@ -101,3 +101,11 @@ bdo-market-insights/
   `/bdo-market-insights/dev/catalog/checksum`. Deploy config
   (domains/zone/toggles) is resolved from these at deploy (ADR-0024);
   seed with `make seed-config`.
+- **S3 bucket names are account- and region-qualified**:
+  `bdo-<stage>-<purpose>-${AWS::AccountId}-${AWS::Region}` (e.g. the delivery
+  CDN bucket `bdo-<stage>-cdn-<account>-<region>`). S3 bucket names are a
+  single global namespace, so qualifying with account + region guarantees
+  uniqueness and avoids cross-account/region collisions. Always use the
+  `${AWS::AccountId}`/`${AWS::Region}` pseudo-parameters — never a literal
+  account id in a committed template. Bucket names are internal (behind
+  CloudFront / accessed by ARN), so the longer name is invisible to consumers.
