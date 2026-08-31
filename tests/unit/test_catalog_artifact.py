@@ -55,11 +55,13 @@ class TestBuildCatalogArtifact:
         assert "cron_profile" not in deb
         assert "tracked" not in deb
 
-    def test_icon_url_none_when_not_stored(self) -> None:
+    def test_icon_url_universal_regardless_of_status(self) -> None:
+        # Read-through (ADR-0033): every item gets a URL when a base is set,
+        # regardless of icon_status (the icon materializes on first request).
         out = catalog_artifact.build_catalog_artifact(
             [_item(1, icon_status="unset")], icon_base="https://cdn.example.com"
         )
-        assert out[0]["icon_url"] is None
+        assert out[0]["icon_url"] == "https://cdn.example.com/icons/1.png"
 
     def test_icon_url_none_when_no_base(self) -> None:
         out = catalog_artifact.build_catalog_artifact(
@@ -98,7 +100,7 @@ class TestPublishCatalogArtifact:
         assert put["CacheControl"] == "public, max-age=3600"
 
         payload = json.loads(put["Body"].decode("utf-8"))
-        # Sorted by id, public shape, resolved icon_url for the stored item.
+        # Sorted by id, public shape, universal icon_url (read-through, ADR-0033).
         assert [e["id"] for e in payload] == [1, 2]
+        assert payload[0]["icon_url"] == "https://cdn.example.com/icons/1.png"
         assert payload[1]["icon_url"] == "https://cdn.example.com/icons/2.png"
-        assert payload[0]["icon_url"] is None

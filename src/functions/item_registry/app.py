@@ -114,7 +114,7 @@ class ItemResponse(BaseModel):
             sub_category=item.sub_category,
             tracked=item.tracked,
             icon_status=item.icon_status,
-            icon_url=public_icon_url(item.id, icon_status=item.icon_status, base=ICON_BASE_URL),
+            icon_url=public_icon_url(item.id, base=ICON_BASE_URL),
             created_at=item.created_at,
             updated_at=item.updated_at,
         )

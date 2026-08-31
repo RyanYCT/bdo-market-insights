@@ -51,20 +51,20 @@ def build_icon_url(item_id: int, *, region: str, base: str = ICON_SOURCE_BASE) -
     return f"{base.rstrip('/')}/{region.upper()}/TradeMarket/Common/img/BDO/item/{item_id}.png"
 
 
-def public_icon_url(item_id: int, *, icon_status: str, base: str) -> str | None:
+def public_icon_url(item_id: int, *, base: str) -> str | None:
     """Public URL for a self-hosted item icon, or ``None`` when unavailable.
 
-    Returns ``{base}/{ICON_KEY_PREFIX}{item_id}.png`` — the object key the
-    materializer writes into the icons bucket, served through the configured
-    delivery ``base`` (a CDN in front of the bucket) — but only when the icon has
-    actually been ``stored`` and a ``base`` is configured. Otherwise ``None``:
-    the icon is not yet materialized (``unset``), does not exist (``missing``),
-    or no public delivery base is configured for this stage.
+    Returns ``{base}/{ICON_KEY_PREFIX}{item_id}.png`` — the object key served
+    through the configured delivery ``base`` (the CloudFront CDN in front of the
+    bucket) — for **every** item, or ``None`` only when no delivery base is
+    configured for the stage. The URL no longer depends on ``icon_status``:
+    under read-through delivery (ADR-0033) the icon materializes on first
+    request and self-heals, so the URL is always valid once a base is set.
 
     The URL is deterministic and stable for a given ``base`` + ``item_id`` so
     clients can cache it.
     """
-    if icon_status != "stored" or not base:
+    if not base:
         return None
     return f"{base.rstrip('/')}/{ICON_KEY_PREFIX}{item_id}.png"
 

@@ -15,6 +15,11 @@ Parameters:
   Stage:
     Type: String
     AllowedValues: [dev, prod]
+  BdoRegion:
+    Type: String
+    Description: >
+      BDO region; upper-cased into the Pearl CDN icon path by the read-through
+      origin Lambda (e.g. tw -> TW).
   CdnDomainName:
     Type: String
     Default: 'none'
@@ -112,8 +117,34 @@ Resources:
             # OAC (not the legacy OAI) -> empty OriginAccessIdentity.
             S3OriginConfig:
               OriginAccessIdentity: ''
+          # Read-through origin (ADR-0033): the icon-materializer Lambda behind a
+          # Function URL, OAC-signed. Reached only via failover when S3 misses.
+          - Id: IconReadThroughOrigin
+            DomainName: !Select [2, !Split ['/', !GetAtt IconOriginUrl.FunctionUrl]]
+            OriginAccessControlId: !GetAtt IconOriginAccessControl.Id
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              HTTPSPort: 443
+              OriginSSLProtocols: [TLSv1.2]
+        # Icons use an origin group: S3 primary, the read-through Lambda
+        # secondary. CloudFront fails over on 403/404 (S3+OAC returns 403 for a
+        # missing object), so a not-yet-materialized icon is fetched on demand
+        # and then served straight from S3 on subsequent requests.
+        OriginGroups:
+          Quantity: 1
+          Items:
+            - Id: IconsOriginGroup
+              FailoverCriteria:
+                StatusCodes:
+                  Quantity: 2
+                  Items: [403, 404]
+              Members:
+                Quantity: 2
+                Items:
+                  - OriginId: DeliveryBucketOrigin
+                  - OriginId: IconReadThroughOrigin
         DefaultCacheBehavior:
-          TargetOriginId: DeliveryBucketOrigin
+          TargetOriginId: IconsOriginGroup
           ViewerProtocolPolicy: redirect-to-https
           AllowedMethods: [GET, HEAD]
           CachedMethods: [GET, HEAD]
@@ -181,6 +212,63 @@ Resources:
         DNSName: !GetAtt DeliveryDistribution.DomainName
         # Fixed global CloudFront hosted-zone ID (all distributions).
         HostedZoneId: Z2FDTNDATAQYW2
+
+  # ──────────────────────────────────────────────
+  # Read-through icon origin (ADR-0033) — stdlib Lambda behind a Function URL.
+  # CloudFront reaches it only on an S3 miss (origin-group failover); it fetches
+  # the icon from the Pearl CDN, stores it into the delivery bucket, and returns
+  # it. No shared layer (stdlib + boto3) so the cdn stack stays layer-free.
+  # ──────────────────────────────────────────────
+  IconOriginFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bdo-${Stage}-icon-origin'
+      CodeUri: ../src/functions/icon_origin
+      Handler: app.handler
+      Runtime: python3.12
+      Timeout: 20
+      MemorySize: 256
+      Environment:
+        Variables:
+          BDO_REGION: !Ref BdoRegion
+          ICONS_BUCKET: !Ref DeliveryBucket
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub '${DeliveryBucket.Arn}/*'
+
+  IconOriginUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !Ref IconOriginFunction
+      AuthType: AWS_IAM
+
+  # CloudFront signs origin requests to the Function URL with SigV4 (OAC for
+  # Lambda URLs); the permission below authorises this distribution to invoke it.
+  IconOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub 'bdo-${Stage}-icon-origin-oac'
+        OriginAccessControlOriginType: lambda
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  IconOriginInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref IconOriginFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: cloudfront.amazonaws.com
+      FunctionUrlAuthType: AWS_IAM
+      SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${DeliveryDistribution}'
+
+  IconOriginLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bdo-${Stage}-icon-origin'
+      RetentionInDays: !Ref LogRetentionInDays
 
   # ──────────────────────────────────────────────
   # deliveryBucketJanitor — non-prod only. Empties DeliveryBucket on stack

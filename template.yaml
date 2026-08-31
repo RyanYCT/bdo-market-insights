@@ -109,12 +109,6 @@ Parameters:
       EventBridge cron (UTC) for the weekly full-catalog sync. Default Thu 08:00
       UTC (= Thu 16:00 UTC+8), a buffer after the Thu 03:00-07:00 UTC+8 BDO
       maintenance window (which can overrun on new-item patches).
-  IconSyncSchedule:
-    Type: String
-    Default: 'cron(0 9 ? * * *)'
-    Description: >
-      EventBridge cron (UTC) for the daily item-icon materializer. Default 09:00
-      UTC. No-op once every tracked item's icon is stored/missing.
   LogRetentionInDays:
     Type: Number
     Default: 30
@@ -277,6 +271,7 @@ Resources:
       TemplateURL: infra/cdn.yaml
       Parameters:
         Stage: !Ref Stage
+        BdoRegion: !Ref BdoRegion
         # SSM key kept as icon-domain-name (ADR-0032); value is the CDN host.
         CdnDomainName: !Ref IconDomainName
         HostedZoneId: !Ref HostedZoneId
@@ -291,7 +286,6 @@ Resources:
         BdoRegion: !Ref BdoRegion
         CommonLayerArn: !GetAtt PlatformStack.Outputs.CommonLayerArn
         DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
-        IconSyncSchedule: !Ref IconSyncSchedule
         # Delivery bucket from the cdn stack; iconSync writes icons/* into it.
         CdnBucketName: !GetAtt CdnStack.Outputs.BucketName
         LogRetentionInDays: !Ref LogRetentionInDays

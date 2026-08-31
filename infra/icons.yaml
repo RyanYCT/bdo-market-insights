@@ -1,12 +1,15 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  Item-icon materializer for bdo-market-insights: a daily Lambda that fetches
-  icons from the Pearl Abyss CDN for tracked items missing them
-  (icon_status=unset) and writes them to the shared delivery bucket. The bucket
-  and its CloudFront distribution are owned by the cdn stack (ADR-0032); this
-  stack is a producer that writes icons/<id>.png into it. Not in a VPC -- needs
-  the public internet (Pearl CDN), DynamoDB, and S3 only.
+  Item-icon materializer for bdo-market-insights: an on-demand Lambda that
+  fetches icons from the Pearl Abyss CDN for tracked items missing them
+  (icon_status=unset) and writes them to the shared delivery bucket. Invoked by
+  the bootstrap orchestrator to warm-prefetch a fresh environment's tracked
+  icons; ongoing and whole-catalog materialization is handled on demand by the
+  cdn stack's read-through origin (ADR-0033), so this is no longer scheduled.
+  The bucket and its CloudFront distribution are owned by the cdn stack
+  (ADR-0032); this stack is a producer that writes icons/<id>.png into it. Not
+  in a VPC -- needs the public internet (Pearl CDN), DynamoDB, and S3 only.
 
 Parameters:
   Stage:
@@ -24,14 +27,6 @@ Parameters:
   CdnBucketName:
     Type: String
     Description: Delivery bucket name (from the cdn stack, ADR-0032); iconSync writes icons/* here.
-  IconSyncSchedule:
-    Type: String
-    Default: 'cron(0 9 ? * * *)'
-    Description: >
-      EventBridge cron (UTC) for the daily icon materializer. Default 09:00 UTC.
-      Only processes tracked items with icon_status=unset, so it is a no-op once
-      every tracked item's icon is stored/missing; new tracked items get an icon
-      by the next run.
   LogRetentionInDays:
     Type: Number
     Default: 30
@@ -55,8 +50,10 @@ Globals:
 
 Resources:
   # ──────────────────────────────────────────────
-  # iconSync — daily materializer, not in VPC (Pearl CDN + DynamoDB + S3).
-  # Writes into the cdn stack's delivery bucket (icons/<id>.png).
+  # iconSync — on-demand warm-prefetch for tracked icons (bootstrap-invoked),
+  # not in VPC (Pearl CDN + DynamoDB + S3). Writes into the cdn stack's delivery
+  # bucket (icons/<id>.png). Ongoing / whole-catalog materialization is handled
+  # by the cdn read-through origin (ADR-0033), so this is no longer scheduled.
   # ──────────────────────────────────────────────
   IconSyncFunction:
     Type: AWS::Serverless::Function
@@ -76,12 +73,6 @@ Resources:
         # Write materialized icons into the shared delivery bucket.
         - S3WritePolicy:
             BucketName: !Ref CdnBucketName
-      Events:
-        DailyIconSync:
-          Type: Schedule
-          Properties:
-            Schedule: !Ref IconSyncSchedule
-            Description: Daily icon materialization for tracked items (icon_status=unset)
 
   # Log group co-located with the function (ADR-0030); created before the
   # bootstrap orchestrator can invoke iconSync.
