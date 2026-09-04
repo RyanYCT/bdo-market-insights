@@ -1,15 +1,15 @@
-"""iconSync Lambda: materialize icons for tracked items missing them.
+"""iconSync Lambda: warm-prefetch icons for tracked items missing them.
 
-Daily EventBridge-triggered. Queries the tracked set and, for each item whose
-``icon_status`` is ``unset``, fetches the icon from the Pearl Abyss CDN and
-stores it in the icons bucket (marking the item ``stored`` or ``missing``). Runs
-independently of the ETL so it never touches the hourly hot path; new tracked
-items get their icon by the next daily run. Idempotent -- items already
-``stored``/``missing`` are skipped.
+Invoked on demand -- by the bootstrap orchestrator to pre-warm a fresh
+environment's tracked icons, or manually. Queries the tracked set and, for each
+item whose ``icon_status`` is ``unset``, fetches the icon from the Pearl Abyss
+CDN and stores it in the delivery bucket (marking the item ``stored`` or
+``missing``). Idempotent -- items already ``stored``/``missing`` are skipped.
 
-Scope is intentionally the tracked subset only. Extending icons to the full
-catalog (a future item browser) would make materialization catalog-driven and
-chain this after ``catalogSync`` -- see ADR-0018 "Future work".
+No longer scheduled: ongoing and whole-catalog materialization is handled on
+demand by the cdn stack's read-through origin (ADR-0033), which fetches and
+stores any icon on first request. This function only pre-warms the tracked
+subset so a fresh environment's core icons are instant.
 """
 
 from __future__ import annotations

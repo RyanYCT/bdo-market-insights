@@ -99,6 +99,14 @@ Resources:
       DistributionConfig:
         Enabled: true
         Comment: !Sub 'bdo-${Stage} delivery CDN (icons + catalog)'
+        # Negatively cache a genuinely-missing icon (the read-through origin's
+        # final 404) for an hour, so items with no upstream icon are not
+        # re-fetched from Pearl on every viewer request (ADR-0033). Transient
+        # upstream failures return 502 and keep CloudFront's short default TTL,
+        # so they retry quickly.
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ErrorCachingMinTTL: 3600
         # NA + EU edges only — cheapest tier; assets are small and cache well.
         PriceClass: PriceClass_100
         HttpVersion: http2and3
@@ -221,6 +229,9 @@ Resources:
   # ──────────────────────────────────────────────
   IconOriginFunction:
     Type: AWS::Serverless::Function
+    # Log group created before the function, so a first invocation can't
+    # auto-create an unmanaged group that collides with the managed one (ADR-0030).
+    DependsOn: IconOriginLogGroup
     Properties:
       FunctionName: !Sub 'bdo-${Stage}-icon-origin'
       CodeUri: ../src/functions/icon_origin

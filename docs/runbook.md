@@ -257,13 +257,13 @@ ungrouped — extend the map to classify it.
 > last step on a fresh deploy and on `make bootstrap`. The manual invoke below
 > is for materializing immediately outside that flow.
 
-Icons are self-hosted in the `bdo-<stage>-icons` bucket and materialized from the
-Pearl Abyss CDN by the daily `iconSync` Lambda, which processes tracked items
-with `icon_status=unset` (marking each `stored`, or `missing` when the CDN has no
-icon). No manual step is required — new tracked items get an icon by the next
-daily run, and the job is a no-op once every tracked icon is `stored`/`missing`.
-To materialize immediately (e.g. right after registering items), invoke it
-**asynchronously** and read the result from the logs:
+Icons are self-hosted in the delivery bucket and materialized from the Pearl
+Abyss CDN **read-through**: CloudFront fetches and stores any icon on first
+request (ADR-0033), so no manual step is required and coverage is the whole
+catalog. `iconSync` is a warm-prefetch for the tracked subset — invoked by the
+bootstrap orchestrator on a fresh environment, or manually to pre-warm tracked
+icons immediately (e.g. right after registering items). To run it manually,
+invoke it **asynchronously** and read the result from the logs:
 
 ```bash
 aws lambda invoke --function-name bdo-dev-icon-sync \
@@ -461,8 +461,8 @@ make seed-data STAGE=<env>     # catalog backfill + tracked seed, in order
 # ...or, on a running stack: make bootstrap STAGE=<env>
 ```
 
-The ETL starts snapshotting new items on its next run; icons materialize on the
-next daily `iconSync`.
+The ETL starts snapshotting new items on its next run; icons materialize
+read-through on first request (ADR-0033).
 
 ## Deployment
 
@@ -1096,7 +1096,8 @@ remove any orphaned nested stacks" below). Know what goes with it:
     objects survive teardown. Its fixed name also makes a later fresh deploy
     fail to *re-create* it (`IconsStack` -> `CREATE_FAILED`, bucket already
     exists) until you purge and delete it by hand (icons are re-fetchable from
-    the Pearl Abyss CDN, so the next iconSync run just re-materializes them):
+    the Pearl Abyss CDN — they re-materialize read-through on first request,
+    ADR-0033):
 
     ```sh
     aws s3 rm s3://bdo-prod-icons --recursive   # purge objects first

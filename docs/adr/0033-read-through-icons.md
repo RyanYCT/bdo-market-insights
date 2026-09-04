@@ -60,7 +60,12 @@ rather than by a scheduled job.
 
 ## Notes
 
-Builds on ADR-0023 (icons CDN) and ADR-0032 (the `cdn` stack). Missing upstream
-icons return 404 from `icon_origin` and are cached briefly, then retried. The
+Builds on ADR-0023 (icons CDN) and ADR-0032 (the `cdn` stack). A genuinely
+missing upstream icon returns 404 from `icon_origin`, **negatively cached** at
+the edge (CloudFront `ErrorCachingMinTTL`, ~1h) so it is not re-fetched from
+Pearl on every request; transient upstream errors return 502 and keep the short
+default TTL so they retry quickly. Because `public_icon_url` is now universal,
+`icon_url` is **best-effort** — an iconless item resolves to a cached 404, so a
+consuming frontend should render a placeholder / use an `onerror` fallback. The
 bootstrap warm-prefetch keeps the tracked set instant on a fresh environment
 while the read-through covers the long tail.

@@ -107,6 +107,13 @@ class TestIconOrigin:
     def test_non_icon_path_returns_404(self, mod: ModuleType, lambda_context: Any) -> None:
         assert mod.handler(_event("/not-an-icon"), lambda_context)["statusCode"] == 404
 
+    def test_missing_bucket_env_returns_502(
+        self, mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A misconfigured (unset) ICONS_BUCKET returns a handled 502, not a raw 500."""
+        monkeypatch.delenv("ICONS_BUCKET", raising=False)
+        assert mod.handler(_event("/icons/1.png"), lambda_context)["statusCode"] == 502
+
     def test_store_failure_still_returns_bytes(
         self, mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:

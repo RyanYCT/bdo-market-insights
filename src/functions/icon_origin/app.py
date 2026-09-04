@@ -66,7 +66,10 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         return _response(404)
     item_id = int(match.group(1))
     region = os.environ.get("BDO_REGION", "tw")
-    bucket = os.environ["ICONS_BUCKET"]
+    bucket = os.environ.get("ICONS_BUCKET")
+    if not bucket:
+        logger.error("ICONS_BUCKET is not configured")
+        return _response(502)
 
     try:
         # URL is built internally from a fixed base + int id + configured region.
