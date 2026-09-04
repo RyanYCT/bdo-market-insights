@@ -1882,7 +1882,7 @@ records (the sessions did not log at the time); dates are the merge dates._
 **Mode:** Vibe
 **Branch:** `fix/catalog-checksum-reconcile`
 **Phase:** data correctness (catalogSync)
-**Commits:** PR #TBD
+**Commits:** PR #108
 
 ### Done
 - Hardened the `sync_catalog` checksum fast-path: the run now skips writes only
