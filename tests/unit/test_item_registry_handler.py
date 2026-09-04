@@ -216,10 +216,11 @@ def test_get_item_icon_url_when_base_configured(
     assert json.loads(resp["body"])["icon_url"] == "https://icons.example.com/icons/12094.png"
 
 
-def test_get_item_icon_url_none_when_not_stored(
+def test_get_item_icon_url_universal_regardless_of_status(
     mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An unmaterialized icon stays null even with a delivery base configured."""
+    """icon_url resolves for any item once a base is set (read-through, ADR-0033),
+    regardless of icon_status -- the icon materializes on first request."""
     monkeypatch.setattr(mod, "ICON_BASE_URL", "https://icons.example.com")
     monkeypatch.setattr(
         mod.dynamo,
@@ -228,7 +229,7 @@ def test_get_item_icon_url_none_when_not_stored(
     )
     resp = mod.handler(_event("GET", "/v1/items/12094"), lambda_context)
     assert resp["statusCode"] == 200
-    assert json.loads(resp["body"])["icon_url"] is None
+    assert json.loads(resp["body"])["icon_url"] == "https://icons.example.com/icons/12094.png"
 
 
 def test_get_item_404(

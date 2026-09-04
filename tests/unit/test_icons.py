@@ -104,25 +104,20 @@ class TestSyncIcons:
 
 
 class TestPublicIconUrl:
-    """public_icon_url gates on icon_status + a configured delivery base."""
+    """public_icon_url is universal (read-through, ADR-0033): a URL for any item
+    when a delivery base is configured, else None. No icon_status dependence."""
 
-    def test_stored_with_base_returns_url(self) -> None:
+    def test_returns_url_with_base(self) -> None:
         assert (
-            icons.public_icon_url(12094, icon_status="stored", base="https://icons.example.com")
+            icons.public_icon_url(12094, base="https://icons.example.com")
             == "https://icons.example.com/icons/12094.png"
         )
 
     def test_trailing_slash_stripped(self) -> None:
         assert (
-            icons.public_icon_url(1, icon_status="stored", base="https://cdn.example.com/")
+            icons.public_icon_url(1, base="https://cdn.example.com/")
             == "https://cdn.example.com/icons/1.png"
         )
 
-    @pytest.mark.parametrize("status", ["unset", "missing"])
-    def test_not_stored_returns_none(self, status: str) -> None:
-        assert (
-            icons.public_icon_url(1, icon_status=status, base="https://icons.example.com") is None
-        )
-
     def test_no_base_returns_none(self) -> None:
-        assert icons.public_icon_url(1, icon_status="stored", base="") is None
+        assert icons.public_icon_url(1, base="") is None

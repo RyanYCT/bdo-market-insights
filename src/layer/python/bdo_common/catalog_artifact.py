@@ -56,7 +56,7 @@ def build_catalog_artifact(items: Iterable[Item], *, icon_base: str) -> list[dic
             "category": item.category,
             "main_category": item.main_category,
             "sub_category": item.sub_category,
-            "icon_url": public_icon_url(item.id, icon_status=item.icon_status, base=icon_base),
+            "icon_url": public_icon_url(item.id, base=icon_base),
         }
         for item in sorted(items, key=lambda i: i.id)
     ]

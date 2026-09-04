@@ -98,13 +98,15 @@ Two scheduled Lambdas keep item reference data current, both **outside the VPC**
   from arsha `util/db` per language and — gated by a content checksum in SSM —
   upserts only new/changed items into the registry (skips entirely when the
   catalog is unchanged).
-- **`iconSync`** (daily) fetches icons from the Pearl Abyss CDN for tracked
-  items that lack one and stores them in S3.
+- **`iconSync`** (on demand) warm-prefetches icons from the Pearl Abyss CDN for
+  tracked items that lack one and stores them in S3; invoked by the bootstrap
+  orchestrator for a fresh environment. Ongoing and whole-catalog icon delivery
+  is **read-through** via the cdn stack (ADR-0033), not this function.
 
 ```mermaid
 flowchart LR
     ebw["EventBridge<br/>weekly"] --> catalogsync["catalogSync"]
-    ebd["EventBridge<br/>daily"] --> iconsync["iconSync"]
+    boot["bootstrap<br/>(fresh env)"] --> iconsync["iconSync<br/>(warm-prefetch)"]
 
     catalogsync -->|"util/db (en + tw)"| arsha["arsha.io"]
     catalogsync -->|"read / write checksum"| ssm[("SSM<br/>catalog checksum")]
@@ -113,6 +115,10 @@ flowchart LR
     iconsync -->|"tracked, icon_status=unset"| ddb
     iconsync -->|"fetch PNG"| pearl["Pearl Abyss CDN"]
     iconsync -->|"put icon"| s3[("S3 icons")]
+
+    cf["CloudFront<br/>(icons behavior)"] -->|"S3 miss (403/404)"| iconorigin["icon_origin<br/>(read-through)"]
+    iconorigin -->|"fetch PNG"| pearl
+    iconorigin -->|"put icon"| s3
 ```
 
 ### Insights state machine
