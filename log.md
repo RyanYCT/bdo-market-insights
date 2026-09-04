@@ -1873,3 +1873,32 @@ records (the sessions did not log at the time); dates are the merge dates._
 - One-time re-parent of the live bucket/distribution (CloudFormation stack
   refactoring) is an out-of-band runbook, deliberately not merged to main.
 - Next: A2 read-through icons (universal `icon_url`) lands in the cdn stack.
+
+
+
+## 2026-09-04 — Catalog sync: reconcile a stale checksum against an empty table
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `fix/catalog-checksum-reconcile`
+**Phase:** data correctness (catalogSync)
+**Commits:** PR #TBD
+
+### Done
+- Hardened the `sync_catalog` checksum fast-path: the run now skips writes only
+  when the stored checksum matches *and* the items table is non-empty. The SSM
+  checksum can outlive the table it describes (the data store is recreated while
+  the parameter survives), and a fresh environment's bootstrap runs catalogSync
+  first, on an empty table -- so a stale-but-matching checksum used to skip the
+  initial full write and leave the catalog permanently empty.
+- Guard uses the existing `dynamo.catalog_is_empty()` (Scan `Limit=1`), evaluated
+  only on the checksum-match path via short-circuit, so the weekly no-op run
+  gains at most one cheap key-only scan.
+- Added a unit test for the matching-checksum + empty-table case (forces the full
+  write, `unchanged is False`); updated the existing skip test to hold the table
+  non-empty.
+
+### Decisions
+- Empty-table guard (self-healing inside catalogSync) over a bootstrap-side
+  checksum reset: covers the actual failure -- catalogSync runs first on the
+  empty table -- without touching the orchestrator.

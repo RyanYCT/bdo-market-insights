@@ -191,7 +191,15 @@ def sync_catalog(
     ssm: Any = None
     if checksum_param is not None and complete_fetch:
         ssm = ssm_client if ssm_client is not None else boto3.client("ssm")
-        if _read_checksum(checksum_param, ssm) == checksum:
+        # Skip only when the checksum matches *and* the table actually holds the
+        # catalog it claims to. The SSM checksum can outlive the items table --
+        # the data store may be recreated while the parameter survives -- and a
+        # fresh environment's bootstrap runs catalogSync first, on an empty
+        # table, so a stale-but-matching checksum would otherwise skip the
+        # initial full write and leave the catalog empty. The empty-table guard
+        # (a cheap Scan Limit=1, evaluated only on the matching path) forces a
+        # full write whenever there is nothing to reconcile against.
+        if _read_checksum(checksum_param, ssm) == checksum and not dynamo.catalog_is_empty():
             logger.info("catalog sync: checksum unchanged, skipping writes")
             return CatalogSyncStats(
                 total=len(merged), new=0, langs=langs, fetched=fetched, written=0, unchanged=True

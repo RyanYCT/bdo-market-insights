@@ -254,6 +254,7 @@ class TestSyncCatalogChecksum:
 
         monkeypatch.setattr(dynamo, "scan_catalog_fingerprints", mark_scan)
         monkeypatch.setattr(dynamo, "bulk_upsert_catalog_items", mark_bulk)
+        monkeypatch.setattr(dynamo, "catalog_is_empty", lambda: False)  # table holds the catalog
 
         stats = catalog.sync_catalog(
             client,  # type: ignore[arg-type]
@@ -267,6 +268,44 @@ class TestSyncCatalogChecksum:
         assert stats.total == 1
         assert called == {"scan": False, "bulk": False}  # skipped entirely
         assert ssm.put_values == []  # nothing re-written
+
+    def test_writes_when_checksum_matches_but_table_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The SSM checksum survived a table recreation (stale-but-matching) and
+        # the items table is empty -- e.g. a fresh environment's bootstrap runs
+        # catalogSync first, before any data exists. The empty-table guard must
+        # force the full write instead of trusting the checksum and skipping,
+        # which would otherwise leave the catalog permanently empty.
+        client = self._client()
+        merged = catalog.merge_catalog(
+            {
+                "en": [CatalogEntry(item_id=1, name="A", grade=4)],
+                "tw": [CatalogEntry(item_id=1, name="甲", grade=4)],
+            }
+        )
+        ssm = _FakeSsm(stored=catalog.catalog_checksum(merged))  # checksum matches
+        captured: dict[str, Any] = {}
+
+        def fake_bulk(items: Any, *, max_workers: int = 16) -> tuple[int, int]:
+            captured["ids"] = [m.item_id for m in items]
+            return (len(captured["ids"]), len(captured["ids"]))
+
+        monkeypatch.setattr(dynamo, "scan_catalog_fingerprints", dict)  # empty table
+        monkeypatch.setattr(dynamo, "bulk_upsert_catalog_items", fake_bulk)
+        monkeypatch.setattr(dynamo, "catalog_is_empty", lambda: True)
+
+        stats = catalog.sync_catalog(
+            client,  # type: ignore[arg-type]
+            ["en", "tw"],
+            checksum_param="/bdo-market-insights/dev/catalog/checksum",
+            ssm_client=ssm,
+        )
+
+        assert stats.unchanged is False  # did not skip despite the matching checksum
+        assert stats.written == 1
+        assert captured["ids"] == [1]  # the full catalog was written
+        assert len(ssm.put_values) == 1  # checksum re-persisted
 
     def test_writes_only_changed_and_stores_checksum(
         self, monkeypatch: pytest.MonkeyPatch
