@@ -1911,7 +1911,7 @@ records (the sessions did not log at the time); dates are the merge dates._
 **Mode:** Vibe
 **Branch:** `refactor/catalog-checksum-in-table`
 **Phase:** data correctness (catalogSync) / ADR-0034
-**Commits:** PR #TBD
+**Commits:** PR #109
 
 ### Done
 - Moved the catalog content checksum out of the standalone SSM parameter
