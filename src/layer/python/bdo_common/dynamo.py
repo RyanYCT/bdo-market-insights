@@ -31,6 +31,14 @@ _TRACKED_GSI_NAME = "tracked-index"
 _TRACKED_MARKER_ATTR = "t"
 _TRACKED_MARKER_VALUE = "1"
 
+#: Reserved primary key for the catalog-sync metadata row (ADR-0034). Real BDO
+#: item ids are >= 1, so id 0 never collides with an item. This row stores the
+#: catalog content checksum co-located with the data it describes, so the
+#: checksum shares the table's lifecycle. It is not a catalog item and is
+#: excluded from every path that enumerates the catalog (see catalog_is_empty,
+#: scan_catalog_items, scan_catalog_fingerprints, get_item).
+_CATALOG_META_ID = 0
+
 
 def _get_table() -> Any:  # boto3 Table resource (untyped)
     """Return the DynamoDB Table resource."""
@@ -58,7 +66,13 @@ def _item_to_model(raw: dict[str, Any]) -> Item:
 
 
 def get_item(item_id: int) -> Item | None:
-    """Get a single item by ID, or None if not found."""
+    """Get a single item by ID, or None if not found.
+
+    The reserved catalog-metadata row (``_CATALOG_META_ID``) is not a catalog
+    item, so a lookup for it returns None (a probe of ``/v1/items/0`` is a 404).
+    """
+    if item_id == _CATALOG_META_ID:
+        return None
     table = _get_table()
     response: dict[str, Any] = table.get_item(Key={"id": item_id})
     raw: dict[str, Any] | None = response.get("Item")
@@ -412,6 +426,8 @@ def _collect_fingerprints(
 ) -> None:
     """Accumulate (name, grade, names) fingerprints from scanned raw rows."""
     for raw in raw_items:
+        if int(raw["id"]) == _CATALOG_META_ID:
+            continue  # reserved metadata row, not a catalog item (ADR-0034)
         grade = int(raw["grade"]) if raw.get("grade") is not None else None
         names = {str(k): str(v) for k, v in raw.get("names", {}).items()}
         out[int(raw["id"])] = (raw.get("name", ""), grade, names)
@@ -461,18 +477,54 @@ def scan_catalog_items() -> list[Item]:
         scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
         response = table.scan(**scan_kwargs)
         items_raw.extend(response.get("Items", []))
-    return [_item_to_model(raw) for raw in items_raw]
+    # Exclude the reserved catalog-metadata row so it never lands in the
+    # published catalog.json artifact (ADR-0034).
+    return [_item_to_model(raw) for raw in items_raw if int(raw["id"]) != _CATALOG_META_ID]
+
+
+def read_catalog_checksum() -> str | None:
+    """Read the catalog content checksum from the co-located metadata row.
+
+    The checksum lives as a reserved row (``_CATALOG_META_ID``) in the items
+    table so it shares the table's lifecycle (ADR-0034): recreating the table
+    drops the checksum with the data it describes, so a stale checksum can never
+    outlive the catalog it summarizes. Returns None when the row is absent (a
+    fresh table, or an environment that has never synced).
+    """
+    response: dict[str, Any] = _get_table().get_item(Key={"id": _CATALOG_META_ID})
+    raw = response.get("Item")
+    if raw is None:
+        return None
+    value = raw.get("checksum")
+    return str(value) if value is not None else None
+
+
+def write_catalog_checksum(value: str) -> None:
+    """Persist the catalog content checksum to the co-located metadata row (ADR-0034)."""
+    _get_table().update_item(
+        Key={"id": _CATALOG_META_ID},
+        UpdateExpression="SET #checksum = :c, #kind = :k, updated_at = :t",
+        ExpressionAttributeNames={"#checksum": "checksum", "#kind": "kind"},
+        ExpressionAttributeValues={
+            ":c": value,
+            ":k": "catalog-meta",
+            ":t": datetime.now(tz=UTC).isoformat(),
+        },
+    )
 
 
 def catalog_is_empty() -> bool:
-    """Return True if the items table has no rows.
+    """Return True if the items table holds no catalog (entity) rows.
 
-    A cheap ``Scan`` with ``Limit=1`` projecting only the key -- used by the
-    bootstrap first-create guard (ADR-0028) to decide whether to seed a fresh
-    environment. Directly reflects "is there any data?" rather than a proxy.
+    A cheap ``Scan`` with ``Limit=2`` projecting only the key. The reserved
+    catalog-metadata row (``_CATALOG_META_ID``, which stores the sync checksum,
+    ADR-0034) is not a catalog item, so it is excluded: because there is at most
+    one metadata row, scanning two rows guarantees that if any entity row exists
+    at least one is returned alongside it. Used by the bootstrap first-create
+    guard (ADR-0028) and the catalog-sync reconciliation guard.
     """
-    response = _get_table().scan(Limit=1, ProjectionExpression="id")
-    return not response.get("Items")
+    response = _get_table().scan(Limit=2, ProjectionExpression="id")
+    return not any(int(row["id"]) != _CATALOG_META_ID for row in response.get("Items", []))
 
 
 def list_tracked_items() -> list[Item]:

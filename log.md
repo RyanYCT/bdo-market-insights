@@ -1902,3 +1902,42 @@ records (the sessions did not log at the time); dates are the merge dates._
 - Empty-table guard (self-healing inside catalogSync) over a bootstrap-side
   checksum reset: covers the actual failure -- catalogSync runs first on the
   empty table -- without touching the orchestrator.
+
+
+
+## 2026-09-06 — Co-locate the catalog sync checksum with the items table
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `refactor/catalog-checksum-in-table`
+**Phase:** data correctness (catalogSync) / ADR-0034
+**Commits:** PR #TBD
+
+### Done
+- Moved the catalog content checksum out of the standalone SSM parameter
+  (`/bdo-market-insights/<stage>/catalog/checksum`) into a reserved metadata row
+  (id 0) in the items table, so the checksum shares the table's lifecycle:
+  recreating the table drops the checksum with the data, making the
+  stale-checksum-over-empty-table failure structurally impossible rather than
+  only guarded. ADR-0034.
+- `dynamo`: added `read_catalog_checksum`/`write_catalog_checksum`; the reserved
+  row is excluded from every path that enumerates the catalog --
+  `catalog_is_empty` (now a `Scan Limit=2` that ignores the lone metadata row),
+  `scan_catalog_items` (artifact), `scan_catalog_fingerprints`, and `get_item`.
+- `catalog.sync_catalog`: reads/writes the checksum via DynamoDB; dropped the SSM
+  helpers and the `checksum_param`/`ssm_client` args for a `use_checksum` flag.
+  The #108 empty-table guard is kept as defence-in-depth.
+- `catalog` stack: removed the `CATALOG_CHECKSUM_PARAM` env var and the
+  `ssm:GetParameter`/`PutParameter` grant (the existing `DynamoDBCrudPolicy`
+  covers the metadata row).
+- Gate: ruff, mypy, unit tests, bandit, cfn-lint, sam validate, `make build`.
+
+### Decisions
+- Chose the co-located DynamoDB row over a CFN-managed SSM parameter (which would
+  fight the ADR-0024 script-seeded-SSM convention and show permanent drift). The
+  reserved-row scan-exclusion is the accepted cost of single-table storage.
+
+### Deferred / open questions
+- The old SSM checksum parameter is now orphaned (nothing reads it); delete it
+  per stage as a one-time manual cleanup. The transition is otherwise
+  self-correcting -- the first run persists the metadata row.

@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from botocore.exceptions import ClientError
 
 from bdo_common import catalog, dynamo
 from bdo_common.models import CatalogEntry, MergedCatalogItem
@@ -21,26 +20,6 @@ class _StubClient:
     def fetch_item_db(self, lang: str) -> list[CatalogEntry]:
         self.calls.append(lang)
         return self._by_lang.get(lang, [])
-
-
-class _FakeSsm:
-    """Minimal SSM client: stores one value; get raises ParameterNotFound if unset."""
-
-    def __init__(self, stored: str | None = None) -> None:
-        self._stored = stored
-        self.get_calls = 0
-        self.put_values: list[str] = []
-
-    def get_parameter(self, *, Name: str) -> dict[str, Any]:  # noqa: N803 (boto3 kwarg)
-        self.get_calls += 1
-        if self._stored is None:
-            raise ClientError(
-                {"Error": {"Code": "ParameterNotFound", "Message": "not found"}}, "GetParameter"
-            )
-        return {"Parameter": {"Value": self._stored}}
-
-    def put_parameter(self, *, Name: str, Value: str, Type: str, Overwrite: bool) -> None:  # noqa: N803
-        self.put_values.append(Value)
 
 
 class TestMergeCatalog:
@@ -110,7 +89,14 @@ class TestSyncCatalog:
         monkeypatch.setattr(dynamo, "bulk_upsert_catalog_items", fake_bulk)
         monkeypatch.setattr(dynamo, "scan_catalog_fingerprints", dict)
 
-        stats = catalog.sync_catalog(client, ["en", "tw"], max_workers=8)  # type: ignore[arg-type]
+        # use_checksum=False isolates the merge/diff/upsert path from the
+        # checksum fast-path (which is exercised in TestSyncCatalogChecksum).
+        stats = catalog.sync_catalog(
+            client,  # type: ignore[arg-type]
+            ["en", "tw"],
+            max_workers=8,
+            use_checksum=False,
+        )
 
         assert client.calls == ["en", "tw"]
         assert stats.total == 2
@@ -223,7 +209,7 @@ class TestDiffCatalog:
 
 
 class TestSyncCatalogChecksum:
-    """sync_catalog checksum fast-path + diff + SSM persistence."""
+    """sync_catalog checksum fast-path + diff + DynamoDB checksum persistence (ADR-0034)."""
 
     def _client(self) -> _StubClient:
         return _StubClient(
@@ -233,15 +219,27 @@ class TestSyncCatalogChecksum:
             }
         )
 
+    def _current_checksum(self) -> str:
+        """Checksum of the catalog the stub client returns (for the match cases)."""
+        return catalog.catalog_checksum(
+            catalog.merge_catalog(
+                {
+                    "en": [CatalogEntry(item_id=1, name="A", grade=4)],
+                    "tw": [CatalogEntry(item_id=1, name="甲", grade=4)],
+                }
+            )
+        )
+
+    @staticmethod
+    def _capture_writes(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        """Patch dynamo.write_catalog_checksum to record persisted checksums."""
+        writes: list[str] = []
+        monkeypatch.setattr(dynamo, "write_catalog_checksum", writes.append)
+        return writes
+
     def test_skips_writes_when_checksum_matches(self, monkeypatch: pytest.MonkeyPatch) -> None:
         client = self._client()
-        merged = catalog.merge_catalog(
-            {
-                "en": [CatalogEntry(item_id=1, name="A", grade=4)],
-                "tw": [CatalogEntry(item_id=1, name="甲", grade=4)],
-            }
-        )
-        ssm = _FakeSsm(stored=catalog.catalog_checksum(merged))
+        writes = self._capture_writes(monkeypatch)
         called = {"scan": False, "bulk": False}
 
         def mark_scan() -> dict[int, Any]:
@@ -252,69 +250,56 @@ class TestSyncCatalogChecksum:
             called["bulk"] = True
             return (0, 0)
 
+        monkeypatch.setattr(dynamo, "read_catalog_checksum", self._current_checksum)
         monkeypatch.setattr(dynamo, "scan_catalog_fingerprints", mark_scan)
         monkeypatch.setattr(dynamo, "bulk_upsert_catalog_items", mark_bulk)
         monkeypatch.setattr(dynamo, "catalog_is_empty", lambda: False)  # table holds the catalog
 
-        stats = catalog.sync_catalog(
-            client,  # type: ignore[arg-type]
-            ["en", "tw"],
-            checksum_param="/bdo-market-insights/dev/catalog/checksum",
-            ssm_client=ssm,
-        )
+        stats = catalog.sync_catalog(client, ["en", "tw"])  # type: ignore[arg-type]
 
         assert stats.unchanged is True
         assert stats.written == 0
         assert stats.total == 1
         assert called == {"scan": False, "bulk": False}  # skipped entirely
-        assert ssm.put_values == []  # nothing re-written
+        assert writes == []  # nothing re-written
 
     def test_writes_when_checksum_matches_but_table_empty(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # The SSM checksum survived a table recreation (stale-but-matching) and
-        # the items table is empty -- e.g. a fresh environment's bootstrap runs
-        # catalogSync first, before any data exists. The empty-table guard must
-        # force the full write instead of trusting the checksum and skipping,
-        # which would otherwise leave the catalog permanently empty.
+        # Defence-in-depth guard: even with the checksum co-located in the table
+        # (so a recreate normally drops it too), if a matching checksum row
+        # somehow survives while the entity rows are gone, the empty-table guard
+        # must still force the full write rather than trust the checksum and skip.
         client = self._client()
-        merged = catalog.merge_catalog(
-            {
-                "en": [CatalogEntry(item_id=1, name="A", grade=4)],
-                "tw": [CatalogEntry(item_id=1, name="甲", grade=4)],
-            }
-        )
-        ssm = _FakeSsm(stored=catalog.catalog_checksum(merged))  # checksum matches
+        writes = self._capture_writes(monkeypatch)
         captured: dict[str, Any] = {}
 
         def fake_bulk(items: Any, *, max_workers: int = 16) -> tuple[int, int]:
             captured["ids"] = [m.item_id for m in items]
             return (len(captured["ids"]), len(captured["ids"]))
 
+        monkeypatch.setattr(dynamo, "read_catalog_checksum", self._current_checksum)  # matches
         monkeypatch.setattr(dynamo, "scan_catalog_fingerprints", dict)  # empty table
         monkeypatch.setattr(dynamo, "bulk_upsert_catalog_items", fake_bulk)
         monkeypatch.setattr(dynamo, "catalog_is_empty", lambda: True)
 
-        stats = catalog.sync_catalog(
-            client,  # type: ignore[arg-type]
-            ["en", "tw"],
-            checksum_param="/bdo-market-insights/dev/catalog/checksum",
-            ssm_client=ssm,
-        )
+        stats = catalog.sync_catalog(client, ["en", "tw"])  # type: ignore[arg-type]
 
         assert stats.unchanged is False  # did not skip despite the matching checksum
         assert stats.written == 1
         assert captured["ids"] == [1]  # the full catalog was written
-        assert len(ssm.put_values) == 1  # checksum re-persisted
+        assert writes == [self._current_checksum()]  # checksum re-persisted
 
     def test_empty_check_skipped_on_checksum_mismatch(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # The empty-table guard is gated behind the checksum comparison via
         # short-circuit, so a changed catalog (the common weekly path) must never
-        # pay for the extra Scan(Limit=1). Pin that: catalog_is_empty() is not
-        # consulted when the stored checksum does not match.
+        # pay for the extra Scan. Pin that: catalog_is_empty() is not consulted
+        # when the stored checksum does not match.
         client = self._client()
+        self._capture_writes(monkeypatch)
+        monkeypatch.setattr(dynamo, "read_catalog_checksum", lambda: "stale-checksum")
         monkeypatch.setattr(dynamo, "scan_catalog_fingerprints", dict)  # empty table
         monkeypatch.setattr(
             dynamo, "bulk_upsert_catalog_items", lambda items, **k: (len(list(items)), 1)
@@ -326,14 +311,8 @@ class TestSyncCatalogChecksum:
             return True
 
         monkeypatch.setattr(dynamo, "catalog_is_empty", spy_is_empty)
-        ssm = _FakeSsm(stored="stale-checksum")  # does not match the fetched catalog
 
-        stats = catalog.sync_catalog(
-            client,  # type: ignore[arg-type]
-            ["en", "tw"],
-            checksum_param="/bdo-market-insights/dev/catalog/checksum",
-            ssm_client=ssm,
-        )
+        stats = catalog.sync_catalog(client, ["en", "tw"])  # type: ignore[arg-type]
 
         assert empty_checked["called"] is False  # short-circuited before the scan
         assert stats.unchanged is False  # mismatch still drives a write
@@ -366,39 +345,32 @@ class TestSyncCatalogChecksum:
             return (len(captured["ids"]), 0)
 
         monkeypatch.setattr(dynamo, "bulk_upsert_catalog_items", fake_bulk)
-        ssm = _FakeSsm(stored="stale-checksum")
+        monkeypatch.setattr(dynamo, "read_catalog_checksum", lambda: "stale-checksum")
+        writes = self._capture_writes(monkeypatch)
 
-        stats = catalog.sync_catalog(
-            client,  # type: ignore[arg-type]
-            ["en", "tw"],
-            checksum_param="/bdo-market-insights/dev/catalog/checksum",
-            ssm_client=ssm,
-        )
+        stats = catalog.sync_catalog(client, ["en", "tw"])  # type: ignore[arg-type]
 
         assert captured["ids"] == [2]  # only the changed item written
         assert stats.written == 1
         assert stats.total == 2
-        assert len(ssm.put_values) == 1  # new checksum persisted
+        assert len(writes) == 1  # new checksum persisted
 
-    def test_first_run_missing_param_stores_checksum(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_first_run_missing_checksum_stores_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Fresh table: no metadata checksum row yet (read returns None), so the
+        # run takes the diff path and persists the checksum. This is also the
+        # self-correcting transition off the old SSM checksum (ADR-0034).
         client = self._client()
+        monkeypatch.setattr(dynamo, "read_catalog_checksum", lambda: None)  # no row yet
         monkeypatch.setattr(dynamo, "scan_catalog_fingerprints", dict)  # empty table
         monkeypatch.setattr(
             dynamo, "bulk_upsert_catalog_items", lambda items, **k: (len(list(items)), 1)
         )
-        ssm = _FakeSsm(stored=None)  # ParameterNotFound
+        writes = self._capture_writes(monkeypatch)
 
-        stats = catalog.sync_catalog(
-            client,  # type: ignore[arg-type]
-            ["en", "tw"],
-            checksum_param="/bdo-market-insights/dev/catalog/checksum",
-            ssm_client=ssm,
-        )
+        stats = catalog.sync_catalog(client, ["en", "tw"])  # type: ignore[arg-type]
 
         assert stats.unchanged is False
-        assert len(ssm.put_values) == 1  # checksum created on first run
+        assert len(writes) == 1  # checksum created on first run
 
     def test_partial_fetch_ignores_checksum(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # tw failed -> incomplete fetch: never consult or store the checksum.
@@ -407,15 +379,40 @@ class TestSyncCatalogChecksum:
         monkeypatch.setattr(
             dynamo, "bulk_upsert_catalog_items", lambda items, **k: (len(list(items)), 1)
         )
-        ssm = _FakeSsm(stored="anything")
+        reads = {"count": 0}
 
-        stats = catalog.sync_catalog(
-            client,  # type: ignore[arg-type]
-            ["en", "tw"],
-            checksum_param="/bdo-market-insights/dev/catalog/checksum",
-            ssm_client=ssm,
-        )
+        def spy_read() -> str | None:
+            reads["count"] += 1
+            return "anything"
+
+        monkeypatch.setattr(dynamo, "read_catalog_checksum", spy_read)
+        writes = self._capture_writes(monkeypatch)
+
+        stats = catalog.sync_catalog(client, ["en", "tw"])  # type: ignore[arg-type]
 
         assert stats.unchanged is False
-        assert ssm.get_calls == 0  # checksum not consulted on a partial fetch
-        assert ssm.put_values == []  # and not stored
+        assert reads["count"] == 0  # checksum not consulted on a partial fetch
+        assert writes == []  # and not stored
+
+    def test_use_checksum_false_bypasses_fastpath(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # use_checksum=False (e.g. a forced full resync) skips both the checksum
+        # read and its persistence even on a complete fetch.
+        client = self._client()
+        reads = {"count": 0}
+
+        def spy_read() -> str | None:
+            reads["count"] += 1
+            return self._current_checksum()
+
+        monkeypatch.setattr(dynamo, "read_catalog_checksum", spy_read)
+        monkeypatch.setattr(dynamo, "scan_catalog_fingerprints", dict)
+        monkeypatch.setattr(
+            dynamo, "bulk_upsert_catalog_items", lambda items, **k: (len(list(items)), 1)
+        )
+        writes = self._capture_writes(monkeypatch)
+
+        stats = catalog.sync_catalog(client, ["en", "tw"], use_checksum=False)  # type: ignore[arg-type]
+
+        assert reads["count"] == 0  # fast-path not consulted
+        assert writes == []  # checksum not persisted
+        assert stats.unchanged is False

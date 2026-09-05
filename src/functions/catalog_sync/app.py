@@ -38,14 +38,14 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Run one full-catalog sync and emit metrics."""
     langs = _langs()
     max_workers = int(os.environ.get("CATALOG_MAX_WORKERS", "16"))
-    checksum_param = os.environ.get("CATALOG_CHECKSUM_PARAM") or None
 
+    # The catalog content checksum is stored co-located with the data, in the
+    # items table's metadata row (ADR-0034) -- no external parameter to wire.
     stats = catalog.sync_catalog(
         ArshaClient(),
         langs,
         default_lang=DEFAULT_LANG,
         max_workers=max_workers,
-        checksum_param=checksum_param,
     )
 
     failed_langs = [lang for lang, count in stats.fetched.items() if count == 0]

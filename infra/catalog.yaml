@@ -80,24 +80,16 @@ Resources:
         Variables:
           DYNAMODB_TABLE: !Ref DynamoDbTableName
           CATALOG_LANGS: !Ref CatalogLangs
-          # SSM parameter holding the last-synced catalog content checksum; the
-          # sync skips all writes when the fetched catalog matches it.
-          CATALOG_CHECKSUM_PARAM: !Sub '/bdo-market-insights/${Stage}/catalog/checksum'
           # Publish the full-catalog CDN artifact into the delivery bucket, with
           # icon_url values pointing at the CDN (ADR-0031).
           CATALOG_ARTIFACT_BUCKET: !Ref CdnBucketName
           ICON_BASE_URL: !Ref CdnBaseUrl
       Policies:
-        # Read (Scan) to diff current state + write the changed items.
+        # Read (Scan) to diff current state, write the changed items, and
+        # read/write the catalog checksum metadata row (ADR-0034) -- all on the
+        # items table, so DynamoDBCrudPolicy covers it.
         - DynamoDBCrudPolicy:
             TableName: !Ref DynamoDbTableName
-        # Read/write only the catalog checksum parameter.
-        - Statement:
-            - Effect: Allow
-              Action:
-                - ssm:GetParameter
-                - ssm:PutParameter
-              Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/bdo-market-insights/${Stage}/catalog/checksum'
         # Write only the catalog artifact prefix in the delivery bucket.
         - Statement:
             - Effect: Allow

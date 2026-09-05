@@ -23,8 +23,17 @@ def test_catalog_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     empty = _FakeTable([])
     monkeypatch.setattr(dynamo, "_get_table", lambda: empty)
     assert dynamo.catalog_is_empty() is True
-    # Cheap probe: Limit=1, projects only the key.
-    assert empty.scan_kwargs.get("Limit") == 1
+    # Cheap probe: Limit=2 (enough to see an entity row past the lone metadata
+    # row), projects only the key.
+    assert empty.scan_kwargs.get("Limit") == 2
 
+    # A lone catalog-metadata row (reserved id 0, ADR-0034) is not a catalog
+    # item, so the table still reads empty.
+    monkeypatch.setattr(dynamo, "_get_table", lambda: _FakeTable([{"id": 0}]))
+    assert dynamo.catalog_is_empty() is True
+
+    # Any real entity row -> not empty (with or without the metadata row).
     monkeypatch.setattr(dynamo, "_get_table", lambda: _FakeTable([{"id": 1}]))
+    assert dynamo.catalog_is_empty() is False
+    monkeypatch.setattr(dynamo, "_get_table", lambda: _FakeTable([{"id": 0}, {"id": 1}]))
     assert dynamo.catalog_is_empty() is False

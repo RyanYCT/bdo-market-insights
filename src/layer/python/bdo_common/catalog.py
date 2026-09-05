@@ -11,10 +11,6 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass, field
-from typing import Any
-
-import boto3
-from botocore.exceptions import ClientError
 
 from bdo_common import dynamo
 from bdo_common.arsha_client import DEFAULT_LANG, ArshaClient
@@ -80,22 +76,6 @@ def diff_catalog(
     return changed
 
 
-def _read_checksum(param: str, ssm_client: Any) -> str | None:
-    """Read the stored catalog checksum from SSM, or None if it doesn't exist."""
-    try:
-        value: str = ssm_client.get_parameter(Name=param)["Parameter"]["Value"]
-    except ClientError as exc:
-        if exc.response["Error"]["Code"] == "ParameterNotFound":
-            return None
-        raise
-    return value
-
-
-def _write_checksum(param: str, value: str, ssm_client: Any) -> None:
-    """Persist the catalog checksum to SSM (String parameter, overwrite)."""
-    ssm_client.put_parameter(Name=param, Value=value, Type="String", Overwrite=True)
-
-
 def merge_catalog(
     by_lang: dict[str, list[CatalogEntry]], *, default_lang: str = DEFAULT_LANG
 ) -> list[MergedCatalogItem]:
@@ -143,17 +123,16 @@ def sync_catalog(
     *,
     default_lang: str = DEFAULT_LANG,
     max_workers: int = 16,
-    checksum_param: str | None = None,
-    ssm_client: Any = None,
+    use_checksum: bool = True,
 ) -> CatalogSyncStats:
     """Fetch ``util/db`` per language, merge, and upsert only what changed.
 
     Two layers keep the weekly run cheap and fast:
 
-    * **Checksum fast-path** -- when ``checksum_param`` is given and every
-      configured language was fetched, a content checksum of the catalog is
-      compared against the value stored in SSM; if unchanged, the run skips the
-      scan and all writes.
+    * **Checksum fast-path** -- when ``use_checksum`` is set and every configured
+      language was fetched, a content checksum of the catalog is compared against
+      the checksum stored in the items table's metadata row (ADR-0034); if
+      unchanged, the run skips the scan and all writes.
     * **Diff writes** -- otherwise the current stored state is scanned and only
       new/changed items are upserted (the full catalog is written only on the
       first run or when everything genuinely changed).
@@ -186,31 +165,29 @@ def sync_catalog(
     checksum = catalog_checksum(merged)
     # Only trust / persist the checksum when the fetch was complete; a partial
     # fetch produces a digest that does not represent the true full catalog.
-    complete_fetch = not failed
+    checksum_enabled = use_checksum and not failed
 
-    ssm: Any = None
-    if checksum_param is not None and complete_fetch:
-        ssm = ssm_client if ssm_client is not None else boto3.client("ssm")
-        # Skip only when the checksum matches *and* the table actually holds the
-        # catalog it claims to. The SSM checksum can outlive the items table --
-        # the data store may be recreated while the parameter survives -- and a
-        # fresh environment's bootstrap runs catalogSync first, on an empty
-        # table, so a stale-but-matching checksum would otherwise skip the
-        # initial full write and leave the catalog empty. The empty-table guard
-        # (a cheap Scan Limit=1, evaluated only on the matching path) forces a
-        # full write whenever there is nothing to reconcile against.
-        if _read_checksum(checksum_param, ssm) == checksum and not dynamo.catalog_is_empty():
-            logger.info("catalog sync: checksum unchanged, skipping writes")
-            return CatalogSyncStats(
-                total=len(merged), new=0, langs=langs, fetched=fetched, written=0, unchanged=True
-            )
+    # Skip only when the checksum matches *and* the table actually holds the
+    # catalog. The checksum lives as a metadata row in the items table itself
+    # (ADR-0034), so it shares the table's lifecycle: recreating the table drops
+    # the checksum with the data, and a stale checksum can no longer outlive an
+    # empty table. The empty-table guard (a cheap Scan, evaluated only on the
+    # matching path via short-circuit) is kept as defence in depth against the
+    # catalog rows being cleared while the metadata row somehow survives.
+    if checksum_enabled and (
+        dynamo.read_catalog_checksum() == checksum and not dynamo.catalog_is_empty()
+    ):
+        logger.info("catalog sync: checksum unchanged, skipping writes")
+        return CatalogSyncStats(
+            total=len(merged), new=0, langs=langs, fetched=fetched, written=0, unchanged=True
+        )
 
     current = dynamo.scan_catalog_fingerprints()
     changed = diff_catalog(merged, current)
     _, new = dynamo.bulk_upsert_catalog_items(changed, max_workers=max_workers)
 
-    if ssm is not None and checksum_param is not None:
-        _write_checksum(checksum_param, checksum, ssm)
+    if checksum_enabled:
+        dynamo.write_catalog_checksum(checksum)
 
     logger.info(
         "catalog sync complete",
