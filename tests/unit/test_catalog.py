@@ -307,6 +307,37 @@ class TestSyncCatalogChecksum:
         assert captured["ids"] == [1]  # the full catalog was written
         assert len(ssm.put_values) == 1  # checksum re-persisted
 
+    def test_empty_check_skipped_on_checksum_mismatch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The empty-table guard is gated behind the checksum comparison via
+        # short-circuit, so a changed catalog (the common weekly path) must never
+        # pay for the extra Scan(Limit=1). Pin that: catalog_is_empty() is not
+        # consulted when the stored checksum does not match.
+        client = self._client()
+        monkeypatch.setattr(dynamo, "scan_catalog_fingerprints", dict)  # empty table
+        monkeypatch.setattr(
+            dynamo, "bulk_upsert_catalog_items", lambda items, **k: (len(list(items)), 1)
+        )
+        empty_checked = {"called": False}
+
+        def spy_is_empty() -> bool:
+            empty_checked["called"] = True
+            return True
+
+        monkeypatch.setattr(dynamo, "catalog_is_empty", spy_is_empty)
+        ssm = _FakeSsm(stored="stale-checksum")  # does not match the fetched catalog
+
+        stats = catalog.sync_catalog(
+            client,  # type: ignore[arg-type]
+            ["en", "tw"],
+            checksum_param="/bdo-market-insights/dev/catalog/checksum",
+            ssm_client=ssm,
+        )
+
+        assert empty_checked["called"] is False  # short-circuited before the scan
+        assert stats.unchanged is False  # mismatch still drives a write
+
     def test_writes_only_changed_and_stores_checksum(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
