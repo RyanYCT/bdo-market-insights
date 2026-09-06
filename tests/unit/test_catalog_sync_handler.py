@@ -26,7 +26,7 @@ class TestCatalogSyncHandler:
             *,
             default_lang: str = "en",
             max_workers: int = 16,
-            checksum_param: str | None = None,
+            use_checksum: bool = True,
         ) -> CatalogSyncStats:
             return CatalogSyncStats(
                 total=68000,
@@ -65,7 +65,7 @@ class TestCatalogSyncHandler:
             *,
             default_lang: str = "en",
             max_workers: int = 16,
-            checksum_param: str | None = None,
+            use_checksum: bool = True,
         ) -> CatalogSyncStats:
             return CatalogSyncStats(
                 total=68000, new=0, langs=langs, fetched={"en": 68000, "tw": 0}
@@ -143,7 +143,7 @@ class TestCatalogSyncHandler:
             *,
             default_lang: str = "en",
             max_workers: int = 16,
-            checksum_param: str | None = None,
+            use_checksum: bool = True,
         ) -> CatalogSyncStats:
             captured["langs"] = langs
             return CatalogSyncStats(total=1, new=0, langs=langs)

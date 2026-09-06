@@ -266,14 +266,26 @@ class _FakeDdb:
 
 
 def test_items_present_true_uses_consistent_read() -> None:
-    ddb = _FakeDdb([{"id": {"S": "x"}}])
+    ddb = _FakeDdb([{"id": {"N": "1"}}])
     assert verify._items_present(ddb, "bdo-dev-items") is True
     assert ddb.last_kwargs.get("ConsistentRead") is True
-    assert ddb.last_kwargs.get("Limit") == 1
+    # Limit=2 so an entity row is seen past the lone metadata row (ADR-0034).
+    assert ddb.last_kwargs.get("Limit") == 2
 
 
 def test_items_present_false_when_empty() -> None:
     assert verify._items_present(_FakeDdb([]), "bdo-dev-items") is False
+
+
+def test_items_present_false_when_only_metadata_row() -> None:
+    # A table holding only the reserved catalog-metadata row (id 0) is not
+    # populated -- mirrors dynamo.catalog_is_empty() (ADR-0034).
+    assert verify._items_present(_FakeDdb([{"id": {"N": "0"}}]), "bdo-dev-items") is False
+
+
+def test_items_present_true_with_metadata_and_entity() -> None:
+    ddb = _FakeDdb([{"id": {"N": "0"}}, {"id": {"N": "5"}}])
+    assert verify._items_present(ddb, "bdo-dev-items") is True
 
 
 # ---- _latest_bootstrap_execution --------------------------------------------

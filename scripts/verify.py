@@ -152,9 +152,17 @@ def data_check(
 
 
 def _items_present(ddb: Any, table: str) -> bool:
-    """True if the items table has at least one row (cheap consistent Scan Limit=1)."""
-    resp = ddb.scan(TableName=table, Limit=1, ProjectionExpression="id", ConsistentRead=True)
-    return bool(resp.get("Items"))
+    """True if the items table holds at least one catalog (entity) row.
+
+    A cheap consistent ``Scan`` with ``Limit=2`` projecting only the key. The
+    reserved catalog-metadata row (id ``0``, ADR-0034) is not a catalog item and
+    is excluded, so a table holding only that row still reads as empty --
+    mirroring ``dynamo.catalog_is_empty()``. Because there is at most one
+    metadata row, scanning two rows guarantees an entity row is seen alongside it
+    when one exists. Values come back in low-level attribute-value form.
+    """
+    resp = ddb.scan(TableName=table, Limit=2, ProjectionExpression="id", ConsistentRead=True)
+    return any(item["id"].get("N") != "0" for item in resp.get("Items", []))
 
 
 def _latest_bootstrap_execution(sfn: Any, state_machine_arn: str) -> dict[str, str] | None:

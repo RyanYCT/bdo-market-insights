@@ -161,6 +161,12 @@ def list_items(
         run = table.query
     elif tracked is False:
         kwargs["FilterExpression"] = Attr("tracked").eq("false")
+    else:
+        # Bare scan (no category, no tracked filter): exclude the reserved
+        # catalog-metadata row (ADR-0034). Unreachable from the API (the handler
+        # defaults tracked=True), but keeps the sentinel out of any unfiltered
+        # enumeration for other callers.
+        kwargs["FilterExpression"] = Attr("id").ne(_CATALOG_META_ID)
 
     start_key = _decode_cursor(cursor)
     if start_key is not None:
