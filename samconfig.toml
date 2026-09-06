@@ -4,10 +4,18 @@ version = 0.1
 cached = true
 parallel = true
 
+# Each stage uses its OWN s3_prefix so their deployment artifacts never share
+# object keys. SAM artifacts are content-addressed, so with a shared prefix an
+# identical layer/function would map to the same key across stages -- and
+# `sam delete` (or any purge) on one stage would then remove objects the other
+# stage's live stack still references, breaking its next update/rollback with an
+# S3 NoSuchKey. Keep these prefixes stage-scoped; do not collapse them back to a
+# single shared prefix.
+
 [dev.deploy.parameters]
 stack_name = "bdo-market-dev"
 resolve_s3 = true
-s3_prefix = "bdo-market-insights"
+s3_prefix = "bdo-market-insights/dev"
 region = "us-east-1"
 confirm_changeset = true
 capabilities = "CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
@@ -16,7 +24,7 @@ parameter_overrides = "Stage=dev BdoRegion=tw UseRdsProxy=false"
 [prod.deploy.parameters]
 stack_name = "bdo-market-prod"
 resolve_s3 = true
-s3_prefix = "bdo-market-insights"
+s3_prefix = "bdo-market-insights/prod"
 region = "us-east-1"
 confirm_changeset = true
 capabilities = "CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"

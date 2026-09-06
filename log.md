@@ -1941,3 +1941,31 @@ records (the sessions did not log at the time); dates are the merge dates._
 - The old SSM checksum parameter is now orphaned (nothing reads it); delete it
   per stage as a one-time manual cleanup. The transition is otherwise
   self-correcting -- the first run persists the metadata row.
+
+
+
+## 2026-09-07 — Per-stage S3 prefix for deployment artifacts
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `fix/samconfig-per-stage-s3-prefix`
+**Phase:** deploy tooling / CI-CD
+**Commits:** PR #TBD
+
+### Done
+- Gave each stage its own `s3_prefix` in `samconfig.toml`
+  (`bdo-market-insights/dev` and `bdo-market-insights/prod`) so their deployment
+  artifacts no longer share object keys. SAM artifacts are content-addressed, so
+  under a shared prefix an identical layer/function mapped to the same S3 key
+  across stages; `sam delete` on one stage then removed objects the other stage's
+  live stack still referenced, breaking its next update/rollback with an S3
+  `NoSuchKey`. Stage-scoped prefixes make that cross-stage collision impossible.
+- Added a comment at the config explaining the rationale so the prefixes are not
+  later collapsed back to one.
+
+### Decisions
+- Structural isolation (per-stage prefix) over a process rule ("do not delete one
+  stage while another deploys"): the prefix makes the failure impossible rather
+  than relying on operator discipline. Kept `resolve_s3 = true`; only the prefix
+  changed. Takes effect on each stage's next deploy (fresh upload under the new
+  prefix; old shared-prefix objects are harmlessly orphaned).
