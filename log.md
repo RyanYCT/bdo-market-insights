@@ -1950,7 +1950,7 @@ records (the sessions did not log at the time); dates are the merge dates._
 **Mode:** Vibe
 **Branch:** `fix/samconfig-per-stage-s3-prefix`
 **Phase:** deploy tooling / CI-CD
-**Commits:** PR #TBD
+**Commits:** PR #110
 
 ### Done
 - Gave each stage its own `s3_prefix` in `samconfig.toml`
