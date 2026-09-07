@@ -1969,3 +1969,37 @@ records (the sessions did not log at the time); dates are the merge dates._
   than relying on operator discipline. Kept `resolve_s3 = true`; only the prefix
   changed. Takes effect on each stage's next deploy (fresh upload under the new
   prefix; old shared-prefix objects are harmlessly orphaned).
+
+
+
+## 2026-09-08 — Runbook rewrite: procedure-first format + refresh
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `docs/runbook-procedure-format`
+**Phase:** documentation
+**Commits:** PR #111
+
+### Done
+- Rewrote `docs/runbook.md` from essay-style prose into a consistent
+  procedure-first format: each task has Purpose / When / Preconditions /
+  Risk / Reversible, numbered one-action steps with the command in its own
+  block and an `Expected:` line, a Verify block, and a Notes block for rationale
+  (so the happy path is skimmable and commands are no longer buried in
+  sentences). Added a Conventions section documenting the template; kept both
+  mermaid diagrams and the Contents TOC.
+- Refreshed stale content: the catalog checksum now lives in a DynamoDB metadata
+  row, not SSM (ADR-0034); the delivery bucket is `bdo-<stage>-cdn-<account>-<region>`
+  owned by `CdnStack` (ADR-0032) with `DeliveryBucketJanitor` on non-prod (was
+  the `bdo-<stage>-icons` / `IconsStack` / `IconsBucketJanitor` naming); the
+  teardown owned-stack list and the orphan-cleanup loop now cover all eleven
+  nested stacks in reverse-dependency order; the collision troubleshooting row is
+  `CdnStack CREATE_FAILED`. The retained-bucket purge resolves the name
+  dynamically rather than hardcoding it.
+- Added a per-stage deployment-artifact isolation note and a
+  `GetObject NoSuchKey` troubleshooting row; added a teardown quick-reference.
+
+### Decisions
+- Single file (best for search) with a tiered template — full metadata for major
+  procedures, lite (Purpose + Steps + Notes) for minor ones.
+- All 70 internal anchor links validated; no account id or real domain in the doc.
