@@ -16,8 +16,10 @@ import statistics
 from collections.abc import Sequence
 from typing import Any
 
-#: Default trailing window for analytics, in days.
-WINDOW_DAYS = 14
+#: Default trailing window for analytics, in days. 30 is a standard technical
+#: window (e.g. 30-day volatility) and stays well within snapshot retention
+#: (90 days); see ADR/log for the default-interval rationale.
+WINDOW_DAYS = 30
 #: Minimum daily points required before analytics are meaningful.
 MIN_POINTS = 7
 #: |z-score| above this flags an anomaly.
