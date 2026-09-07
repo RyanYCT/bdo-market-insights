@@ -1,10 +1,9 @@
-"""iconSync Lambda: warm-prefetch icons for tracked items missing them.
+"""iconSync Lambda: warm-prefetch icons for the tracked set.
 
 Invoked on demand -- by the bootstrap orchestrator to pre-warm a fresh
-environment's tracked icons, or manually. Queries the tracked set and, for each
-item whose ``icon_status`` is ``unset``, fetches the icon from the Pearl Abyss
-CDN and stores it in the delivery bucket (marking the item ``stored`` or
-``missing``). Idempotent -- items already ``stored``/``missing`` are skipped.
+environment's tracked icons, or manually. Queries the tracked set and fetches
+each icon from the Pearl Abyss CDN into the delivery bucket. Idempotent -- the
+S3 store simply re-writes, so a re-run is safe.
 
 No longer scheduled: ongoing and whole-catalog materialization is handled on
 demand by the cdn stack's read-through origin (ADR-0033), which fetches and
@@ -31,12 +30,12 @@ metrics = Metrics(namespace="BdoMarket")
 @tracer.capture_lambda_handler
 @logger.inject_lambda_context
 def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    """Materialize icons for tracked items with icon_status=unset."""
+    """Warm-prefetch icons for every tracked item."""
     bucket = os.environ["ICONS_BUCKET"]
     region = os.environ.get("BDO_REGION", "tw")
 
-    pending = [item for item in dynamo.list_tracked_items() if item.icon_status == "unset"]
-    stats = icons.sync_icons(pending, bucket=bucket, region=region)
+    tracked = dynamo.list_tracked_items()
+    stats = icons.sync_icons(tracked, bucket=bucket, region=region)
 
     metrics.add_metric(name="IconsStored", unit=MetricUnit.Count, value=stats.stored)
     metrics.add_metric(name="IconsMissing", unit=MetricUnit.Count, value=stats.missing)
@@ -44,14 +43,14 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     logger.info(
         "iconSync complete",
         extra={
-            "pending": len(pending),
+            "tracked": len(tracked),
             "stored": stats.stored,
             "missing": stats.missing,
             "errors": stats.errors,
         },
     )
     return {
-        "pending": len(pending),
+        "tracked": len(tracked),
         "stored": stats.stored,
         "missing": stats.missing,
         "errors": stats.errors,

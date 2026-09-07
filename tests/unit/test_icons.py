@@ -11,7 +11,7 @@ import moto
 import pytest
 from botocore.exceptions import ClientError
 
-from bdo_common import dynamo, icons
+from bdo_common import icons
 from bdo_common.models import Item
 
 
@@ -84,19 +84,11 @@ class TestSyncIcons:
 
             monkeypatch.setattr(icons, "fetch_icon", fake_fetch)
 
-            statuses: dict[int, str] = {}
-            monkeypatch.setattr(
-                dynamo,
-                "update_item",
-                lambda item_id, updates: statuses.__setitem__(item_id, updates["icon_status"]),
-            )
-
             items = [Item(id=1, name="A"), Item(id=2, name="B"), Item(id=3, name="C")]
             stats = icons.sync_icons(items, bucket="test-icons", region="tw", s3_client=s3)
 
+            # id 1 stored, id 2 missing (CDN 403/404), id 3 transient error.
             assert (stats.stored, stats.missing, stats.errors) == (1, 1, 1)
-            # id 3 (transient error) is left unset -> no status write
-            assert statuses == {1: "stored", 2: "missing"}
 
             assert s3.get_object(Bucket="test-icons", Key="icons/1.png")["Body"].read() == b"PNG1"
             with pytest.raises(ClientError):

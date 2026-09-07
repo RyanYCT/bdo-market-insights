@@ -44,7 +44,7 @@ rather than by a scheduled job.
 - **`iconSync` is no longer scheduled.** The function is kept as an on-demand
   warm-prefetch for a fresh environment's tracked icons (invoked by the bootstrap
   orchestrator); ongoing and whole-catalog materialization is the read-through's
-  job. `icon_status` is now vestigial (kept for now; a later change drops it).
+  job. `icon_status` is now vestigial (removed in ADR-0035).
 
 ## Consequences
 
@@ -56,7 +56,8 @@ rather than by a scheduled job.
   hundred ms), then it's cached.
 - (−) More moving parts on the distribution (a second origin + origin group + a
   Lambda Function URL with OAC and an invoke permission).
-- (−) `icon_status` lingers as a vestigial column until a follow-up removes it.
+- (−) `icon_status` lingers as a vestigial column until a follow-up removes it
+  (done in ADR-0035).
 
 ## Notes
 

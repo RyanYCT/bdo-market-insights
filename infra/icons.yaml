@@ -2,10 +2,10 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
   Item-icon materializer for bdo-market-insights: an on-demand Lambda that
-  fetches icons from the Pearl Abyss CDN for tracked items missing them
-  (icon_status=unset) and writes them to the shared delivery bucket. Invoked by
-  the bootstrap orchestrator to warm-prefetch a fresh environment's tracked
-  icons; ongoing and whole-catalog materialization is handled on demand by the
+  fetches icons from the Pearl Abyss CDN for the tracked set and writes them to
+  the shared delivery bucket. Invoked by the bootstrap orchestrator to
+  warm-prefetch a fresh environment's tracked icons; ongoing and whole-catalog
+  materialization is handled on demand by the
   cdn stack's read-through origin (ADR-0033), so this is no longer scheduled.
   The bucket and its CloudFront distribution are owned by the cdn stack
   (ADR-0032); this stack is a producer that writes icons/<id>.png into it. Not
@@ -67,8 +67,10 @@ Resources:
           DYNAMODB_TABLE: !Ref DynamoDbTableName
           ICONS_BUCKET: !Ref CdnBucketName
       Policies:
-        # Read tracked items (Query tracked-index) + set icon_status (UpdateItem).
-        - DynamoDBCrudPolicy:
+        # Read-only: query the tracked-index for the items to prefetch. iconSync
+        # no longer writes item state (icon_status was dropped); it only reads
+        # the tracked set and writes icons to S3.
+        - DynamoDBReadPolicy:
             TableName: !Ref DynamoDbTableName
         # Write materialized icons into the shared delivery bucket.
         - S3WritePolicy:

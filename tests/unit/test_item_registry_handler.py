@@ -75,7 +75,6 @@ def test_list_items_filters(
                     grade=4,
                     category="ring",
                     tracked=True,
-                    icon_status="stored",
                 )
             ],
             None,
@@ -95,7 +94,6 @@ def test_list_items_filters(
     # Catalog fields (ADR-0018) are part of the documented response contract.
     assert item["grade"] == 4
     assert item["names"] == {"tw": "\u5fb7\u6ce2\u96f7\u5361\u6212\u6307"}
-    assert item["icon_status"] == "stored"
     # Internal fields are omitted from the public contract.
     assert "model_id" not in item
     assert "cron_profile" not in item
@@ -184,7 +182,7 @@ def test_get_item_found(
     monkeypatch.setattr(
         mod.dynamo,
         "get_item",
-        lambda item_id: Item(id=item_id, name="Deboreka Ring", grade=4, icon_status="stored"),
+        lambda item_id: Item(id=item_id, name="Deboreka Ring", grade=4),
     )
     resp = mod.handler(_event("GET", "/v1/items/12094"), lambda_context)
     assert resp["statusCode"] == 200
@@ -192,7 +190,6 @@ def test_get_item_found(
     assert body["id"] == 12094
     # Catalog fields (ADR-0018) are part of the documented response contract.
     assert body["grade"] == 4
-    assert body["icon_status"] == "stored"
     # icon_url is null unless a public delivery base is configured for the stage.
     assert body["icon_url"] is None
     assert body["names"] == {}
@@ -204,28 +201,13 @@ def test_get_item_found(
 def test_get_item_icon_url_when_base_configured(
     mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A stored icon resolves to a public URL once ICON_BASE_URL is set."""
+    """icon_url resolves for any item once a base is set (read-through, ADR-0033):
+    the URL is universal and the icon materializes on first request."""
     monkeypatch.setattr(mod, "ICON_BASE_URL", "https://icons.example.com")
     monkeypatch.setattr(
         mod.dynamo,
         "get_item",
-        lambda item_id: Item(id=item_id, name="Deboreka Ring", icon_status="stored"),
-    )
-    resp = mod.handler(_event("GET", "/v1/items/12094"), lambda_context)
-    assert resp["statusCode"] == 200
-    assert json.loads(resp["body"])["icon_url"] == "https://icons.example.com/icons/12094.png"
-
-
-def test_get_item_icon_url_universal_regardless_of_status(
-    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """icon_url resolves for any item once a base is set (read-through, ADR-0033),
-    regardless of icon_status -- the icon materializes on first request."""
-    monkeypatch.setattr(mod, "ICON_BASE_URL", "https://icons.example.com")
-    monkeypatch.setattr(
-        mod.dynamo,
-        "get_item",
-        lambda item_id: Item(id=item_id, name="Deboreka Ring", icon_status="unset"),
+        lambda item_id: Item(id=item_id, name="Deboreka Ring"),
     )
     resp = mod.handler(_event("GET", "/v1/items/12094"), lambda_context)
     assert resp["statusCode"] == 200
@@ -265,7 +247,6 @@ def test_create_item_validates_via_arsha(
     # projected onto the public contract (no internal ETL routing fields).
     created_body = json.loads(resp["body"])
     assert created_body["id"] == 12094
-    assert created_body["icon_status"] == "unset"
     assert "cron_profile" not in created_body  # dropped from the public shape
     assert "model_id" not in created_body
 

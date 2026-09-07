@@ -26,13 +26,12 @@ class TestBuildCatalogArtifact:
                 category="accessories",
                 main_category="20",
                 sub_category="2",
-                icon_status="stored",
                 # Internal fields must not leak into the artifact.
                 model_id="accessory_v1",
                 cron_profile="deboreka",
                 tracked=True,
             ),
-            _item(11, name="Cheap Thing", icon_status="unset"),
+            _item(11, name="Cheap Thing"),
         ]
 
         out = catalog_artifact.build_catalog_artifact(items, icon_base="https://cdn.example.com")
@@ -55,18 +54,16 @@ class TestBuildCatalogArtifact:
         assert "cron_profile" not in deb
         assert "tracked" not in deb
 
-    def test_icon_url_universal_regardless_of_status(self) -> None:
-        # Read-through (ADR-0033): every item gets a URL when a base is set,
-        # regardless of icon_status (the icon materializes on first request).
+    def test_icon_url_universal_when_base_set(self) -> None:
+        # Read-through (ADR-0033): every item gets a URL when a base is set; the
+        # icon materializes on first request.
         out = catalog_artifact.build_catalog_artifact(
-            [_item(1, icon_status="unset")], icon_base="https://cdn.example.com"
+            [_item(1)], icon_base="https://cdn.example.com"
         )
         assert out[0]["icon_url"] == "https://cdn.example.com/icons/1.png"
 
     def test_icon_url_none_when_no_base(self) -> None:
-        out = catalog_artifact.build_catalog_artifact(
-            [_item(1, icon_status="stored")], icon_base=""
-        )
+        out = catalog_artifact.build_catalog_artifact([_item(1)], icon_base="")
         assert out[0]["icon_url"] is None
 
 
@@ -81,8 +78,8 @@ class _FakeS3:
 class TestPublishCatalogArtifact:
     def test_scans_builds_and_writes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         items = [
-            _item(2, name="B", icon_status="stored"),
-            _item(1, name="A", icon_status="unset"),
+            _item(2, name="B"),
+            _item(1, name="A"),
         ]
         monkeypatch.setattr("bdo_common.dynamo.scan_catalog_items", lambda: items)
         s3 = _FakeS3()

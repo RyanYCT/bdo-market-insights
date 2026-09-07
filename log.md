@@ -2160,3 +2160,33 @@ records (the sessions did not log at the time); dates are the merge dates._
   `30d`-hourly vs `MAX_SNAPSHOT_LIMIT` interaction; an optional `granularity`
   override). Follow-up to the analytics default-window change (#113); this covers
   the time-series read path, which keeps its convention-correct defaults.
+
+
+
+## 2026-09-07 — Drop the vestigial icon_status column (ADR-0035)
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `refactor/drop-icon-status`
+**Phase:** API / data model (ADR-0035)
+**Commits:** PR #TBD
+
+### Done
+- Removed `icon_status` everywhere it lingered after read-through delivery
+  (ADR-0033) made it inert: the `Item` model, the DynamoDB read/write and both
+  catalog projections, the `ItemResponse` contract (OpenAPI regenerated), the
+  `catalog.json` artifact, and the last gate in `iconSync`.
+- `iconSync` now warm-prefetches **every** tracked item unconditionally (the S3
+  store is idempotent); it no longer writes item state, so its DynamoDB grant
+  narrows from `DynamoDBCrudPolicy` to `DynamoDBReadPolicy` (least privilege).
+- Added ADR-0035; annotated ADR-0033's deferral as done; refreshed the
+  architecture diagram edge. Updated the affected unit tests.
+
+### Decisions
+- Minor version bump: removing a response field is a contract change, but
+  `icon_status` has been best-effort/vestigial since ADR-0033 and nothing should
+  depend on it.
+- No data migration in IaC (DynamoDB is schemaless, the stray attribute is
+  ignored); the leftover attribute is cleared with a one-off out-of-band scrub.
+- Historical ADRs 0018/0021/0023 left unchanged as records of the original
+  design.

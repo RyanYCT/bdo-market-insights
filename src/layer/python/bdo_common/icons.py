@@ -1,12 +1,15 @@
 """Materialize BDO item icons from the official Pearl Abyss CDN into S3.
 
-Icons are self-hosted rather than hotlinked. For each tracked item whose
-``icon_status`` is ``unset``, fetch the PNG from the Pearl CDN and store it in
-the icons bucket, then record the outcome on the item:
+Icons are self-hosted rather than hotlinked. For each item, fetch the PNG from
+the Pearl CDN and store it in the delivery bucket, counting the outcome:
 
 * ``stored``  -- fetched and written to S3.
-* ``missing`` -- the CDN has no icon for this id (HTTP 403/404); stop retrying.
-* left ``unset`` -- a transient/server error; retried on the next run.
+* ``missing`` -- the CDN has no icon for this id (HTTP 403/404).
+* ``errors``  -- a transient/server error; retried on the next run.
+
+Used as an on-demand warm-prefetch for the tracked set; whole-catalog
+materialization is read-through at the CDN (ADR-0033). The S3 store is
+idempotent, so a re-run simply re-writes.
 """
 
 from __future__ import annotations
@@ -20,7 +23,6 @@ from typing import Any
 
 import boto3
 
-from bdo_common import dynamo
 from bdo_common.models import Item
 
 logger = logging.getLogger(__name__)
@@ -57,9 +59,9 @@ def public_icon_url(item_id: int, *, base: str) -> str | None:
     Returns ``{base}/{ICON_KEY_PREFIX}{item_id}.png`` — the object key served
     through the configured delivery ``base`` (the CloudFront CDN in front of the
     bucket) — for **every** item, or ``None`` only when no delivery base is
-    configured for the stage. The URL no longer depends on ``icon_status``:
-    under read-through delivery (ADR-0033) the icon materializes on first
-    request and self-heals, so the URL is always valid once a base is set.
+    configured for the stage. Under read-through delivery (ADR-0033) the icon
+    materializes on first request and self-heals, so the URL is always valid
+    once a base is set.
 
     The URL is deterministic and stable for a given ``base`` + ``item_id`` so
     clients can cache it.
@@ -99,8 +101,8 @@ def sync_icons(
     """Materialize icons for ``items``; return counts of stored/missing/errors.
 
     Each item is processed independently: a transient failure on one item is
-    logged and counted as an error (its ``icon_status`` is left unchanged so the
-    next run retries it) and does not abort the rest.
+    logged and counted as an error (retried on the next run) and does not abort
+    the rest. The S3 write is idempotent, so re-running is safe.
     """
     s3 = s3_client if s3_client is not None else boto3.client("s3")
     stored = missing = errors = 0
@@ -109,7 +111,6 @@ def sync_icons(
         try:
             data = fetch_icon(item.id, region=region, base=base)
             if data is None:
-                dynamo.update_item(item.id, {"icon_status": "missing"})
                 missing += 1
             else:
                 s3.put_object(
@@ -119,10 +120,9 @@ def sync_icons(
                     ContentType="image/png",
                     CacheControl="public, max-age=604800",
                 )
-                dynamo.update_item(item.id, {"icon_status": "stored"})
                 stored += 1
         except Exception:
-            logger.exception("icon materialization failed for item %s (left unset)", item.id)
+            logger.exception("icon materialization failed for item %s", item.id)
             errors += 1
 
     return IconSyncStats(stored=stored, missing=missing, errors=errors)

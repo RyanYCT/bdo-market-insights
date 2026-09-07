@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -120,7 +119,6 @@ class Item(BaseModel):
     # Currently metadata for a future calibrated enhancement-cost model -- not
     # yet consumed by pricing or the ETL.
     cron_profile: str = "none"
-    icon_status: Literal["unset", "stored", "missing"] = "unset"  # S3 icon materialization state
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
