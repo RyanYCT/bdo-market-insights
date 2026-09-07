@@ -2095,7 +2095,7 @@ records (the sessions did not log at the time); dates are the merge dates._
 **Mode:** Vibe
 **Branch:** `docs/log-backfill-105-107`
 **Phase:** documentation
-**Commits:** PR #TBD
+**Commits:** PR #112
 
 ### Done
 - Backfilled the three missing log entries between #104 and #108 -- the CDN
