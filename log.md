@@ -2107,3 +2107,28 @@ records (the sessions did not log at the time); dates are the merge dates._
 ### Decisions
 - Backfilled entries are dated to their original work (2026-08-30 / 08-31 /
   09-02); this note records that they were reconstructed after the fact.
+
+
+
+## 2026-09-11 — Spec: market range shortcut (range → granularity routing)
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `docs/spec-market-range-shortcut`
+**Phase:** spec (design only, not scheduled)
+**Commits:** PR #TBD
+
+### Done
+- Authored a design-only spec under
+  `.kiro/specs/market-range-shortcut/{requirements,design,tasks}.md` for a
+  Yahoo-style `range` shortcut (`1d/7d/30d/90d/1y/all`) on the market read path.
+  It routes range → granularity by the two-tier storage ladder (≤ 30 days →
+  hourly `market_snapshot`; > 30 days → daily `market_daily`), reusing the
+  existing query paths, caps, and coverage — no new ingestion or storage.
+
+### Decisions
+- Kept it a spec, not code: three open questions gate implementation (endpoint
+  shape — unified `/series` vs `range` sugar on the existing endpoints; the
+  `30d`-hourly vs `MAX_SNAPSHOT_LIMIT` interaction; an optional `granularity`
+  override). Follow-up to the analytics default-window change (#113); this covers
+  the time-series read path, which keeps its convention-correct defaults.
