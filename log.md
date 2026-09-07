@@ -1875,6 +1875,89 @@ records (the sessions did not log at the time); dates are the merge dates._
 - Next: A2 read-through icons (universal `icon_url`) lands in the cdn stack.
 
 
+## 2026-08-30 — CDN bucket janitor: stdlib-only custom resource
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `fix/cdn-janitor-stdlib`
+**Phase:** infra (cdn stack)
+**Commits:** PR #105
+
+### Done
+- The delivery-bucket janitor imported `aws_lambda_powertools` (Logger/Tracer)
+  from the shared `bdo-common` layer, but in the `cdn` stack the janitor is
+  intentionally layer-free -- so the import failed at init, the handler never
+  ran, and its CloudFormation custom resource never responded, failing
+  `CdnStack` CREATE with a custom-resource timeout.
+- Switched the janitor to stdlib `logging` + `boto3` only (both in the Lambda
+  runtime); removed the Logger/Tracer decorators and the now-unused
+  `Tracing: Active`.
+
+### Decisions
+- A custom-resource Lambda should depend only on the runtime (stdlib + boto3),
+  never a shared layer, so its response to CloudFormation can't be blocked by an
+  import failure. Fewer init-time imports is the right posture for a resource
+  that must always send a response.
+
+
+## 2026-08-31 — CDN delivery bucket: account/region-qualified name
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `fix/cdn-bucket-name-qualified`
+**Phase:** infra (cdn stack)
+**Commits:** PR #106
+
+### Done
+- Renamed the delivery bucket from the fixed `bdo-<stage>-icons` to
+  `bdo-<stage>-cdn-${AWS::AccountId}-${AWS::Region}` (qualified via pseudo-params
+  -- no literal account id in the template). S3 bucket names are one global
+  namespace; qualifying guarantees uniqueness, and because it is a brand-new name
+  the bucket creates immediately instead of waiting on S3's name-reuse latency
+  after the old bucket's deletion.
+- Bucket policy and janitor IAM now derive from `!GetAtt DeliveryBucket.Arn`
+  rather than repeating a hardcoded name. Recorded the S3 naming convention in
+  `structure.md`.
+
+### Decisions
+- Account+region-qualified S3 names (mirroring the SSM key convention) to dodge
+  global-namespace collisions and name-reuse latency. The bucket is internal
+  (behind CloudFront, referenced by ARN), so the longer name is invisible to
+  consumers; `icons`/`catalog` receive it via the `CdnBucketName` parameter.
+
+
+## 2026-09-02 — Read-through icon delivery via CloudFront origin failover
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/read-through-icons`
+**Phase:** icon delivery (ADR-0033)
+**Commits:** PR #107
+
+### Done
+- Switched icon delivery from a scheduled push job to **read-through**
+  materialization (ADR-0033). Added `icon_origin` -- a stdlib+boto3 Lambda
+  (Function URL, OAC-signed) CloudFront reaches only on an S3 miss: it fetches
+  the icon from the Pearl CDN, stores it to the delivery bucket, and returns the
+  bytes; later requests serve from S3.
+- The icons behaviour uses a CloudFront **origin group** (S3 primary, Lambda
+  secondary) with failover on 403/404, plus `CustomErrorResponses`
+  (404 -> `ErrorCachingMinTTL` 3600) so a genuinely-missing icon is negatively
+  cached ~1h instead of re-fetched per request.
+- `public_icon_url` is now universal (`{base}/icons/{id}.png` for every item, no
+  `icon_status` gate), so `/v1/items` and the catalog artifact expose a working
+  `icon_url` for the whole catalog, self-healing if the bucket is recreated.
+- `iconSync` is no longer scheduled -- kept as an on-demand warm-prefetch
+  (bootstrap-invoked) for a fresh environment's tracked icons.
+
+### Decisions
+- Read-through over scheduled push: universal coverage + self-healing, no daily
+  job. `icon_origin` is layer-free (stdlib+boto3) to keep the `cdn` stack
+  layer-free and minimise cold-start / import-failure surface on the origin path.
+- `icon_url` is best-effort (a consuming frontend needs a placeholder / `onerror`
+  fallback). `icon_status` is now vestigial; a follow-up removes it.
+
+
 
 ## 2026-09-04 — Catalog sync: reconcile a stale checksum against an empty table
 
@@ -2003,3 +2086,24 @@ records (the sessions did not log at the time); dates are the merge dates._
 - Single file (best for search) with a tiered template — full metadata for major
   procedures, lite (Purpose + Steps + Notes) for minor ones.
 - All 70 internal anchor links validated; no account id or real domain in the doc.
+
+
+
+## 2026-09-09 — Backfill log entries for #105–#107
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `docs/log-backfill-105-107`
+**Phase:** documentation
+**Commits:** PR #TBD
+
+### Done
+- Backfilled the three missing log entries between #104 and #108 -- the CDN
+  bucket janitor stdlib fix (#105), the account/region-qualified delivery bucket
+  name (#106), and read-through icon delivery (#107, ADR-0033) -- reconstructed
+  from their merged commits and inserted in date order. The timeline no longer
+  jumps #104 → #108.
+
+### Decisions
+- Backfilled entries are dated to their original work (2026-08-30 / 08-31 /
+  09-02); this note records that they were reconstructed after the fact.
