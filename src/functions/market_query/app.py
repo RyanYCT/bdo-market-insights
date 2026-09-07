@@ -413,7 +413,7 @@ def get_analysis(
             ge=1,
             le=90,
             description=(
-                "Trailing analytics window in days. Range: 1-90. Default: 14. "
+                "Trailing analytics window in days. Range: 1-90. Default: 30. "
                 "Needs at least 7 daily points."
             ),
         ),

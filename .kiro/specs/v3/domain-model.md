@@ -57,7 +57,7 @@ Personal -> verdict="buy" (1.28e9 > 1.02e9). Resale (VP+7000):
 revenue=1.02e9*0.85475=8.718e8, profit<0 -> verdict="loss".
 
 ## Analytics defaults
-- Window 14 days; < 7 daily points -> {"insufficient_data": true}.
+- Window 30 days (default); < 7 daily points -> {"insufficient_data": true}.
 - Volatility on daily close_price: sample stddev (n-1); CV = sigma/mean.
 - Liquidity = mean daily volume, daily volume =
   total_trades(end of day) - total_trades(start of day).
