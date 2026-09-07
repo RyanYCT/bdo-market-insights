@@ -2055,7 +2055,7 @@ records (the sessions did not log at the time); dates are the merge dates._
 
 
 
-## 2026-09-08 — Runbook rewrite: procedure-first format + refresh
+## 2026-09-07 — Runbook rewrite: procedure-first format + refresh
 
 **Agent:** Kiro
 **Mode:** Vibe
@@ -2089,7 +2089,7 @@ records (the sessions did not log at the time); dates are the merge dates._
 
 
 
-## 2026-09-09 — Backfill log entries for #105–#107
+## 2026-09-07 — Backfill log entries for #105–#107
 
 **Agent:** Kiro
 **Mode:** Vibe
@@ -2110,7 +2110,7 @@ records (the sessions did not log at the time); dates are the merge dates._
 
 
 
-## 2026-09-10 — Analytics default window 14 → 30 days
+## 2026-09-07 — Analytics default window 14 → 30 days
 
 **Agent:** Kiro
 **Mode:** Vibe
