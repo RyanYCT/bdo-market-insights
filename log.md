@@ -2116,7 +2116,7 @@ records (the sessions did not log at the time); dates are the merge dates._
 **Mode:** Vibe
 **Branch:** `feat/analytics-default-window-30`
 **Phase:** API (market analytics)
-**Commits:** PR #TBD
+**Commits:** PR #113
 
 ### Done
 - Bumped the `/v1/market/items/{id}/analysis` default `window_days` from 14 to 30
