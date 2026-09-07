@@ -770,14 +770,14 @@ paths:
           - type: 'null'
           description: 'Enhancement sub-id. Default: 0 (the base item).'
           title: Sid
-      - description: 'Trailing analytics window in days. Range: 1-90. Default: 14.
+      - description: 'Trailing analytics window in days. Range: 1-90. Default: 30.
           Needs at least 7 daily points.'
         in: query
         name: window_days
         required: false
         schema:
-          default: 14
-          description: 'Trailing analytics window in days. Range: 1-90. Default: 14.
+          default: 30
+          description: 'Trailing analytics window in days. Range: 1-90. Default: 30.
             Needs at least 7 daily points.'
           maximum: 90.0
           minimum: 1.0

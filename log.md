@@ -2107,3 +2107,31 @@ records (the sessions did not log at the time); dates are the merge dates._
 ### Decisions
 - Backfilled entries are dated to their original work (2026-08-30 / 08-31 /
   09-02); this note records that they were reconstructed after the fact.
+
+
+
+## 2026-09-10 — Analytics default window 14 → 30 days
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/analytics-default-window-30`
+**Phase:** API (market analytics)
+**Commits:** PR #TBD
+
+### Done
+- Bumped the `/v1/market/items/{id}/analysis` default `window_days` from 14 to 30
+  (`analytics.WINDOW_DAYS`), a standard technical window (e.g. 30-day
+  volatility). Updated the param description, the normative domain-model spec,
+  and regenerated the OpenAPI contract; added a handler test that pins the
+  default (bare call → daily-window query and response both use 30).
+
+### Decisions
+- 30 days only: the two time-series endpoints keep their convention-correct
+  defaults (`/snapshots` 7d hourly, `/daily` 90d daily) -- a flat 30-day default
+  mis-serves both (30d of hourly snapshots is ~720 points and can exceed the
+  1848-row cap for multi-sid items; 30d would shrink `/daily`'s 90d history).
+  The analytics window is a summary (no series payload) and stays within the
+  existing 1-90 range and the 90-day snapshot retention, so it's the one place a
+  30-day default fits cleanly and safely.
+- Range↔granularity coupling (Yahoo-style `range` shortcut) is specced as a
+  separate follow-up feature rather than folded in here.

@@ -292,6 +292,29 @@ def test_analysis_combines_pricing_and_analytics(
     assert body["sid"] == 0  # default sid
 
 
+def test_analysis_defaults_window_days_to_30(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A bare /analysis call uses the default trailing window (30 days): the
+    # default propagates to the daily-window query and is echoed in the response.
+    captured: dict[str, Any] = {}
+
+    def fake_window(conn: Any, **kwargs: Any) -> list[Any]:
+        captured.update(kwargs)
+        return [_daily(i) for i in range(7)]
+
+    monkeypatch.setattr(
+        mod.SnapshotRepo, "get_snapshots", lambda conn, **kw: [_snap(0, 453_000_000)]
+    )
+    monkeypatch.setattr(mod.DailyRepo, "get_daily_window", fake_window)
+
+    resp = mod.handler(_event("/v1/market/items/12094/analysis"), lambda_context)
+
+    assert resp["statusCode"] == 200
+    assert captured["window_days"] == 30
+    assert json.loads(resp["body"])["window_days"] == 30
+
+
 def test_analysis_insufficient_daily_data(
     mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
