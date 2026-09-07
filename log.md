@@ -2116,7 +2116,7 @@ records (the sessions did not log at the time); dates are the merge dates._
 **Mode:** Vibe
 **Branch:** `docs/spec-market-range-shortcut`
 **Phase:** spec (design only, not scheduled)
-**Commits:** PR #TBD
+**Commits:** PR #114
 
 ### Done
 - Authored a design-only spec under
