@@ -82,11 +82,12 @@ flowchart TD
 
 ## First-time bring-up
 
-**Purpose:** Stand up a stack from empty (a new account, or after a full
+- **Purpose:** Stand up a stack from empty (a new account, or after a full
 teardown).
-**When:** New environment, or after [Recreating a stack from scratch](#recreating-a-stack-from-scratch) (do the orphan-clearing there first).
-**Preconditions:** deploy config seeded (step 1); for prod, the [CI/CD deploy role](#cicd-deploy-role-github-oidc-bootstrap) exists.
-**Risk:** low · **Reversible:** yes (see [Delete a whole stack](#delete-a-whole-stack-destructive))
+- **When:** New environment, or after [Recreating a stack from scratch](#recreating-a-stack-from-scratch) (do the orphan-clearing there first).
+- **Preconditions:** deploy config seeded (step 1); for prod, the [CI/CD deploy role](#cicd-deploy-role-github-oidc-bootstrap) exists.
+- **Risk:** low
+- **Reversible:** yes (see [Delete a whole stack](#delete-a-whole-stack-destructive))
 
 ### Steps
 1. Seed deploy config (once) — writes the SSM parameters the deploy resolves
@@ -128,10 +129,11 @@ teardown).
 
 ### First-time role bootstrap
 
-**Purpose:** Create the cluster-level Postgres roles the runtime and migrations authenticate as.
-**When:** Once per environment, before the first normal deploy (step 2 of bring-up).
-**Preconditions:** none — runs via the migrator Lambda in bootstrap mode; no tunnel or bastion.
-**Risk:** low · **Reversible:** idempotent (re-runnable)
+- **Purpose:** Create the cluster-level Postgres roles the runtime and migrations authenticate as.
+- **When:** Once per environment, before the first normal deploy (step 2 of bring-up).
+- **Preconditions:** none — runs via the migrator Lambda in bootstrap mode; no tunnel or bastion.
+- **Risk:** low
+- **Reversible:** idempotent (re-runnable)
 
 #### Steps
 1. Deploy infra with auto-migrate off (provisions the migrator Lambda without
@@ -169,10 +171,11 @@ teardown).
 
 ### Backfill the item catalog (one-time)
 
-**Purpose:** Load the full BDO item catalog (~tens of thousands of items) from arsha.io `util/db`.
-**When:** Offline/local alternative to the automatic bootstrap, or a targeted re-run.
-**Preconditions:** target DynamoDB table exists.
-**Risk:** low · **Reversible:** idempotent (partial-upsert; never clobbers tracked items' ETL-owned fields)
+- **Purpose:** Load the full BDO item catalog (~tens of thousands of items) from arsha.io `util/db`.
+- **When:** Offline/local alternative to the automatic bootstrap, or a targeted re-run.
+- **Preconditions:** target DynamoDB table exists.
+- **Risk:** low
+- **Reversible:** idempotent (partial-upsert; never clobbers tracked items' ETL-owned fields)
 
 > The bootstrap orchestrator (ADR-0028) runs the catalog sync automatically on a
 > fresh environment's first deploy and on every `make bootstrap`. Use this only
@@ -204,10 +207,11 @@ teardown).
 
 ### Seed the tracked set (one-time)
 
-**Purpose:** Decide and record **which items the ETL polls** (the tracked set).
-**When:** Offline alternative to the automatic bootstrap, or to change what's tracked.
-**Preconditions:** catalog backfilled first (so names are present).
-**Risk:** low · **Reversible:** additive by default; `--reconcile` untracks removed items
+- **Purpose:** Decide and record **which items the ETL polls** (the tracked set).
+- **When:** Offline alternative to the automatic bootstrap, or to change what's tracked.
+- **Preconditions:** catalog backfilled first (so names are present).
+- **Risk:** low
+- **Reversible:** additive by default; `--reconcile` untracks removed items
 
 > The bootstrap orchestrator (ADR-0028) applies the committed tracked set
 > automatically (the `seedTracked` Lambda) on first deploy and on
@@ -275,10 +279,11 @@ flowchart LR
 
 ### Item icons
 
-**Purpose:** Materialize item icons into the delivery bucket.
-**When:** Almost never manually — icons materialize **read-through** on first request (ADR-0033). Use this only to pre-warm the tracked subset immediately.
-**Preconditions:** none.
-**Risk:** low · **Reversible:** icons are re-fetchable from the Pearl Abyss CDN
+- **Purpose:** Materialize item icons into the delivery bucket.
+- **When:** Almost never manually — icons materialize **read-through** on first request (ADR-0033). Use this only to pre-warm the tracked subset immediately.
+- **Preconditions:** none.
+- **Risk:** low
+- **Reversible:** icons are re-fetchable from the Pearl Abyss CDN
 
 #### Steps
 1. Invoke the warm-prefetch **asynchronously** and read the result from the logs.
@@ -300,10 +305,11 @@ flowchart LR
 
 ### CI/CD deploy role (GitHub OIDC) bootstrap
 
-**Purpose:** Create the IAM role GitHub Actions assumes (via OIDC) to deploy prod — no long-lived keys in CI.
-**When:** Once per account, before the first tagged prod release.
-**Preconditions:** IAM permissions to create OIDC providers, roles, and policies; `gh` CLI authenticated.
-**Risk:** medium (IAM) · **Reversible:** yes (delete the role/provider)
+- **Purpose:** Create the IAM role GitHub Actions assumes (via OIDC) to deploy prod — no long-lived keys in CI.
+- **When:** Once per account, before the first tagged prod release.
+- **Preconditions:** IAM permissions to create OIDC providers, roles, and policies; `gh` CLI authenticated.
+- **Risk:** medium (IAM)
+- **Reversible:** yes (delete the role/provider)
 
 Until this role and the `AWS_DEPLOY_ROLE_ARN` repo secret exist, the CI `deploy`
 job fails at `configure-aws-credentials` with *"Could not load credentials from
@@ -421,10 +427,11 @@ and retry behaviour.
 
 ### Adding or removing tracked items & series
 
-**Purpose:** Change what the ETL polls after a BDO patch or curation change.
-**When:** Ongoing maintenance. The committed `scripts/data/` files are the source of truth — edit via PR, then apply.
-**Preconditions:** for brand-new game items, refresh the snapshot first (step 1).
-**Risk:** low · **Reversible:** yes (`--reconcile` / re-seed)
+- **Purpose:** Change what the ETL polls after a BDO patch or curation change.
+- **When:** Ongoing maintenance. The committed `scripts/data/` files are the source of truth — edit via PR, then apply.
+- **Preconditions:** for brand-new game items, refresh the snapshot first (step 1).
+- **Risk:** low
+- **Reversible:** yes (`--reconcile` / re-seed)
 
 #### Steps
 1. If the items are new to the game, refresh the snapshot first — `select_tracked`
@@ -528,10 +535,11 @@ Three things apply to every `make deploy`:
 
 ### Dev deployment (manual)
 
-**Purpose:** Test changes on dev before promoting to prod.
-**When:** The dev stack already exists (setting up from empty? see [First-time bring-up](#first-time-bring-up)).
-**Preconditions:** see the checklist below.
-**Risk:** low · **Reversible:** yes (redeploy previous state / rollback)
+- **Purpose:** Test changes on dev before promoting to prod.
+- **When:** The dev stack already exists (setting up from empty? see [First-time bring-up](#first-time-bring-up)).
+- **Preconditions:** see the checklist below.
+- **Risk:** low
+- **Reversible:** yes (redeploy previous state / rollback)
 
 #### Pre-deploy checklist
 - [ ] Code review complete (PR merged to `main`).
@@ -617,10 +625,11 @@ Expected: `Count >= 1`.
 
 ### Running migrations
 
-**Purpose:** Apply schema migrations from inside the VPC — no bastion or tunnel.
-**When:** After a deploy that adds `migrations/versions/*` (the CI deploy job does this automatically after `sam deploy`).
-**Preconditions:** the `lambda_migrator` role exists ([First-time role bootstrap](#first-time-role-bootstrap)).
-**Risk:** medium (schema) · **Reversible:** depends on the migration
+- **Purpose:** Apply schema migrations from inside the VPC — no bastion or tunnel.
+- **When:** After a deploy that adds `migrations/versions/*` (the CI deploy job does this automatically after `sam deploy`).
+- **Preconditions:** the `lambda_migrator` role exists ([First-time role bootstrap](#first-time-role-bootstrap)).
+- **Risk:** medium (schema)
+- **Reversible:** depends on the migration
 
 #### Steps
 1. Trigger the migrator Lambda (connects to RDS as `lambda_migrator` via IAM auth
@@ -637,10 +646,11 @@ Expected: `Count >= 1`.
 
 ### Prod deployment (CI/CD)
 
-**Purpose:** Release to production. All CI checks run automatically before merge; the deploy job runs only on a `v*` tag.
-**When:** Changes are merged to `main` and validated on dev.
-**Preconditions:** the [CI/CD deploy role](#cicd-deploy-role-github-oidc-bootstrap) exists; RDS roles bootstrapped.
-**Risk:** medium · **Reversible:** [Rollback](#rollback) (deploy the previous tag)
+- **Purpose:** Release to production. All CI checks run automatically before merge; the deploy job runs only on a `v*` tag.
+- **When:** Changes are merged to `main` and validated on dev.
+- **Preconditions:** the [CI/CD deploy role](#cicd-deploy-role-github-oidc-bootstrap) exists; RDS roles bootstrapped.
+- **Risk:** medium
+- **Reversible:** [Rollback](#rollback) (deploy the previous tag)
 
 #### Pre-release checklist
 - [ ] Changes merged to `main` and all CI checks passed.
@@ -696,10 +706,11 @@ cat /tmp/migrate.json
 
 ### Rollback
 
-**Purpose:** Revert prod to the previous stable release.
-**When:** A prod deploy introduced a critical issue.
-**Preconditions:** a previous stable `v*` tag exists.
-**Risk:** medium · **Reversible:** roll forward again
+- **Purpose:** Revert prod to the previous stable release.
+- **When:** A prod deploy introduced a critical issue.
+- **Preconditions:** a previous stable `v*` tag exists.
+- **Risk:** medium
+- **Reversible:** roll forward again
 
 #### Steps
 1. Identify the previous stable tag.
@@ -737,10 +748,11 @@ flag; remember the full-state rule in [Deployment notes](#deployment-notes).
 
 ### Custom API domain
 
-**Purpose:** Serve the API on a custom hostname (opt-in, off by default; ADR-0013).
-**When:** You want `api.example.com` instead of the `execute-api` URL.
-**Preconditions:** the parent domain's Route 53 hosted zone exists (shared infra, not created here); IAM for ACM / API Gateway domains / Route 53.
-**Risk:** medium · **Reversible:** set the key to `none` and redeploy
+- **Purpose:** Serve the API on a custom hostname (opt-in, off by default; ADR-0013).
+- **When:** You want `api.example.com` instead of the `execute-api` URL.
+- **Preconditions:** the parent domain's Route 53 hosted zone exists (shared infra, not created here); IAM for ACM / API Gateway domains / Route 53.
+- **Risk:** medium
+- **Reversible:** set the key to `none` and redeploy
 
 The hostname and zone are account-specific, so they live in SSM (ADR-0024),
 resolved at deploy — the tag-gated CI deploy resolves them too, so once seeded
@@ -795,10 +807,11 @@ make deploy STAGE=prod
 
 ### Custom icons domain
 
-**Purpose:** Serve the icon CDN (CloudFront) on a custom hostname (opt-in, off by default; same SSM/ADR-0024 mechanism, reusing `hosted-zone-id`).
-**When:** You want icons on `cdn.example.com` instead of `*.cloudfront.net`.
-**Preconditions:** as [Custom API domain](#custom-api-domain).
-**Risk:** medium · **Reversible:** set the key to `none` and redeploy
+- **Purpose:** Serve the icon CDN (CloudFront) on a custom hostname (opt-in, off by default; same SSM/ADR-0024 mechanism, reusing `hosted-zone-id`).
+- **When:** You want icons on `cdn.example.com` instead of `*.cloudfront.net`.
+- **Preconditions:** as [Custom API domain](#custom-api-domain).
+- **Risk:** medium
+- **Reversible:** set the key to `none` and redeploy
 
 - `/bdo-market-insights/<stage>/domain/icon-domain-name` — icons hostname, or `none`.
 
@@ -838,10 +851,11 @@ are removed.
 
 ### Public demo API key
 
-**Purpose:** A public, **read-only** API key for "try the API" links (opt-in, off by default).
-**When:** Publishing a demo (e.g. a Postman workspace).
-**Preconditions:** none.
-**Risk:** low · **Reversible:** set the key to `false` and redeploy
+- **Purpose:** A public, **read-only** API key for "try the API" links (opt-in, off by default).
+- **When:** Publishing a demo (e.g. a Postman workspace).
+- **Preconditions:** none.
+- **Risk:** low
+- **Reversible:** set the key to `false` and redeploy
 
 Tight usage plan (2 req/s sustained, 5 burst, 500/day); read-only — writes to
 `/v1/items` (`POST`/`PATCH`/`DELETE`) return `403`, enforced in the `itemRegistry`
@@ -901,9 +915,10 @@ There is **no standing bastion** (ADR-0027). Reach Postgres by escalating scope.
 
 ### Routine: the admin-query Lambda (ADR-0026)
 
-**Purpose:** Ad-hoc inspection / occasional row fixes via the in-VPC, IAM-authenticated `admin-query` Lambda — no tunnel, no host.
-**When:** Read-only inspection, or a targeted DML fix.
-**Risk:** low (read) / medium (`WRITE=1`) · **Reversible:** depends on the SQL
+- **Purpose:** Ad-hoc inspection / occasional row fixes via the in-VPC, IAM-authenticated `admin-query` Lambda — no tunnel, no host.
+- **When:** Read-only inspection, or a targeted DML fix.
+- **Risk:** low (read) / medium (`WRITE=1`)
+- **Reversible:** depends on the SQL
 
 #### Steps
 1. Run read-only SQL (statements run in a Postgres `READ ONLY` transaction).
@@ -920,10 +935,11 @@ There is **no standing bastion** (ADR-0027). Reach Postgres by escalating scope.
 
 ### Rare: on-demand break-glass (ADR-0027)
 
-**Purpose:** DDL outside migrations, bulk work, or master-level recovery via an ephemeral t4g.nano + EICE tunnel as the RDS master.
-**When:** Nothing else can do it. Nothing is left standing afterward.
-**Preconditions:** AWS CLI v2 with local `ssh`; IAM for EICE (`ec2-instance-connect:OpenTunnel`, `…:SendSSHPublicKey`, `ec2:DescribeInstances`, `ec2:DescribeInstanceConnectEndpoints`) + `cloudformation:*` on the `bdo-market-<stage>-break-glass` stack.
-**Risk:** high (master access) · **Reversible:** tear down when done
+- **Purpose:** DDL outside migrations, bulk work, or master-level recovery via an ephemeral t4g.nano + EICE tunnel as the RDS master.
+- **When:** Nothing else can do it. Nothing is left standing afterward.
+- **Preconditions:** AWS CLI v2 with local `ssh`; IAM for EICE (`ec2-instance-connect:OpenTunnel`, `…:SendSSHPublicKey`, `ec2:DescribeInstances`, `ec2:DescribeInstanceConnectEndpoints`) + `cloudformation:*` on the `bdo-market-<stage>-break-glass` stack.
+- **Risk:** high (master access)
+- **Reversible:** tear down when done
 
 #### Steps
 1. Stand up the break-glass host and open the tunnel (leave running).
@@ -946,10 +962,11 @@ There is **no standing bastion** (ADR-0027). Reach Postgres by escalating scope.
 
 ## Market Insights: dev evaluation
 
-**Purpose:** Exercise the insights narration on dev without waiting days for real ETL history.
-**When:** Reviewing insights output on a fresh dev stack.
-**Preconditions:** break-glass tunnel (there is no standing bastion, ADR-0027).
-**Risk:** low (dev only) · **Reversible:** `--clean` removes the synthetic rows
+- **Purpose:** Exercise the insights narration on dev without waiting days for real ETL history.
+- **When:** Reviewing insights output on a fresh dev stack.
+- **Preconditions:** break-glass tunnel (there is no standing bastion, ADR-0027).
+- **Risk:** low (dev only)
+- **Reversible:** `--clean` removes the synthetic rows
 
 The insights pipeline reads RDS `market_daily` and targets **yesterday**
 (`top_movers` needs a prior day; volatility/anomaly ~7–14 days). A fresh dev
@@ -1017,9 +1034,10 @@ The legacy pre-v3 decommission is a separate one-time exercise — see
 
 ### Revert a test setup (non-destructive)
 
-**Purpose:** Undo the opt-in pieces of a dev evaluation without touching the stack.
-**When:** After a dev insights evaluation.
-**Risk:** low · **Reversible:** n/a
+- **Purpose:** Undo the opt-in pieces of a dev evaluation without touching the stack.
+- **When:** After a dev insights evaluation.
+- **Risk:** low
+- **Reversible:** n/a
 
 #### Steps
 1. Remove synthetic insights rows (needs an open break-glass tunnel — see
@@ -1037,10 +1055,11 @@ The legacy pre-v3 decommission is a separate one-time exercise — see
 
 ### Delete a whole stack (destructive)
 
-**Purpose:** Tear down `bdo-market-<stage>` and the nested stacks it owns.
-**When:** Decommissioning an environment, or a clean rebuild.
-**Preconditions:** for prod, disable RDS deletion protection first (below).
-**Risk:** destructive · **Reversible:** no (snapshot RDS / export DynamoDB first)
+- **Purpose:** Tear down `bdo-market-<stage>` and the nested stacks it owns.
+- **When:** Decommissioning an environment, or a clean rebuild.
+- **Preconditions:** for prod, disable RDS deletion protection first (below).
+- **Risk:** destructive
+- **Reversible:** no (snapshot RDS / export DynamoDB first)
 
 `sam delete` removes the root and the nested stacks (network, data, platform,
 etl, insights, api, catalog, cdn, icons, bootstrap, observability). Stacks
@@ -1141,9 +1160,10 @@ delete the remaining compute/data stacks, then retry Network.
 
 ### Recreating a stack from scratch
 
-**Purpose:** Rebuild after a delete, or after a first-time create failed into `ROLLBACK_COMPLETE` (that state can only be deleted, not updated).
-**When:** Clean rebuild, or clearing "already exists" collisions on create.
-**Risk:** destructive (data) · **Reversible:** rebuild via bring-up
+- **Purpose:** Rebuild after a delete, or after a first-time create failed into `ROLLBACK_COMPLETE` (that state can only be deleted, not updated).
+- **When:** Clean rebuild, or clearing "already exists" collisions on create.
+- **Risk:** destructive (data)
+- **Reversible:** rebuild via bring-up
 
 A few fixed-name resources survive a delete/rollback and fail the fresh CREATE
 with "already exists"; clear them first, then rebuild the data. Commands show
