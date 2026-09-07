@@ -2169,7 +2169,7 @@ records (the sessions did not log at the time); dates are the merge dates._
 **Mode:** Vibe
 **Branch:** `refactor/drop-icon-status`
 **Phase:** API / data model (ADR-0035)
-**Commits:** PR #TBD
+**Commits:** PR #116
 
 ### Done
 - Removed `icon_status` everywhere it lingered after read-through delivery
