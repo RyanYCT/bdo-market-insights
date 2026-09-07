@@ -167,7 +167,6 @@ class TestPutAndListItems:
                 main_category="15",
                 sub_category="2",
                 tracked=True,
-                icon_status="stored",
             )
         )
         put_item(Item(id=2, name="Item B", category="weapons", tracked=False))
@@ -180,7 +179,6 @@ class TestPutAndListItems:
         assert items[1].category == "accessories"
         assert items[1].main_category == "15"
         assert items[1].sub_category == "2"
-        assert items[1].icon_status == "stored"
 
 
 class TestUpsertCatalogItem:
@@ -225,7 +223,6 @@ class TestUpsertCatalogItem:
                 tracked=True,
                 model_id="accessory_cron_v1",
                 cron_profile="deboreka",
-                icon_status="stored",
             )
         )
         upsert_catalog_item(item_id=11608, name="Deboreka Ring", grade=4, names={"tw": "戒指"})
@@ -240,7 +237,6 @@ class TestUpsertCatalogItem:
         assert item.tracked is True
         assert item.model_id == "accessory_cron_v1"
         assert item.cron_profile == "deboreka"
-        assert item.icon_status == "stored"
 
     def test_created_at_set_once(self, dynamodb_table: Any) -> None:
         from bdo_common.dynamo import upsert_catalog_item
@@ -310,7 +306,6 @@ class TestBulkUpsertCatalogItems:
                 tracked=True,
                 model_id="accessory_cron_v1",
                 cron_profile="deboreka",
-                icon_status="stored",
             )
         )
 
@@ -336,7 +331,6 @@ class TestBulkUpsertCatalogItems:
         assert existing.tracked is True
         assert existing.model_id == "accessory_cron_v1"
         assert existing.cron_profile == "deboreka"
-        assert existing.icon_status == "stored"
 
         created = get_item(99999)
         assert created is not None

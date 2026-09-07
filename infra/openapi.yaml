@@ -282,14 +282,6 @@ components:
           - type: integer
           - type: 'null'
           title: Grade
-        icon_status:
-          default: unset
-          enum:
-          - unset
-          - stored
-          - missing
-          title: Icon Status
-          type: string
         icon_url:
           anyOf:
           - type: string

@@ -112,7 +112,7 @@ flowchart LR
     catalogsync -->|"read / write checksum"| ssm[("SSM<br/>catalog checksum")]
     catalogsync -->|"upsert changed"| ddb[("DynamoDB items")]
 
-    iconsync -->|"tracked, icon_status=unset"| ddb
+    iconsync -->|"read tracked set"| ddb
     iconsync -->|"fetch PNG"| pearl["Pearl Abyss CDN"]
     iconsync -->|"put icon"| s3[("S3 icons")]
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 from aws_lambda_powertools import Logger, Metrics, Tracer
 from aws_lambda_powertools.event_handler import (
@@ -94,9 +94,9 @@ class ItemResponse(BaseModel):
     main_category: str | None = None
     sub_category: str | None = None
     tracked: bool = True
-    icon_status: Literal["unset", "stored", "missing"] = "unset"
-    # Public icon URL when the icon is materialized and a delivery base is
-    # configured; ``None`` otherwise (see ``icon_status`` for why).
+    # Public icon URL when a delivery base is configured; ``None`` otherwise.
+    # Best-effort under read-through delivery (ADR-0033): it resolves for every
+    # item and the icon materializes on first request.
     icon_url: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -113,7 +113,6 @@ class ItemResponse(BaseModel):
             main_category=item.main_category,
             sub_category=item.sub_category,
             tracked=item.tracked,
-            icon_status=item.icon_status,
             icon_url=public_icon_url(item.id, base=ICON_BASE_URL),
             created_at=item.created_at,
             updated_at=item.updated_at,

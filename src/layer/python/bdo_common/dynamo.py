@@ -59,7 +59,6 @@ def _item_to_model(raw: dict[str, Any]) -> Item:
         tracked=raw.get("tracked", "true") == "true",
         model_id=raw.get("model_id", "accessory_v1"),
         cron_profile=raw.get("cron_profile", "standard"),
-        icon_status=raw.get("icon_status", "unset"),
         created_at=raw.get("created_at"),
         updated_at=raw.get("updated_at"),
     )
@@ -199,7 +198,6 @@ def put_item(item: Item) -> None:
         "tracked": str(item.tracked).lower(),
         "model_id": item.model_id,
         "cron_profile": item.cron_profile,
-        "icon_status": item.icon_status,
     }
     # Sparse tracked-index marker: present only when tracked (omitted otherwise
     # so untracked items stay out of the index).
@@ -320,7 +318,7 @@ def _catalog_update_kwargs(
     ``"false"`` on newly created rows but preserved on existing ones (also via
     ``if_not_exists``), so a catalog-created item is untracked by default while
     the polled subset is never clobbered. The remaining ETL-owned attributes
-    (``model_id``/``cron_profile``/``icon_status``) are left untouched (ADR-0018).
+    (``model_id``/``cron_profile``) are left untouched (ADR-0018).
     ``ReturnValues`` is ``ALL_OLD`` so callers can detect a newly created item
     (empty old image).
     """
@@ -472,7 +470,7 @@ def scan_catalog_items() -> list[Item]:
     table = _get_table()
     scan_kwargs: dict[str, Any] = {
         "ProjectionExpression": (
-            "id, #name, #names, grade, category, main_category, sub_category, icon_status"
+            "id, #name, #names, grade, category, main_category, sub_category"
         ),
         "ExpressionAttributeNames": {"#name": "name", "#names": "names"},
     }
