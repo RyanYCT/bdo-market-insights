@@ -1978,7 +1978,7 @@ records (the sessions did not log at the time); dates are the merge dates._
 **Mode:** Vibe
 **Branch:** `docs/runbook-procedure-format`
 **Phase:** documentation
-**Commits:** PR #TBD
+**Commits:** PR #111
 
 ### Done
 - Rewrote `docs/runbook.md` from essay-style prose into a consistent
