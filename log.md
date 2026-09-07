@@ -2110,7 +2110,7 @@ records (the sessions did not log at the time); dates are the merge dates._
 
 
 
-## 2026-09-11 — Spec: market range shortcut (range → granularity routing)
+## 2026-09-07 — Spec: market range shortcut (range → granularity routing)
 
 **Agent:** Kiro
 **Mode:** Vibe
