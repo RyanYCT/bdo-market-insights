@@ -25,9 +25,8 @@ below).
 | `.kiro/steering/product.md` | What this project is; BDO domain primer |
 | `.kiro/steering/tech.md` | Locked tech stack; forbidden patterns |
 | `.kiro/steering/structure.md` | Repository layout |
-| `.kiro/specs/v3/requirements.md` | Active functional + non-functional reqs |
-| `.kiro/specs/v3/design.md` | Architecture, schema, ADR pointers |
-| `.kiro/specs/v3/tasks.md` | Phased task list with checkboxes |
+| `.kiro/specs/v3/` | Shipped v3 baseline (`requirements`, `design`, `domain-model`, `tasks`); reference for how the system is built |
+| `.kiro/specs/<feature>/` | Per-feature specs for work since v3; the active one is the source of truth for that change |
 | `docs/adr/` | One markdown per architectural decision |
 | `log.md` | Append-only session log |
 
@@ -45,7 +44,6 @@ steering files manually.
   (The v3 build is complete; its `tasks.md` is historical.)
 - Conventional Commits: `<type>(<scope>): <imperative subject>`. Body
   explains *why*, not *what*.
-- Push via `github_push_to_remote`, never raw `git push`.
 - At session end, append an entry to `log.md` per its template if the
   session was non-trivial.
 
@@ -93,29 +91,16 @@ steering files manually.
 
 ## Working with the human
 
-Kiro offers three working modes the owner uses deliberately:
-
-- **Spec** mode — structured iteration on
-  `.kiro/specs/<feature>/{requirements,design,tasks}.md`. Used for
-  new features and re-architectures. Specs come *before* code; do
-  not introduce design decisions only in code.
-- **Vibe** mode — collaborative chat for design discussion or
-  targeted edits.
-- **Autonomous** mode — Kiro executes a well-defined task with
-  minimal interruption.
-
-Behavioral rules across modes:
-
-- In **Spec** and **Vibe**, surface trade-offs explicitly with options
-  (A/B/C) and a recommendation. Do not pretend certainty.
-- In **Autonomous**, prefer "boring + correct". Flag scope creep
-  proactively; do not silently expand a task.
+- Surface trade-offs explicitly with options (A/B/C) and a
+  recommendation. Do not pretend certainty.
+- Prefer "boring + correct". Flag scope creep proactively; do not
+  silently expand a task.
 - Destructive operations (force push, branch rename, force-replacing
   `main`, deleting AWS resources) require **explicit approval each
-  time**, in any mode.
-- When inheriting from a previous session, read `.kiro/steering/`,
-  the active spec under `.kiro/specs/`, the latest entries in
-  `log.md`, and the current `tasks.md` checkbox state before acting.
+  time**.
+- When inheriting a session, read `.kiro/steering/`, the relevant
+  feature spec under `.kiro/specs/<feature>/`, the latest `log.md`
+  entries, and the current `tasks.md` checkbox state before acting.
 
 ## Anti-patterns we have already paid for
 
@@ -151,13 +136,21 @@ If yes, write the skill before starting the next phase. The intent
 is to prevent premature skill files while making sure earned ones
 get captured.
 
-## Tools available in this sandbox
+## Environment capabilities
 
-| Need | Tool |
-|---|---|
-| Read/write workspace files | `read_files`, `fs_write`, `str_replace` |
-| Search | `grep_search`, `file_search` |
-| Run commands | `execute_bash` (use `cwd`; never `cd`) |
-| Push branches | `github_push_to_remote` (never raw `git push`) |
-| Create PRs | `github_create_pull_request` |
-| Investigate unfamiliar code | `invoke_sub_agent` with `context-gatherer` |
+Work happens in a sandboxed checkout of this repo. The capabilities
+below are what the environment provides; each agent maps them to its
+own tools.
+
+- **Files** — read, create, and edit workspace files directly.
+- **Search** — content/regex search and filename search across the tree.
+- **Shell** — run commands from an explicit working directory (pass the
+  directory rather than `cd`-ing into it). Long-running processes (dev
+  servers, `--watch`) are not supported; use one-shot invocations.
+- **Git & GitHub** — `git` and the GitHub CLI (`gh`) are
+  pre-authenticated. Push branches with `git push`; open PRs with
+  `gh api repos/<owner>/<repo>/pulls` (the `gh pr` GraphQL path is
+  unavailable here). Commit to a feature branch and open a PR — never
+  to `main` directly.
+- **Code investigation** — a context-gathering sub-agent can explore
+  unfamiliar areas of the codebase before you change them.
