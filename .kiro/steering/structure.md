@@ -24,6 +24,9 @@ bdo-market-insights/
 │   │   ├── requirements.md
 │   │   ├── design.md
 │   │   └── tasks.md
+│   ├── skills/                        # workspace agent skills (SKILL.md)
+│   │   ├── domain-modeling/           # glossary + ADR discipline
+│   │   └── grill-with-docs/           # design interview, records as it goes
 │   └── steering/                      # this directory
 │       ├── product.md
 │       ├── tech.md
@@ -83,6 +86,14 @@ bdo-market-insights/
   on-demand only and not nested in the root template.)
 - **Test layout mirrors source**: e.g. `tests/unit/test_arsha_client.py`
   tests `bdo_common/arsha_client.py`.
+- **Agent skills live in `.kiro/skills/<name>/`**, each a `SKILL.md`
+  (plus an optional `references/` folder for supporting docs), committed
+  and shared. `domain-modeling` maintains the two domain homes — the
+  `## Language` glossary in `steering/product.md` (terms; auto-loaded)
+  and the active spec's `domain-model.md` (formulas/worked numbers) —
+  and records ADRs under `docs/adr/` in Nygard format.
+  `grill-with-docs` runs a design interview and records terms and ADRs
+  as decisions settle.
 - **One root `template.yaml`** that nests `infra/*.yaml`. No second
   SAM template, no parallel Terraform.
 - **Changing what's tracked** (add/remove an item or series, e.g. after a
