@@ -4,9 +4,8 @@ inclusion: always
 
 # Repository Structure
 
-Forward-looking layout based on `.kiro/specs/v3/tasks.md`. Sections
-fill in as their phase lands; track progress against the `tasks.md`
-checkboxes.
+Current repository layout. v3 is shipped; work since then lands as
+feature specs under `.kiro/specs/<feature>/`.
 
 ```
 bdo-market-insights/
@@ -20,10 +19,13 @@ bdo-market-insights/
 ├── log.md                             # session log (append-only)
 ├── .github/workflows/ci.yml           # the only CI workflow
 ├── .kiro/
-│   ├── specs/v3/                      # active spec
-│   │   ├── requirements.md
-│   │   ├── design.md
-│   │   └── tasks.md
+│   ├── specs/
+│   │   ├── v3/                        # shipped baseline spec
+│   │   │   ├── requirements.md
+│   │   │   ├── design.md
+│   │   │   ├── domain-model.md
+│   │   │   └── tasks.md
+│   │   └── <feature>/                 # one dir per feature since v3
 │   └── steering/                      # this directory
 │       ├── product.md
 │       ├── tech.md
@@ -33,29 +35,41 @@ bdo-market-insights/
 │   ├── architecture.md
 │   ├── runbook.md
 │   └── slo.md
-├── infra/
+├── infra/                             # nested stacks (order per ADR-0032)
 │   ├── network.yaml                   # VPC, subnets, SGs, gateway endpoints
 │   ├── data.yaml                      # RDS, DynamoDB, IAM roles
-│   ├── break-glass.yaml               # on-demand only; not in root template
+│   ├── platform.yaml                  # shared bdo-common layer (Tier-0)
 │   ├── etl.yaml                       # Step Functions + EventBridge crons
 │   ├── api.yaml                       # API Gateway + usage plan
+│   ├── insights.yaml                  # LLM insights pipeline
+│   ├── catalog.yaml                   # catalog artifact + sync
+│   ├── icons.yaml                     # icon storage + sync
+│   ├── cdn.yaml                       # delivery CloudFront (Tier-0)
+│   ├── bootstrap.yaml                 # DB bootstrap orchestrator
 │   ├── observability.yaml             # dashboard + alarms
+│   ├── break-glass.yaml               # on-demand only; not in root template
 │   └── openapi.yaml                   # generated in CI
 ├── migrations/                        # Alembic
 │   ├── alembic.ini
-│   └── versions/0001_initial.py
+│   └── versions/                      # 0001_initial.py … (sequential)
 ├── scripts/
-│   └── seed_items.py                  # one-time DynamoDB seed
+│   ├── data/                          # offline tracking inputs (see below)
+│   ├── select_tracked.py              # resolves data/ -> tracked_items.json
+│   ├── build_market_catalog.py        # builds the catalog artifact
+│   ├── seed_*.py                      # one-time seeds (items, catalog, dev)
+│   ├── db_admin.py, db_bootstrap.py   # DB ops helpers
+│   ├── export_openapi.py, export_postman.py
+│   └── verify.py                      # deploy verification (ADR-0029)
 ├── src/
-│   ├── functions/                     # 8 Lambda handlers
-│   │   ├── retrieve_items/app.py
-│   │   ├── fetch_data/app.py
-│   │   ├── clean_data/app.py
-│   │   ├── store_data/app.py
-│   │   ├── rollup_daily/app.py
-│   │   ├── purge_old_snapshots/app.py
-│   │   ├── item_registry/app.py
-│   │   └── market_query/app.py
+│   ├── functions/                     # 21 Lambda handlers, one dir each (app.py)
+│   │   ├── retrieve_items/ fetch_data/ clean_data/ store_data/      # ETL pipeline
+│   │   ├── rollup_daily/ purge_old_snapshots/                       # scheduled maintenance
+│   │   ├── item_registry/ market_query/ admin_query/ docs/          # API
+│   │   ├── catalog_sync/                                            # catalog artifact sync
+│   │   ├── icon_sync/ icon_origin/ bucket_janitor/                  # icons + CDN
+│   │   ├── insights_compute/ insights_summarize/ insights_store/ insights_discord/  # LLM insights
+│   │   ├── seed_tracked/                                            # tracked-items seed
+│   │   └── bootstrap_trigger/ migrator/                             # bootstrap + DB migration
 │   └── layer/python/bdo_common/       # shared layer (ADR-0003)
 │       ├── arsha_client.py
 │       ├── db.py
@@ -64,8 +78,13 @@ bdo-market-insights/
 │       ├── models.py
 │       ├── pricing.py
 │       ├── analytics.py
+│       ├── catalog.py
+│       ├── catalog_artifact.py
+│       ├── icons.py
+│       ├── tracking.py
 │       ├── config.py
-│       └── rates.json
+│       ├── rates.json
+│       └── insights/                  # digest, narrative, prompt, models
 └── tests/
     ├── unit/                          # mirrors src/layer/python/bdo_common
     ├── integration/
