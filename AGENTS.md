@@ -54,8 +54,25 @@ steering files manually.
   **before** code; do not introduce design decisions only in code.
 - One Markdown ADR per non-obvious architectural decision, in
   `docs/adr/`, Michael Nygard format. Link from the relevant spec/code.
-- Hard cap: each spec file ≤ ~150 lines. If it grows past that, split
-  it or trim it. Documentation explosion sank the previous rewrite.
+- **Spec format — canonical Kiro format.** Specs created or materially
+  edited from now on use the canonical three-file structure:
+  - `requirements.md` — `# Requirements Document`, `## Introduction`,
+    then `## Requirements` with each requirement as `### Requirement N`:
+    a user story (*As a … I want … so that …*) and numbered **EARS**
+    acceptance criteria (`WHEN … THEN the system SHALL …`, `IF … THEN …`).
+  - `design.md` — `## Overview`, `## Architecture`,
+    `## Components and Interfaces`, `## Data Models` (plus Error Handling
+    / Testing Strategy where useful).
+  - `tasks.md` — a numbered checkbox list, each task citing the
+    requirement(s) it satisfies.
+  Pre-recalibration specs (`v3`, `market-bid-ask-spread`, `llm-insights`,
+  …) keep their original `FR-`/`NFR-` format; convert one only when it is
+  materially revised, not for its own sake.
+- Keep specs **as short as fully specifies the work**. Push detail into
+  ADRs and the runbook rather than padding the spec — documentation
+  explosion sank the previous rewrite. (This supersedes the former hard
+  ~150-line cap, which the canonical user-story/EARS structure cannot
+  always meet; brevity stays the goal, not a fixed line count.)
 
 ## Code
 

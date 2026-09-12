@@ -105,6 +105,14 @@ bdo-market-insights/
   on-demand only and not nested in the root template.)
 - **Test layout mirrors source**: e.g. `tests/unit/test_arsha_client.py`
   tests `bdo_common/arsha_client.py`.
+- **Specs use the canonical Kiro format** (details in `AGENTS.md` →
+  "Specs and ADRs"): `requirements.md` (`# Requirements Document` /
+  `## Introduction` / `## Requirements` with `### Requirement N`, user
+  stories, EARS acceptance criteria), `design.md` (`## Overview` /
+  `## Architecture` / `## Components and Interfaces` / `## Data Models`),
+  and a checkbox `tasks.md`. Applies to specs created or materially
+  revised from the format recalibration onward; earlier specs keep their
+  original format until revised.
 - **Agent skills live in `.kiro/skills/<name>/`**, each a `SKILL.md`
   (plus an optional `references/` folder for supporting docs), committed
   and shared. `domain-modeling` maintains the two domain homes — the
