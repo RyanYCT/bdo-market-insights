@@ -59,7 +59,7 @@ tests, ADRs, and docs only.
       independent execution carrying its own region).
     - _Requirements: 2.1, 2.3, 2.4, 2.5, 6.2_
 
-- [ ] 3. Fan out per-region insights schedules in `infra/insights.yaml`
+- [x] 3. Fan out per-region insights schedules in `infra/insights.yaml`
   - Add `AWS::LanguageExtensions` to the `Transform` list and accept the
     `BdoRegions` `CommaDelimitedList` parameter; remove the inline scalar-bound
     daily and weekly schedules.
