@@ -146,7 +146,7 @@ tests, ADRs, and docs only.
     (`git diff --exit-code infra/openapi.yaml`) covers the new route.
   - _Requirements: 3.5_
 
-- [ ] 9. Add guardrail regression coverage
+- [x] 9. Add guardrail regression coverage
   - Add lightweight tests/assertions confirming the feature did not disturb the
     preserved guardrails: tracking stays global (single `tracked` boolean and one
     `tracked-index` GSI), `/v1/items` stays region-agnostic, and the DynamoDB
