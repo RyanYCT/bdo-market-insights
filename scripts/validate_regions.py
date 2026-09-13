@@ -13,8 +13,10 @@ generated schedule that feeds an invalid ``region`` into the pipelines.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 import typing
+from collections import defaultdict
 from pathlib import Path
 
 from samconfig_regions import regions_for_stage
@@ -37,6 +39,17 @@ def canonical_regions() -> set[str]:
     return set(typing.get_args(module.Region))
 
 
+def _logical_id_fragment(region: str) -> str:
+    """Mirror the ``&{RegionName}`` substitution: strip non-alphanumerics.
+
+    The per-region schedules use ``&{RegionName}`` in their CloudFormation
+    logical ids (ADR-0036), which drops every non-alphanumeric character (so
+    ``console_eu`` -> ``consoleeu``). Two distinct regions that reduce to the
+    same fragment would generate colliding logical ids and fail at deploy.
+    """
+    return re.sub(r"[^0-9A-Za-z]+", "", region)
+
+
 def find_problems(regions: list[str], canonical: set[str]) -> list[str]:
     """Return human-readable problems with a configured region list (empty = ok)."""
     problems: list[str] = []
@@ -48,6 +61,18 @@ def find_problems(regions: list[str], canonical: set[str]) -> list[str]:
     unknown = sorted(set(regions) - canonical)
     if unknown:
         problems.append(f"region(s) not in the canonical marketQuery enum: {', '.join(unknown)}")
+    # Distinct regions that collapse to the same CloudFormation logical-id
+    # fragment (via &{RegionName}) would collide at deploy; catch it here.
+    by_fragment: dict[str, set[str]] = defaultdict(set)
+    for region in regions:
+        by_fragment[_logical_id_fragment(region)].add(region)
+    collisions = sorted(
+        ", ".join(sorted(members)) for members in by_fragment.values() if len(members) > 1
+    )
+    if collisions:
+        problems.append(
+            "region(s) collide to the same CloudFormation logical id: " + "; ".join(collisions)
+        )
     return problems
 
 

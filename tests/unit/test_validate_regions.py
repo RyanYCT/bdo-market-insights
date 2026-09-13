@@ -39,6 +39,23 @@ def test_unknown_region_is_flagged() -> None:
     assert any("atlantis" in p and "canonical" in p for p in problems)
 
 
+def test_logical_id_collision_is_flagged() -> None:
+    # Two distinct regions that strip to the same alphanumeric logical-id
+    # fragment (console_eu / console.eu -> consoleeu) collide at deploy.
+    canonical = {"console_eu", "console.eu"}
+    problems = validate_regions.find_problems(["console_eu", "console.eu"], canonical)
+    assert any("logical id" in p for p in problems)
+
+
+def test_distinct_enum_regions_do_not_collide() -> None:
+    # The real enum's console_* members reduce to distinct fragments.
+    problems = validate_regions.find_problems(
+        ["console_eu", "console_na", "console_asia"],
+        {"console_eu", "console_na", "console_asia"},
+    )
+    assert problems == []
+
+
 def test_empty_list_is_flagged() -> None:
     assert any("no regions" in p for p in validate_regions.find_problems([], {"tw"}))
 
