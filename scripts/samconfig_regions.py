@@ -26,10 +26,12 @@ _SAMCONFIG = Path(__file__).resolve().parent.parent / "samconfig.toml"
 def regions_for_stage(stage: str, samconfig: Path = _SAMCONFIG) -> list[str]:
     """Return the ``BdoRegions`` entries configured for ``stage`` in samconfig.
 
-    Parses ``[<stage>.deploy.parameters].parameter_overrides`` (a
-    space-delimited ``Key=Value`` string) and splits the ``BdoRegions`` value on
-    commas. Raises ``SystemExit`` with a clear message when the stage or the
-    ``BdoRegions`` override is absent, so a misconfigured deploy fails loudly.
+    Reads ``[<stage>.deploy.parameters].parameter_overrides`` and splits the
+    ``BdoRegions`` value on commas. SAM accepts ``parameter_overrides`` in two
+    equally-valid forms and both are handled: a single space-delimited
+    ``Key=Value`` string, or a TOML array of ``Key=Value`` strings. Raises
+    ``SystemExit`` with a clear message when the stage or the ``BdoRegions``
+    override is absent, so a misconfigured deploy fails loudly.
     """
     data = tomllib.loads(samconfig.read_text(encoding="utf-8"))
     try:
@@ -38,7 +40,10 @@ def regions_for_stage(stage: str, samconfig: Path = _SAMCONFIG) -> list[str]:
         raise SystemExit(
             f"[{stage}.deploy.parameters].parameter_overrides missing in {samconfig}"
         ) from exc
-    for token in shlex.split(overrides):
+    # String form -> shlex-split into Key=Value tokens; the TOML-array form is
+    # already a list of Key=Value strings.
+    tokens = overrides if isinstance(overrides, list) else shlex.split(overrides)
+    for token in tokens:
         key, _, value = token.partition("=")
         if key == "BdoRegions":
             return [region.strip() for region in value.split(",") if region.strip()]
