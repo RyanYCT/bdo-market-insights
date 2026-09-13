@@ -59,9 +59,14 @@ and generate per-region schedules with `Fn::ForEach`.
   and input keep the exact region string.
 - **Shared schedule role.** One EventBridge→`states:StartExecution` IAM role per
   stack, scoped to that stack's state-machine ARN, backs every generated rule
-  (replacing SAM's auto-created per-schedule rule+role). The rule targets set no
-  `RetryPolicy` and no `DeadLetterConfig`: an idempotent hourly job simply
-  re-fires on the next window.
+  (replacing SAM's auto-created per-schedule rule+role).
+- **Dead-letter handling by cadence.** The hourly ETL targets set no
+  `DeadLetterConfig`: an idempotent hourly job simply re-fires on the next
+  window, so a dropped `StartExecution` self-heals within the hour. The daily
+  and weekly insights targets are low-cadence — a dropped fire would otherwise
+  wait a full day or week — so they carry a `DeadLetterConfig` pointing at a
+  per-stack SQS DLQ (`insights.yaml`), parking exhausted invocations for
+  inspection/redrive instead of losing them silently.
 - **Single source of the toggle.** `samconfig.toml` holds `BdoRegions` for each
   stage. Because a CLI `--parameter-overrides` replaces the whole parameter set,
   both `make deploy` and the CI prod deploy re-read `BdoRegions` from

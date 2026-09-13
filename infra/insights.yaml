@@ -359,6 +359,36 @@ Resources:
   # this stack's state-machine ARN backs every generated rule. As in etl.yaml,
   # &{RegionName} in each logical id strips non-alphanumerics (console_eu ->
   # consoleeu) while ${RegionName} in the name/input keeps the exact region.
+  #
+  # Unlike the hourly ETL (which simply re-fires next hour, ADR-0036), these are
+  # low-cadence: a dropped StartExecution would otherwise wait a full day/week.
+  # So the daily/weekly targets carry a DeadLetterConfig -- EventBridge retries,
+  # then parks the failed invocation in this DLQ for inspection/redrive.
+  InsightsScheduleDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'bdo-${Stage}-insights-schedule-dlq'
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  InsightsScheduleDlqPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref InsightsScheduleDlq
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowEventBridgeDlqSend
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt InsightsScheduleDlq.Arn
+            # Scope to this stack's generated insights rules only.
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/bdo-${Stage}-insights-*'
+
   InsightsScheduleRole:
     Type: AWS::IAM::Role
     Properties:
@@ -394,6 +424,8 @@ Resources:
               Arn: !Ref InsightsStateMachine
               RoleArn: !GetAtt InsightsScheduleRole.Arn
               Input: !Sub '{"region": "${RegionName}", "period": "daily"}'
+              DeadLetterConfig:
+                Arn: !GetAtt InsightsScheduleDlq.Arn
 
   'Fn::ForEach::InsightsWeeklySchedules':
     - RegionName
@@ -410,6 +442,8 @@ Resources:
               Arn: !Ref InsightsStateMachine
               RoleArn: !GetAtt InsightsScheduleRole.Arn
               Input: !Sub '{"region": "${RegionName}", "period": "weekly"}'
+              DeadLetterConfig:
+                Arn: !GetAtt InsightsScheduleDlq.Arn
 
   # ──────────────────────────────────────────────
   # Log groups — co-located with their functions (ADR-0030).
