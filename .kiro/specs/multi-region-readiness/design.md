@@ -113,7 +113,8 @@ schedule and deletes by age across all regions — region-agnostic, no fan-out.
 | `marketQuery` (`market_query/app.py`) | New `GET /v1/meta` route + models; reads `ACTIVE_REGIONS` env | Code |
 | `bdo_common` repositories | New `RegionRepo.region_availability(conn)` (read-only aggregate) | Code |
 | `infra/openapi.yaml` | Regenerated to include `/v1/meta` (CI drift-checked) | Generated |
-| `api.yaml`, `cdn.yaml`, `icons.yaml` | Unchanged shape — keep receiving a **scalar** primary region | IaC |
+| `api.yaml` | Receives the **scalar** primary region (unchanged consumers) **and** the comma-joined `BdoRegions` list (for `marketQuery`'s `ACTIVE_REGIONS`) | IaC |
+| `cdn.yaml`, `icons.yaml` | Unchanged shape — keep receiving a **scalar** primary region | IaC |
 
 ### Primary region vs. the region list
 
@@ -149,18 +150,35 @@ feature flags — never require a new preflight call).
 
 **Parameter shape.** `template.yaml` declares `BdoRegions` as a
 `CommaDelimitedList` (default `tw`); each entry must be a marketQuery enum value
-(validated in CI). The scalar `BdoRegion` input is removed and derived where a
-single region is still needed:
+and unique (validated in CI). The scalar `BdoRegion` input is removed and derived
+where a single region is still needed:
 
 ```yaml
 BdoRegions: {Type: CommaDelimitedList, Default: tw}   # element 0 = primary
 BdoRegion:  !Select [0, !Ref BdoRegions]              # -> api/cdn/icons (scalar)
 # nested-stack list params cross the boundary as a comma-joined string:
-BdoRegions: !Join [',', !Ref BdoRegions]              # child re-declares list
+BdoRegions: !Join [',', !Ref BdoRegions]              # etl/insights + api re-declare list
 ```
 
-`samconfig.toml` keeps a one-line toggle
-(`BdoRegions=tw`; a second region is `BdoRegions=tw,na`).
+`ApiStack` receives **both**: the scalar primary (element 0, for the unchanged
+`marketQuery`/`itemRegistry` consumers) **and** the comma-joined `BdoRegions`
+list, which it re-declares as a `CommaDelimitedList` (exactly as `etl.yaml` and
+`insights.yaml` do) so `marketQuery` can read `ACTIVE_REGIONS` for `/v1/meta`'s
+`active` flag.
+
+**Single source of the toggle.** `samconfig.toml` is the one authoritative home
+of the region toggle — a one-line `BdoRegions=tw` (a second region is
+`BdoRegions=tw,na`) — consumed by both the dev deploy and the CI prod deploy in
+`.github/workflows/ci.yml`. The prior inline `BdoRegion=tw` override in the CI
+prod deploy is removed (it would otherwise break under the rename and drift from
+`samconfig.toml`); CI passes `BdoRegions` sourced from `samconfig.toml` instead.
+
+**Uniqueness.** Duplicate entries in the list (e.g. `tw,tw`) are prevented by the
+CI guard (see Testing), not by the parameter type. A `dict[str,bool]` /
+CloudFormation `Mappings` toggle (unique by construction) was considered but
+rejected: CloudFormation has no map parameter type, and it would complicate
+deriving the `ACTIVE_REGIONS` CSV that `/v1/meta` needs — so the active-region
+`CommaDelimitedList` plus guard-enforced uniqueness is used instead.
 
 **Generating N schedules — mechanism choice.** SAM/CloudFormation cannot loop a
 `AWS::Serverless::StateMachine` `Events` block over a list. Options:
@@ -181,9 +199,15 @@ produces one hourly rule per region (`cron(7 * * * ? *)`, input
 a daily loop (`cron(0 1 * * ? *)`, `period=daily`) and a weekly loop
 (`cron(15 1 ? * MON *)`, `period=weekly`). A single shared
 EventBridge→StartExecution IAM role per stack (scoped to that stack's
-state-machine ARN) backs all generated rules. Replacing the auto-created SAM
-schedule rule+role with explicit resources is deliberate so the set can be
-generated from the list; cron and input are preserved per region.
+state-machine ARN) backs all generated rules: its trust policy grants
+`sts:AssumeRole` to the `events.amazonaws.com` service principal, and every one
+of the N generated `AWS::Events::Rule` resources references it via `RoleArn`.
+Replacing the auto-created SAM schedule rule+role with explicit resources is
+deliberate so the set can be generated from the list; cron and input are
+preserved per region. The generated rule targets set **no** `RetryPolicy` and
+**no** `DeadLetterConfig` — acceptable for an idempotent hourly job that simply
+re-fires on the next window — recorded as an explicit ADR-0036 decision rather
+than a silent omission.
 
 **Concurrency & cost of N parallel executions.** All N region rules for a
 pipeline fire on the **same** cron minute, so up to N executions start together.
@@ -204,9 +228,22 @@ single bootstrap call returning the whole envelope — and is served with a
 `Cache-Control` max-age aligned to the hourly ETL cadence (~1h), since the
 `regions` freshness only advances once per ETL run.
 
+**Key gating.** `/v1/meta` is **API-key-gated**: it inherits the API-wide
+`ApiKeyRequired: true` and the default usage plan, and is **not** made keyless
+like `/v1/docs`. Rationale — it reads RDS, so it should inherit the usage-plan
+rate limiting that protects the in-VPC reader; a keyless posture (like
+`/v1/docs`, which serves static docs and touches no datastore) was considered
+and rejected.
+
+**Cache staleness trade-off.** The `Cache-Control` `max-age` is a *rolling* ~1h
+window from each response, so it does not align to the `:07` wall-clock ETL
+boundary — a cached response can be up to ~2h stale relative to the freshest
+run. Accepted for a bootstrap/discovery endpoint whose freshness fields are
+advisory.
+
 ```jsonc
-// GET /v1/meta   (no query params; Cache-Control max-age ~1h)
-{ "api_version": "3.4.0",
+// GET /v1/meta   (no query params; Cache-Control max-age ~1h; api-key-gated)
+{ "api_version": "<release-tag>",   // illustrative, e.g. "3.x.x"
   "periods": ["daily", "weekly"],
   "regions": [
     { "region": "tw", "active": true, "item_count": 312,
@@ -220,9 +257,11 @@ single bootstrap call returning the whole envelope — and is served with a
 }
 ```
 
-`api_version` is the deployed API version (from an env var / package version).
-Within `regions`, `active` is computed from the `ACTIVE_REGIONS` env var
-(comma-joined `BdoRegions`, injected for the `marketQuery` function). The row
+`api_version` comes from a **single** source — the `API_VERSION` env var injected
+into `marketQuery` at deploy from the release tag (the prod deploy is
+tag-gated); it is not read from `pyproject.toml`. Within `regions`, `active` is
+computed from the `ACTIVE_REGIONS` env var (comma-joined `BdoRegions`, injected
+for the `marketQuery` function). The row
 set is the **union** of configured-active regions and regions with any RDS data,
 so both "activated but empty" and "has history but deactivated" are visible.
 Because the tables are region-partitioned with `(region, …)` leading indexes,
@@ -235,7 +274,8 @@ extensible: new top-level fields can be added without a new preflight call.
 template.yaml                    # BdoRegion scalar -> BdoRegions list; derive primary via Fn::Select
 infra/etl.yaml                   # + AWS::LanguageExtensions; Fn::ForEach hourly rules; shared schedule role
 infra/insights.yaml              # + AWS::LanguageExtensions; Fn::ForEach daily+weekly rules; shared role
-infra/api.yaml                   # marketQuery: + ACTIVE_REGIONS env (still receives scalar BdoRegion=primary)
+infra/api.yaml                   # ApiStack receives scalar primary BdoRegion AND joined BdoRegions list; marketQuery: + ACTIVE_REGIONS env
+.github/workflows/ci.yml         # prod deploy uses BdoRegions from samconfig.toml; inline BdoRegion override removed
 src/functions/market_query/app.py            # + get_meta route + RegionAvailability/MetaResponse
 src/layer/python/bdo_common/repositories.py  # + RegionRepo.region_availability
 infra/openapi.yaml               # regenerated (scripts/export_openapi.py) incl. /v1/meta; CI drift check
@@ -286,9 +326,9 @@ after a real region is activated (see runbook).
 New "Region activation" procedure (authored in full in `docs/runbook.md` during
 Tasks; outline here):
 
-1. Add the region to `BdoRegions` and deploy (`make deploy STAGE=prod`,
-   `BdoRegions=tw,na`) — CloudFormation creates the per-region rules; no manual
-   EventBridge edits.
+1. Add the region to `BdoRegions` in `samconfig.toml` (the single toggle source)
+   and deploy (`make deploy STAGE=prod`, `BdoRegions=tw,na`) — CloudFormation
+   creates the per-region rules; no manual EventBridge edits.
 2. Confirm generated rules exist and are `ENABLED` (`bdo-<stage>-etl-na`,
    `…-insights-daily-na`, `…-weekly-na`).
 3. After the next `:07` window, confirm one execution ran and check
@@ -319,7 +359,7 @@ class RegionAvailability(BaseModel):
     has_insights: bool                # any market_summary row exists
 
 class MetaResponse(BaseModel):
-    api_version: str                    # deployed API version (env var / package version)
+    api_version: str                    # deployed release version (API_VERSION env var, from release tag)
     regions: list[RegionAvailability]   # union of configured-active ∪ data-bearing
     periods: list[str]                  # e.g. ["daily", "weekly"]
     # future-additive: limits, models, feature_flags, …
@@ -390,8 +430,10 @@ produce the `regions` field of `MetaResponse`, alongside `api_version` and
   `Cache-Control` header); `active` derivation from `ACTIVE_REGIONS`.
 - **IaC:** `cfn-lint` over the `Fn::ForEach`-expanded templates; a test that the
   expansion yields N rules for a sample multi-region list and exactly the baseline
-  set for `[tw]` (P1/P2); a CI check that every `BdoRegions` entry is a member of
-  the marketQuery region enum.
+  set for `[tw]` (P1/P2); a CI guard that reads `BdoRegions` from the
+  authoritative `samconfig.toml` and fails if any entry is not a member of the
+  canonical `marketQuery` region enum (the `Region` Literal in
+  `market_query/app.py`) or is a duplicate.
 - **Contract:** `scripts/export_openapi.py` regenerates `infra/openapi.yaml` with
   `/v1/meta`; the existing CI drift check guards it.
 - **Property-based** (repo convention): P2 over random distinct-region lists —
@@ -405,11 +447,25 @@ Following the existing sequence (highest is `0035`):
   `BdoRegion` with a `BdoRegions` list and generating per-region schedules via
   `Fn::ForEach` (`AWS::LanguageExtensions`) across `etl.yaml` and
   `insights.yaml`; primary region = element 0 for scalar consumers; default
-  `[tw]`. Alternatives (hand-written blocks, custom macro) and the same-minute
-  concurrency trade-off captured. Holds the authoritative IaC detail.
+  `[tw]`. Records `samconfig.toml` as the single authoritative toggle source
+  (consumed by both dev and the CI prod deploy). Alternatives — hand-written
+  blocks, custom macro, and a `dict[str,bool]`/CFN `Mappings` map-toggle
+  (unique by construction, rejected because CloudFormation has no map parameter
+  type and it complicates deriving the `ACTIVE_REGIONS` CSV) — plus the
+  same-minute concurrency trade-off captured. Records that uniqueness is instead
+  guard-enforced, and that the generated rule targets carry no `RetryPolicy` /
+  `DeadLetterConfig` (idempotent hourly re-fire). Captures the outcome of the
+  wave-0 feasibility spike (Task 0) confirming `Fn::ForEach` via
+  `AWS::LanguageExtensions` layered over `AWS::Serverless-2016-10-31` expands and
+  lints correctly, including the chosen transform ordering. Holds the
+  authoritative IaC detail.
 - **ADR-0037 — `/v1/meta` service-metadata (discovery) endpoint.** Records
   hosting a single extensible service-metadata envelope (`api_version`, `regions`
   with availability, `periods`) on the in-VPC `marketQuery` (owner of the only
   RDS read path and of `/v1/insights`). `regions` — reporting configured-active ∪
   data-bearing regions with per-region freshness — is its first field; the shape
   is additively extensible so new fields never require a new preflight call.
+  Records that `/v1/meta` is API-key-gated under the default usage plan (it reads
+  RDS, so it inherits usage-plan rate limiting; a keyless posture like
+  `/v1/docs` was considered and rejected), and that `api_version` has a single
+  source — the `API_VERSION` env var injected from the release tag.

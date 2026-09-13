@@ -44,6 +44,10 @@ input without changing code or schema.
    weekly insights, all `region=tw`) and no others, adding zero new cost.
 4. WHERE the primary region is `tw` THEN every scalar `BDO_REGION` consumer
    SHALL behave identically to the pre-feature behaviour.
+5. THE system SHALL source the region toggle from a single authoritative
+   location (`samconfig.toml`), consumed by both the dev deploy and the CI
+   prod deploy, with no stale inline `BdoRegion` override remaining in
+   `.github/workflows/ci.yml`.
 
 ### Requirement 2: Per-region schedule fan-out
 
@@ -78,9 +82,11 @@ requests.
 #### Acceptance Criteria
 
 1. THE `marketQuery` service SHALL expose `GET /v1/meta` returning an envelope
-   with `api_version`, `regions` (the union of configured-active and data-bearing
-   regions, each with `active`, `item_count`, `latest_snapshot_at`,
-   `latest_daily_date`, and `has_insights`), and `periods`.
+   with `api_version` (the deployed release version from a single injected
+   source — the `API_VERSION` env var set from the release tag), `regions` (the
+   union of configured-active and data-bearing regions, each with `active`,
+   `item_count`, `latest_snapshot_at`, `latest_daily_date`, and `has_insights`),
+   and `periods`.
 2. THE system SHALL set `active` true if and only if the region is in the
    deployed `BdoRegions` list (via the `ACTIVE_REGIONS` env var).
 3. THE system SHALL set the freshness fields non-null if and only if RDS holds
@@ -92,6 +98,9 @@ requests.
    envelope additively extensible.
 5. THE system SHALL include `/v1/meta` in the generated `infra/openapi.yaml`
    and guard it with the existing CI OpenAPI drift check.
+6. THE system SHALL key-gate `GET /v1/meta` under the default API usage plan
+   (inheriting `ApiKeyRequired: true` and its rate limiting), and SHALL NOT opt
+   it out of key enforcement as `/v1/docs` does.
 
 ### Requirement 4: Preserved guardrails
 
@@ -118,9 +127,11 @@ invalid regions are rejected before deploy.
    cost cap, with the default `[tw]` adding zero new cost.
 2. THE spec SHALL include a per-region cost estimate against that cap as a
    required deliverable.
-3. THE CI pipeline SHALL validate that every `BdoRegions` entry is a member of
-   the `marketQuery` region enum, failing the build before deploy rather than
-   creating a rule that feeds an out-of-enum `region`.
+3. THE CI pipeline SHALL validate, against the authoritative deploy source
+   (`samconfig.toml`), that every configured region is a member of the canonical
+   `marketQuery` region enum (the `Region` Literal in `market_query/app.py`, the
+   single source) and is unique with no duplicate entries, failing the build
+   before deploy rather than creating a rule that feeds an out-of-enum `region`.
 
 ### Requirement 6: Operational readiness
 

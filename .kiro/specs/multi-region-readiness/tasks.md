@@ -10,6 +10,17 @@ tests, ADRs, and docs only.
 
 ## Tasks
 
+- [ ] 0. Feasibility spike — `Fn::ForEach` over a `CommaDelimitedList`
+  - On a throwaway/spike branch, prototype and validate that `Fn::ForEach` via
+    `AWS::LanguageExtensions`, layered over the existing
+    `AWS::Serverless-2016-10-31` transform, iterating a `CommaDelimitedList`
+    parameter inside a nested template, expands correctly AND is expanded by
+    `cfn-lint` / `sam validate --lint` (so the Task 4.2 "expanded template"
+    assertion is feasible) — using a `[tw,na]` sample.
+  - DO NOT merge the spike; capture the outcome and the chosen transform
+    ordering in ADR-0036.
+  - _Requirements: 2.1, 2.2_
+
 - [ ] 1. Introduce the central `BdoRegions` toggle in `template.yaml`
   - Replace the scalar `BdoRegion` parameter with a `BdoRegions`
     `CommaDelimitedList` parameter (default `tw`) as the single active-region
@@ -18,12 +29,19 @@ tests, ADRs, and docs only.
     and thread it, unchanged as a scalar, into the `api`, `cdn`, and `icons`
     nested stacks (so `itemRegistry` `POST /v1/items` validation and the
     icon-path builder keep receiving one scalar region).
-  - Pass the region list to the `etl` and `insights` nested stacks by
+  - Pass the region list to the `etl`, `insights`, and `api` nested stacks by
     `!Join [',', !Ref BdoRegions]`; each child re-declares a `BdoRegions`
-    `CommaDelimitedList` parameter.
-  - Update `samconfig.toml` to carry the one-line `BdoRegions=tw` toggle.
+    `CommaDelimitedList` parameter. `ApiStack` thus receives BOTH the scalar
+    primary (for unchanged consumers) AND the joined active-region list (so
+    `marketQuery` can source `ACTIVE_REGIONS` for `/v1/meta`).
+  - Make `samconfig.toml` the single authoritative source of the toggle: carry
+    the one-line `BdoRegions=tw` in both `dev` and `prod` param overrides
+    (replacing `BdoRegion=tw`).
+  - Update `.github/workflows/ci.yml` prod deploy to use `BdoRegions` sourced
+    from `samconfig.toml` (single source of truth); remove the inline
+    `BdoRegion` override.
   - Keep exactly one root `template.yaml`; introduce no deploy-time Lambda/macro.
-  - _Requirements: 1.1, 1.2, 1.4, 6.3_
+  - _Requirements: 1.1, 1.2, 1.4, 1.5, 6.3_
 
 - [ ] 2. Fan out per-region ETL schedules in `infra/etl.yaml`
   - [ ] 2.1 Add `AWS::LanguageExtensions` to the template `Transform` list and
@@ -70,9 +88,11 @@ tests, ADRs, and docs only.
 
 - [ ] 5. Add the CI region-enum validation guard
   - Add a small script (invoked from the single existing
-    `.github/workflows/ci.yml`) that parses `BdoRegions` from `samconfig.toml`
-    and fails the build if any entry is not a member of the `marketQuery` region
-    enum in `market_query/app.py`, before deploy.
+    `.github/workflows/ci.yml`) that parses `BdoRegions` from the authoritative
+    deploy source (`samconfig.toml`, per Task 1) and, before deploy, fails the
+    build if any configured region is (i) not a member of the canonical
+    `marketQuery` region enum (the `Region` Literal in `market_query/app.py`, the
+    single source) or (ii) a duplicate entry.
   - _Requirements: 5.3_
 
 - [ ] 6. Add the `RegionRepo.region_availability` aggregate
@@ -92,8 +112,8 @@ tests, ADRs, and docs only.
   - [ ] 7.1 Add `RegionAvailability` and `MetaResponse` Pydantic v2 models and
     a `get_meta` route to `src/functions/market_query/app.py`, using the
     existing Powertools handler/`_reading()` context.
-    - Return the envelope: `api_version` (deployed API version from an env var /
-      package version), `regions` (the union of configured-active regions from
+    - Return the envelope: `api_version` (the deployed release version from the
+      single `API_VERSION` env var), `regions` (the union of configured-active regions from
       the `ACTIVE_REGIONS` env var and data-bearing regions, each with `active`,
       `item_count`, `latest_snapshot_at`, `latest_daily_date`, `has_insights`),
       and `periods`.
@@ -103,10 +123,12 @@ tests, ADRs, and docs only.
       max-age aligned to the hourly ETL cadence (~1h). Keep the envelope
       additively extensible.
     - _Requirements: 3.1, 3.2, 3.3, 3.4_
-  - [ ] 7.2 Wire the `ACTIVE_REGIONS` env var (comma-joined `BdoRegions`) into
-    the `marketQuery` function in `infra/api.yaml` (function still receives the
-    scalar primary `BdoRegion` unchanged).
-    - _Requirements: 3.2_
+  - [ ] 7.2 Wire the `ACTIVE_REGIONS` env var into the `marketQuery` function in
+    `infra/api.yaml`, sourced from the comma-joined active-region list passed to
+    `ApiStack` (the function still receives the scalar primary `BdoRegion`
+    unchanged). Also inject the `API_VERSION` env var (from the release tag) as
+    the single source for the `/v1/meta` `api_version` field.
+    - _Requirements: 3.1, 3.2_
   - [ ] 7.3 Write handler unit tests for the envelope fields (`api_version`,
     `periods`), `active` derivation from `ACTIVE_REGIONS`, the union mapping
     (active-but-empty and data-but-deactivated rows), and the `Cache-Control`
@@ -124,7 +146,7 @@ tests, ADRs, and docs only.
     (`git diff --exit-code infra/openapi.yaml`) covers the new route.
   - _Requirements: 3.5_
 
-- [ ]* 9. Add guardrail regression coverage
+- [ ] 9. Add guardrail regression coverage
   - Add lightweight tests/assertions confirming the feature did not disturb the
     preserved guardrails: tracking stays global (single `tracked` boolean and one
     `tracked-index` GSI), `/v1/items` stays region-agnostic, and the DynamoDB
@@ -155,6 +177,7 @@ tests, ADRs, and docs only.
 
 ```mermaid
 flowchart TD
+    T0["0. Feasibility spike (Fn::ForEach)"]
     T1["1. BdoRegions toggle (template.yaml)"]
     T2["2. ETL schedule fan-out (etl.yaml)"]
     T3["3. Insights schedule fan-out (insights.yaml)"]
@@ -163,9 +186,11 @@ flowchart TD
     T6["6. RegionRepo.region_availability aggregate"]
     T7["7. GET /v1/meta + ACTIVE_REGIONS env"]
     T8["8. Regenerate openapi.yaml + drift"]
-    T9["9. Guardrail regression coverage (optional)"]
+    T9["9. Guardrail regression coverage"]
     T10["10. ADR-0036/0037 + runbook"]
 
+    T0 --> T2
+    T0 --> T3
     T1 --> T2
     T1 --> T3
     T2 --> T4
@@ -184,15 +209,17 @@ flowchart TD
 ```json
 {
   "waves": [
+    { "wave": 0, "tasks": [0], "rationale": "De-risk the Fn::ForEach + AWS::LanguageExtensions mechanism before building the fan-out." },
     { "wave": 1, "tasks": [1], "rationale": "Central BdoRegions toggle in template.yaml — root of the change." },
-    { "wave": 2, "tasks": [2, 3, 5, 6], "rationale": "All depend only on task 1: ETL and insights fan-out, CI region-enum guard, and the RegionRepo aggregate can proceed in parallel." },
+    { "wave": 2, "tasks": [2, 3, 5, 6], "rationale": "ETL and insights fan-out depend on the spike (0) and toggle (1); the CI region-enum guard and the RegionRepo aggregate depend only on task 1 — all proceed in parallel." },
     { "wave": 3, "tasks": [4, 7], "rationale": "Task 4 needs the fan-out (2,3); task 7 needs the aggregate (6) and the toggle (1)." },
     { "wave": 4, "tasks": [8, 9, 10], "rationale": "Task 8 (openapi drift) and task 9 (guardrail regression) need the endpoint (7); task 10 documents the shipped mechanism (2,3,7)." }
   ],
   "dependencies": {
+    "0": [],
     "1": [],
-    "2": [1],
-    "3": [1],
+    "2": [0, 1],
+    "3": [0, 1],
     "4": [2, 3],
     "5": [1],
     "6": [1],
@@ -206,8 +233,9 @@ flowchart TD
 
 ## Notes
 
-- Sub-tasks marked with `*` are optional: the property-based tests (4.3, 7.4)
-  and the guardrail regression coverage (task 9). Core implementation and the
+- The only sub-tasks marked with `*` (optional) are the property-based tests
+  (4.3, 7.4). Guardrail regression coverage (task 9) is required — it is the sole
+  task verifying Req 4 (preserved guardrails). Core implementation and the
   baseline example/unit tests are not optional.
 - Region activation and deployment are out of scope — this feature delivers
   multi-region *readiness* only (per Req 6 / runbook); actually enabling a new
