@@ -95,8 +95,8 @@ tests, ADRs, and docs only.
     single source) or (ii) a duplicate entry.
   - _Requirements: 5.3_
 
-- [ ] 6. Add the `RegionRepo.region_availability` aggregate
-  - [ ] 6.1 Add a read-only `RegionRepo.region_availability(conn)` to
+- [x] 6. Add the `RegionRepo.region_availability` aggregate
+  - [x] 6.1 Add a read-only `RegionRepo.region_availability(conn)` to
     `src/layer/python/bdo_common/repositories.py`, co-located with the existing
     repositories, using parameterized SQL only (no ORM).
     - One pass per table merged in Python:
@@ -104,7 +104,7 @@ tests, ADRs, and docs only.
       `market_daily` → `MAX(trade_date)`; `market_summary` → any-row bool.
     - Keyed by region; rely on the caller's `_reading()` rollback context.
     - _Requirements: 3.1, 3.3_
-  - [ ] 6.2 Write unit tests for the merge/union logic against ephemeral Postgres
+  - [x] 6.2 Write unit tests for the merge/union logic against ephemeral Postgres
     (data-bearing vs. empty regions, freshness fields present iff rows exist).
     - _Requirements: 3.1, 3.3_
 
