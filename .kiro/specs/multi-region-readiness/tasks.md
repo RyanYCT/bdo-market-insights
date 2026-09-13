@@ -140,7 +140,7 @@ tests, ADRs, and docs only.
     combinations (P5).
     - _Requirements: 3.1, 3.2, 3.3_
 
-- [ ] 8. Regenerate `infra/openapi.yaml` and confirm drift coverage
+- [x] 8. Regenerate `infra/openapi.yaml` and confirm drift coverage
   - Run `scripts/export_openapi.py` to regenerate `infra/openapi.yaml` including
     `/v1/meta`, and confirm the existing CI OpenAPI drift check
     (`git diff --exit-code infra/openapi.yaml`) covers the new route.

@@ -363,6 +363,80 @@ components:
           title: Tracked
       title: ItemUpdate
       type: object
+    MetaResponse:
+      description: 'Service-metadata envelope for ``GET /v1/meta`` (ADR-0037).
+
+
+        A single bootstrap document -- API version, per-region availability, and the
+
+        supported insights periods -- designed to be additively extensible so future
+
+        fields (limits, models, feature flags) never require a new preflight call.'
+      properties:
+        api_version:
+          title: Api Version
+          type: string
+        periods:
+          items:
+            type: string
+          title: Periods
+          type: array
+        regions:
+          items:
+            $ref: '#/components/schemas/RegionAvailability'
+          title: Regions
+          type: array
+      required:
+      - api_version
+      - regions
+      - periods
+      title: MetaResponse
+      type: object
+    RegionAvailability:
+      description: 'One region''s availability in ``GET /v1/meta`` (ADR-0037).
+
+
+        Combines two truths: ``active`` (the region is in the deployed ``BdoRegions``
+
+        toggle, via ``ACTIVE_REGIONS``) and data presence (does RDS hold rows, and
+
+        how fresh). A region can be active with no data yet (``active: true`` +
+
+        null freshness) or have history but no longer be active (``active: false``).'
+      properties:
+        active:
+          title: Active
+          type: boolean
+        has_insights:
+          title: Has Insights
+          type: boolean
+        item_count:
+          title: Item Count
+          type: integer
+        latest_daily_date:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Latest Daily Date
+        latest_snapshot_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Latest Snapshot At
+        region:
+          title: Region
+          type: string
+      required:
+      - region
+      - active
+      - item_count
+      - latest_snapshot_at
+      - latest_daily_date
+      - has_insights
+      title: RegionAvailability
+      type: object
     ResponseValidationError:
       properties:
         detail:
@@ -985,6 +1059,23 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: GET /v1/market/items/{item_id}/snapshots
+  /v1/meta:
+    get:
+      operationId: get_meta_v1_meta_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetaResponse'
+          description: Successful Response
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: GET /v1/meta
 security:
 - ApiKeyAuth: []
 servers:
