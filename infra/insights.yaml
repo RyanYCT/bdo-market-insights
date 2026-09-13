@@ -11,9 +11,14 @@ Parameters:
   Stage:
     Type: String
     AllowedValues: [dev, prod]
-  BdoRegion:
-    Type: String
-    Description: BDO server region for the daily insights schedule input
+  BdoRegions:
+    Type: CommaDelimitedList
+    Description: >
+      Active BDO server regions (ADR-0036), passed from the root stack as a
+      comma-joined string. One daily and one weekly insights schedule is
+      generated per entry; element 0 is the primary region used only for the
+      scalar BDO_REGION env default (per-execution region is carried in the
+      schedule input).
   LambdaSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
     Description: SG for in-VPC Lambdas (egress to RDS)
@@ -71,7 +76,7 @@ Globals:
     Environment:
       Variables:
         STAGE: !Ref Stage
-        BDO_REGION: !Ref BdoRegion
+        BDO_REGION: !Select [0, !Ref BdoRegions]
         POWERTOOLS_SERVICE_NAME: bdo-market-insights
         POWERTOOLS_METRICS_NAMESPACE: BdoMarket
 
@@ -270,13 +275,13 @@ Resources:
           Type: Schedule
           Properties:
             Schedule: cron(0 1 * * ? *)
-            Input: !Sub '{"region": "${BdoRegion}", "period": "daily"}'
+            Input: !Sub ['{"region": "${PrimaryRegion}", "period": "daily"}', {PrimaryRegion: !Select [0, !Ref BdoRegions]}]
             Description: Daily market insights generation (~01:00 UTC)
         WeeklyInsights:
           Type: Schedule
           Properties:
             Schedule: cron(15 1 ? * MON *)
-            Input: !Sub '{"region": "${BdoRegion}", "period": "weekly"}'
+            Input: !Sub ['{"region": "${PrimaryRegion}", "period": "weekly"}', {PrimaryRegion: !Select [0, !Ref BdoRegions]}]
             Description: Weekly market insights generation (Monday ~01:15 UTC)
       Definition:
         Comment: BDO market insights (digest + narrative + store; daily & weekly)

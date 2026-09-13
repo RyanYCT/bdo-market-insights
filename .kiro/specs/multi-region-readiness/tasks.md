@@ -21,7 +21,7 @@ tests, ADRs, and docs only.
     ordering in ADR-0036.
   - _Requirements: 2.1, 2.2_
 
-- [ ] 1. Introduce the central `BdoRegions` toggle in `template.yaml`
+- [x] 1. Introduce the central `BdoRegions` toggle in `template.yaml`
   - Replace the scalar `BdoRegion` parameter with a `BdoRegions`
     `CommaDelimitedList` parameter (default `tw`) as the single active-region
     toggle.

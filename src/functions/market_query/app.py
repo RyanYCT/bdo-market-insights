@@ -63,8 +63,10 @@ MAX_DAILY_LIMIT = 990
 #: days (a time window, so the same span regardless of sid count).
 _DEFAULT_DAILY_WINDOW = timedelta(days=90)
 
-#: Valid BDO server regions. Mirrors the ``BdoRegion`` AllowedValues enum in
-#: ``template.yaml`` (the IaC source); an unknown region is rejected with 400.
+#: Valid BDO server regions -- the canonical region enum and single source of
+#: truth (ADR-0036). ``template.yaml``'s ``BdoRegions`` toggle carries no
+#: AllowedValues (a CommaDelimitedList cannot); CI instead validates every
+#: configured region against this Literal before deploy. Unknown region -> 400.
 Region = Literal[
     "na",
     "eu",

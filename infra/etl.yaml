@@ -10,9 +10,13 @@ Parameters:
   Stage:
     Type: String
     AllowedValues: [dev, prod]
-  BdoRegion:
-    Type: String
-    Description: BDO server region injected into the hourly ETL trigger input
+  BdoRegions:
+    Type: CommaDelimitedList
+    Description: >
+      Active BDO server regions (ADR-0036), passed from the root stack as a
+      comma-joined string. One hourly ETL schedule is generated per entry;
+      element 0 is the primary region used only for the scalar BDO_REGION env
+      default (per-execution region is carried in the schedule input).
   LambdaSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
     Description: SG for in-VPC Lambdas (egress to RDS)
@@ -73,7 +77,7 @@ Globals:
     Environment:
       Variables:
         STAGE: !Ref Stage
-        BDO_REGION: !Ref BdoRegion
+        BDO_REGION: !Select [0, !Ref BdoRegions]
         POWERTOOLS_SERVICE_NAME: bdo-market-insights
         POWERTOOLS_METRICS_NAMESPACE: BdoMarket
 
@@ -298,7 +302,7 @@ Resources:
             # other round minutes), which blocks most of a batch. :07 is early
             # (snapshot_at still floors to the hour) but off the busy minutes.
             Schedule: cron(7 * * * ? *)
-            Input: !Sub '{"region": "${BdoRegion}"}'
+            Input: !Sub ['{"region": "${PrimaryRegion}"}', {PrimaryRegion: !Select [0, !Ref BdoRegions]}]
             Description: Hourly market snapshot ingestion (FR-1)
       Definition:
         Comment: BDO hourly market-data ETL

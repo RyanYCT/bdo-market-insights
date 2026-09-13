@@ -11,24 +11,18 @@ Parameters:
     AllowedValues:
       - dev
       - prod
-  BdoRegion:
-    Type: String
+  BdoRegions:
+    Type: CommaDelimitedList
     Default: tw
-    AllowedValues:
-      - na
-      - eu
-      - sea
-      - mena
-      - kr
-      - ru
-      - jp
-      - th
-      - tw
-      - sa
-      - console_eu
-      - console_na
-      - console_asia
-    Description: BDO server region passed through to ETL state machine input
+    Description: >
+      The single active-region toggle (ADR-0036). Comma-delimited list of BDO
+      server regions; deploying fans out one hourly ETL schedule and one daily +
+      one weekly insights schedule per region. Each entry must be a marketQuery
+      region enum value and unique -- validated in CI against samconfig.toml
+      before deploy (a CommaDelimitedList cannot carry AllowedValues). Element 0
+      is the "primary" region, threaded as a scalar to itemRegistry POST
+      validation and the icon-path builder. Default [tw] reproduces today's
+      single-region behaviour exactly, with zero new cost.
   UseRdsProxy:
     Type: String
     Default: 'false'
@@ -142,7 +136,10 @@ Globals:
     Environment:
       Variables:
         STAGE: !Ref Stage
-        BDO_REGION: !Ref BdoRegion
+        # Scalar primary region (element 0 of the toggle) for any consumer that
+        # needs exactly one region; per-execution region is carried in the
+        # pipeline inputs, not this env (ADR-0036).
+        BDO_REGION: !Select [0, !Ref BdoRegions]
         POWERTOOLS_SERVICE_NAME: bdo-market-insights
 
 Resources:
@@ -183,7 +180,9 @@ Resources:
       TemplateURL: infra/etl.yaml
       Parameters:
         Stage: !Ref Stage
-        BdoRegion: !Ref BdoRegion
+        # List crosses the nested-stack boundary as a comma-joined string; the
+        # child re-declares BdoRegions as a CommaDelimitedList (ADR-0036).
+        BdoRegions: !Join [',', !Ref BdoRegions]
         CommonLayerArn: !GetAtt PlatformStack.Outputs.CommonLayerArn
         LambdaSecurityGroupId: !GetAtt NetworkStack.Outputs.LambdaSecurityGroupId
         PrivateSubnetA: !GetAtt NetworkStack.Outputs.PrivateSubnetA
@@ -204,7 +203,9 @@ Resources:
       TemplateURL: infra/insights.yaml
       Parameters:
         Stage: !Ref Stage
-        BdoRegion: !Ref BdoRegion
+        # List crosses the nested-stack boundary as a comma-joined string; the
+        # child re-declares BdoRegions as a CommaDelimitedList (ADR-0036).
+        BdoRegions: !Join [',', !Ref BdoRegions]
         CommonLayerArn: !GetAtt PlatformStack.Outputs.CommonLayerArn
         LambdaSecurityGroupId: !GetAtt NetworkStack.Outputs.LambdaSecurityGroupId
         PrivateSubnetA: !GetAtt NetworkStack.Outputs.PrivateSubnetA
@@ -224,7 +225,7 @@ Resources:
       TemplateURL: infra/api.yaml
       Parameters:
         Stage: !Ref Stage
-        BdoRegion: !Ref BdoRegion
+        BdoRegion: !Select [0, !Ref BdoRegions]
         CommonLayerArn: !GetAtt PlatformStack.Outputs.CommonLayerArn
         DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
         LambdaSecurityGroupId: !GetAtt NetworkStack.Outputs.LambdaSecurityGroupId
@@ -271,7 +272,7 @@ Resources:
       TemplateURL: infra/cdn.yaml
       Parameters:
         Stage: !Ref Stage
-        BdoRegion: !Ref BdoRegion
+        BdoRegion: !Select [0, !Ref BdoRegions]
         # SSM key kept as icon-domain-name (ADR-0032); value is the CDN host.
         CdnDomainName: !Ref IconDomainName
         HostedZoneId: !Ref HostedZoneId
@@ -283,7 +284,7 @@ Resources:
       TemplateURL: infra/icons.yaml
       Parameters:
         Stage: !Ref Stage
-        BdoRegion: !Ref BdoRegion
+        BdoRegion: !Select [0, !Ref BdoRegions]
         CommonLayerArn: !GetAtt PlatformStack.Outputs.CommonLayerArn
         DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
         # Delivery bucket from the cdn stack; iconSync writes icons/* into it.

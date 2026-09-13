@@ -160,5 +160,10 @@ jobs:
       - name: Deploy (full prod state)
         run: |
           fingerprint=$(find migrations/versions -type f -name '*.py' -exec sha256sum {} \; | sort | sha256sum | cut -c1-32)
+          # BdoRegions is the single active-region toggle and lives only in
+          # samconfig.toml (Req 1.5 / ADR-0036). A full-state --parameter-overrides
+          # replaces the whole set, so the value is read back from the prod config
+          # here rather than hardcoded -- keeping one authoritative source.
+          bdo_regions=$(uv run python scripts/samconfig_regions.py prod)
           sam deploy --config-env prod --no-confirm-changeset \
-            --parameter-overrides "Stage=prod BdoRegion=tw UseRdsProxy=false AutoMigrate=true MigrationsFingerprint=$fingerprint EnableDemoKey=/bdo-market-insights/prod/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/prod/domain/api-domain-name IconDomainName=/bdo-market-insights/prod/domain/icon-domain-name HostedZoneId=/bdo-market-insights/prod/domain/hosted-zone-id"
+            --parameter-overrides "Stage=prod BdoRegions=$bdo_regions UseRdsProxy=false AutoMigrate=true MigrationsFingerprint=$fingerprint EnableDemoKey=/bdo-market-insights/prod/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/prod/domain/api-domain-name IconDomainName=/bdo-market-insights/prod/domain/icon-domain-name HostedZoneId=/bdo-market-insights/prod/domain/hosted-zone-id"
