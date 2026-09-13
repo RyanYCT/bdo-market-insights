@@ -108,6 +108,10 @@ jobs:
       - uses: aws-actions/setup-sam@v2
       - run: uv sync
       - run: sam validate --lint
+      # Fail before deploy if any BdoRegions entry in samconfig.toml is not a
+      # member of the canonical marketQuery region enum, or is a duplicate
+      # (Req 5.3 / ADR-0036).
+      - run: uv run python scripts/validate_regions.py
 
   openapi:
     runs-on: ubuntu-latest

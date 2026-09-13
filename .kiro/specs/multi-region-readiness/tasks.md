@@ -86,7 +86,7 @@ tests, ADRs, and docs only.
     weekly insights rules, each with `Input` region equal to its list entry (P2).
     - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-- [ ] 5. Add the CI region-enum validation guard
+- [x] 5. Add the CI region-enum validation guard
   - Add a small script (invoked from the single existing
     `.github/workflows/ci.yml`) that parses `BdoRegions` from the authoritative
     deploy source (`samconfig.toml`, per Task 1) and, before deploy, fails the
