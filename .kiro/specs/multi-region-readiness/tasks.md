@@ -43,14 +43,14 @@ tests, ADRs, and docs only.
   - Keep exactly one root `template.yaml`; introduce no deploy-time Lambda/macro.
   - _Requirements: 1.1, 1.2, 1.4, 1.5, 6.3_
 
-- [ ] 2. Fan out per-region ETL schedules in `infra/etl.yaml`
-  - [ ] 2.1 Add `AWS::LanguageExtensions` to the template `Transform` list and
+- [x] 2. Fan out per-region ETL schedules in `infra/etl.yaml`
+  - [x] 2.1 Add `AWS::LanguageExtensions` to the template `Transform` list and
     accept the `BdoRegions` `CommaDelimitedList` parameter.
     - Remove the inline scalar-bound `Schedule` event from the ETL state machine
       (and the SAM auto-created rule/role it implied), keeping the state machine
       a single resource.
     - _Requirements: 1.1, 2.1, 6.2_
-  - [ ] 2.2 Generate one hourly `AWS::Events::Rule` per region via `Fn::ForEach`
+  - [x] 2.2 Generate one hourly `AWS::Events::Rule` per region via `Fn::ForEach`
     over `BdoRegions`, preserving `cron(7 * * * ? *)` and targeting the ETL
     state machine with input `{"region": "<region>"}`.
     - Add a single shared EventBridge→StartExecution IAM role for the stack,
