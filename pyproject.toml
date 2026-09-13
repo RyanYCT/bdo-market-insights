@@ -44,6 +44,12 @@ dev = [
     "sqlalchemy",
     "pyyaml",
     "types-pyyaml",
+    # Property-based tests for the schedule fan-out (multi-region-readiness).
+    "hypothesis",
+    # cfn-lint drives the Fn::ForEach expansion + lint assertions for the
+    # per-region schedule fan-out tests (ADR-0036). CI's validate job also uses
+    # sam's bundled cfn-lint; this pins it for the pytest-driven IaC tests.
+    "cfn-lint",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -71,17 +71,17 @@ tests, ADRs, and docs only.
     insights state-machine ARN, backing all generated rules.
   - _Requirements: 2.2, 2.3, 2.4, 6.2_
 
-- [ ] 4. Add IaC tests for the schedule fan-out
-  - [ ] 4.1 Add `hypothesis` to the `dev` dependencies in `pyproject.toml` for
+- [x] 4. Add IaC tests for the schedule fan-out
+  - [x] 4.1 Add `hypothesis` to the `dev` dependencies in `pyproject.toml` for
     the property-based test in 4.3.
     - _Requirements: 2.1, 2.2_
-  - [ ] 4.2 Add a `tests/unit` IaC test that lints the `Fn::ForEach`-expanded
+  - [x] 4.2 Add a `tests/unit` IaC test that lints the `Fn::ForEach`-expanded
     `etl.yaml` and `insights.yaml` (via `cfn-lint` / `sam validate --lint`) and
     asserts that the default `BdoRegions=[tw]` yields exactly the baseline set —
     one hourly ETL rule, one daily and one weekly insights rule, all
     `region=tw`, and no others (P1).
     - _Requirements: 1.3, 2.1, 2.2_
-  - [ ]* 4.3 Write a property-based test over random distinct-region lists that
+  - [x]* 4.3 Write a property-based test over random distinct-region lists that
     asserts the expansion generates exactly N hourly ETL rules, N daily and N
     weekly insights rules, each with `Input` region equal to its list entry (P2).
     - _Requirements: 2.1, 2.2, 2.3, 2.4_
