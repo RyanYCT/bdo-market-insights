@@ -153,21 +153,21 @@ tests, ADRs, and docs only.
     model and RDS schema are unchanged (no new migration).
   - _Requirements: 4.1, 4.2, 4.3_
 
-- [ ] 10. Author ADRs and the region-activation runbook
-  - [ ] 10.1 Author `docs/adr/0036-region-list-central-toggle.md` (Nygard format)
+- [x] 10. Author ADRs and the region-activation runbook
+  - [x] 10.1 Author `docs/adr/0036-region-list-central-toggle.md` (Nygard format)
     recording the `BdoRegion` scalar → `BdoRegions` list toggle, per-region
     schedule generation via `Fn::ForEach` (`AWS::LanguageExtensions`) across
     `etl.yaml`/`insights.yaml`, primary region = element 0, default `[tw]`, and
     the rejected alternatives (hand-written blocks, custom macro) plus the
     same-minute concurrency trade-off.
     - _Requirements: 5.1, 6.2, 6.3_
-  - [ ] 10.2 Author `docs/adr/0037-v1-meta-service-endpoint.md` (Nygard
+  - [x] 10.2 Author `docs/adr/0037-v1-meta-service-endpoint.md` (Nygard
     format) recording the `/v1/meta` service-metadata endpoint on the in-VPC
     `marketQuery` — a single extensible envelope (`api_version`, `regions` with
     availability reporting configured-active ∪ data-bearing regions with
     per-region freshness, `periods`).
     - _Requirements: 3.1_
-  - [ ] 10.3 Add a "Region activation" section to `docs/runbook.md`
+  - [x] 10.3 Add a "Region activation" section to `docs/runbook.md`
     (add region → deploy → confirm rules enabled → verify ingestion via
     `/v1/meta` and the region-aware endpoints → reconcile spend → rollback),
     and record the per-region cost estimate against the ≤ ~US$15/month cap.

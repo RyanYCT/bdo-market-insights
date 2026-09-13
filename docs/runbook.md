@@ -28,6 +28,7 @@ access, insights evaluation, recovery/teardown, and troubleshooting.
   - [Custom API domain](#custom-api-domain)
   - [Custom icons domain](#custom-icons-domain)
   - [Public demo API key](#public-demo-api-key)
+  - [Region activation (multi-region readiness)](#region-activation-multi-region-readiness)
 - [Database access](#database-access)
 - [Market Insights: dev evaluation](#market-insights-dev-evaluation)
 - [Recovery & teardown](#recovery--teardown)
@@ -908,6 +909,86 @@ across tagged releases — no workflow edit needed.
 - The demo usage plan is ordered after the API stage (`DependsOn: BdoApiStage`),
   so the "API Stage not found" race on a fresh-create deploy is handled; enabling
   on an existing stack (the usual prod case) is a plain update.
+
+### Region activation (multi-region readiness)
+
+- **Purpose:** Activate an additional server region's full pipeline set — one
+  hourly ETL schedule and one daily + one weekly insights schedule — declaratively
+  (ADR-0036).
+- **When:** You want to start ingesting and serving a second region (e.g. `na`).
+- **Preconditions:** the region is a member of the marketQuery `Region` enum
+  (`src/functions/market_query/app.py`); the stage is already bootstrapped.
+- **Risk:** medium (adds recurring cost and instantaneous upstream load)
+- **Reversible:** remove the region from `BdoRegions` and redeploy
+
+`BdoRegions` in `samconfig.toml` is the single active-region toggle. Deploying
+fans out per-region schedules via `Fn::ForEach`; the default `[tw]` adds zero new
+cost. Activation is a gated, explicit step (readiness is delivered without it).
+
+#### Steps (activate)
+1. Add the region to `BdoRegions` for the stage in `samconfig.toml` (the single
+   source of truth — do not hardcode it in `ci.yml` or the Makefile).
+   ```toml
+   # [prod.deploy.parameters]
+   parameter_overrides = "Stage=prod BdoRegions=tw,na UseRdsProxy=false"
+   ```
+2. Deploy. CI first validates the list (unique + every entry in the enum) via
+   `scripts/validate_regions.py`, then a full-state deploy creates the
+   per-region rules — no manual EventBridge edits.
+   ```sh
+   make deploy STAGE=prod          # or push a release tag for the CI prod deploy
+   ```
+
+#### Verify
+```sh
+# The three generated rules exist and are ENABLED (bdo-<stage>-*-<region>):
+for r in etl-na insights-daily-na insights-weekly-na; do
+  aws events list-rules --region us-east-1 --name-prefix "bdo-prod-$r" \
+    --query 'Rules[].[Name,State]' --output text
+done
+
+# After the next :07 window, /v1/meta shows the region active with fresh data:
+curl -s -H "x-api-key: <KEY>" https://api.example.com/v1/meta | python3 -m json.tool
+#   expect the "na" entry with "active": true and a non-null "latest_snapshot_at"
+
+# The region-aware read returns rows:
+curl -s -H "x-api-key: <KEY>" \
+  "https://api.example.com/v1/market/items/<item-id>/snapshots?region=na" | head
+```
+- After ~24h confirm `rollup_daily` produced `market_daily` (`/v1/meta`
+  `latest_daily_date` non-null); after the daily insights window confirm
+  `has_insights: true`.
+- Check the region's ETL run for sustained `MarketItemsSkipped` (many items
+  blocked upstream in that region).
+
+#### Reconcile spend
+- Per activated region ≈ **US$1–2/month**, dominated by ETL Step Functions state
+  transitions (~720 runs/month); ETL Lambda, insights compute, Bedrock Nova Lite,
+  and RDS row growth (bounded by the 90-day purge) are each sub-$0.30; arsha calls
+  carry no AWS cost. Activating a handful of regions (2–4) stays inside the
+  ≤ ~US$15/month incremental cap; the default `[tw]` adds zero.
+- After the region has run a few days, reconcile the actual incremental cost in
+  Cost Explorer against that estimate and investigate if it materially exceeds
+  ~$2/region.
+
+#### Rollback (deactivate)
+```toml
+# [prod.deploy.parameters] — drop the region
+parameter_overrides = "Stage=prod BdoRegions=tw UseRdsProxy=false"
+```
+```sh
+make deploy STAGE=prod
+```
+CloudFormation deletes only that region's rules; other regions are untouched.
+Historical rows remain queryable (and show `active: false` in `/v1/meta`) until
+the 90-day purge ages them out.
+
+#### Notes
+- All per-region rules for a pipeline fire on the same cron minute (`:07` for
+  ETL), so activation multiplies instantaneous upstream load; fine at the target
+  region count (ADR-0036).
+- The CI region guard runs on every push, so an out-of-enum or duplicate region
+  fails the build before any deploy.
 
 ## Database access
 
