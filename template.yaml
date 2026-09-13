@@ -103,6 +103,13 @@ Parameters:
       EventBridge cron (UTC) for the weekly full-catalog sync. Default Thu 08:00
       UTC (= Thu 16:00 UTC+8), a buffer after the Thu 03:00-07:00 UTC+8 BDO
       maintenance window (which can overrun on new-item patches).
+  ApiVersion:
+    Type: String
+    Default: unknown
+    Description: >
+      Deployed release version surfaced by GET /v1/meta (ADR-0037). Single
+      source: the CI prod deploy passes the release tag; dev deploys pass a
+      local marker. Not read from pyproject.toml.
   LogRetentionInDays:
     Type: Number
     Default: 30
@@ -225,7 +232,13 @@ Resources:
       TemplateURL: infra/api.yaml
       Parameters:
         Stage: !Ref Stage
+        # ApiStack receives BOTH the scalar primary (element 0, for itemRegistry
+        # POST validation) AND the joined active-region list, which it
+        # re-declares as a CommaDelimitedList so marketQuery can read
+        # ACTIVE_REGIONS for /v1/meta (ADR-0036/0037).
         BdoRegion: !Select [0, !Ref BdoRegions]
+        BdoRegions: !Join [',', !Ref BdoRegions]
+        ApiVersion: !Ref ApiVersion
         CommonLayerArn: !GetAtt PlatformStack.Outputs.CommonLayerArn
         DynamoDbTableName: !GetAtt DataStack.Outputs.DynamoDbTableName
         LambdaSecurityGroupId: !GetAtt NetworkStack.Outputs.LambdaSecurityGroupId

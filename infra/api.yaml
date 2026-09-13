@@ -23,6 +23,16 @@ Parameters:
   BdoRegion:
     Type: String
     Description: Default BDO region (arsha.io validation in itemRegistry POST)
+  BdoRegions:
+    Type: CommaDelimitedList
+    Description: >
+      Active BDO server regions (ADR-0036), passed from the root stack as a
+      comma-joined string. Surfaced to marketQuery as ACTIVE_REGIONS so
+      GET /v1/meta can mark each region active/inactive.
+  ApiVersion:
+    Type: String
+    Default: unknown
+    Description: Deployed release version surfaced by GET /v1/meta (ADR-0037)
   CommonLayerArn:
     Type: String
     Description: ARN of the shared bdo-common Lambda layer (from the platform stack, ADR-0032)
@@ -292,6 +302,10 @@ Resources:
           DB_NAME: bdo
           DB_USER: lambda_rds_user
           USE_IAM_AUTH: 'true'
+          # Comma-joined active regions -> GET /v1/meta marks each region
+          # active/inactive; API_VERSION is the deployed release (ADR-0036/0037).
+          ACTIVE_REGIONS: !Join [',', !Ref BdoRegions]
+          API_VERSION: !Ref ApiVersion
       Events:
         Snapshots:
           Type: Api
@@ -316,6 +330,15 @@ Resources:
           Properties:
             RestApiId: !Ref BdoApi
             Path: /v1/insights
+            Method: get
+        # /v1/meta is API-key-gated: it inherits the API-wide ApiKeyRequired and
+        # the default usage plan (it reads RDS), so unlike /v1/docs it does NOT
+        # override Auth (ADR-0037, Req 3.6).
+        Meta:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BdoApi
+            Path: /v1/meta
             Method: get
 
   # ──────────────────────────────────────────────

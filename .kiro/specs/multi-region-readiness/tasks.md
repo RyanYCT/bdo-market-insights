@@ -108,8 +108,8 @@ tests, ADRs, and docs only.
     (data-bearing vs. empty regions, freshness fields present iff rows exist).
     - _Requirements: 3.1, 3.3_
 
-- [ ] 7. Add the `GET /v1/meta` service-metadata endpoint
-  - [ ] 7.1 Add `RegionAvailability` and `MetaResponse` Pydantic v2 models and
+- [x] 7. Add the `GET /v1/meta` service-metadata endpoint
+  - [x] 7.1 Add `RegionAvailability` and `MetaResponse` Pydantic v2 models and
     a `get_meta` route to `src/functions/market_query/app.py`, using the
     existing Powertools handler/`_reading()` context.
     - Return the envelope: `api_version` (the deployed release version from the
@@ -123,18 +123,18 @@ tests, ADRs, and docs only.
       max-age aligned to the hourly ETL cadence (~1h). Keep the envelope
       additively extensible.
     - _Requirements: 3.1, 3.2, 3.3, 3.4_
-  - [ ] 7.2 Wire the `ACTIVE_REGIONS` env var into the `marketQuery` function in
+  - [x] 7.2 Wire the `ACTIVE_REGIONS` env var into the `marketQuery` function in
     `infra/api.yaml`, sourced from the comma-joined active-region list passed to
     `ApiStack` (the function still receives the scalar primary `BdoRegion`
     unchanged). Also inject the `API_VERSION` env var (from the release tag) as
     the single source for the `/v1/meta` `api_version` field.
     - _Requirements: 3.1, 3.2_
-  - [ ] 7.3 Write handler unit tests for the envelope fields (`api_version`,
+  - [x] 7.3 Write handler unit tests for the envelope fields (`api_version`,
     `periods`), `active` derivation from `ACTIVE_REGIONS`, the union mapping
     (active-but-empty and data-but-deactivated rows), and the `Cache-Control`
     header.
     - _Requirements: 3.1, 3.2, 3.3, 3.4_
-  - [ ]* 7.4 Write a property-based test asserting `/v1/meta` `regions`
+  - [x]* 7.4 Write a property-based test asserting `/v1/meta` `regions`
     truthfulness: `active=true` iff the region is in the configured list and
     freshness non-null iff backing rows exist, over random active-set/data-set
     combinations (P5).

@@ -14,6 +14,9 @@ LOCAL_DB_PORT ?= 5432
 # so BdoRegions is re-threaded from the stage's config here. Lazily expanded (=)
 # so `uv run` only fires on the deploy path, not on every target.
 BDO_REGIONS = $(shell uv run python scripts/samconfig_regions.py $(STAGE))
+# Release version surfaced by GET /v1/meta (ADR-0037). CI passes the release
+# tag; local/dev deploys mark it with git describe (or "dev" outside a repo).
+API_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 USE_RDS_PROXY ?= false
 AUTO_MIGRATE ?= true
 AUTO_BOOTSTRAP ?= true
@@ -31,7 +34,7 @@ MIGRATIONS_FINGERPRINT := $(shell find migrations/versions -type f -name '*.py' 
 
 # Recursively expanded (=) so BdoRegions (and thus the samconfig read) resolves
 # only when the deploy recipe references it, not at parse time for every target.
-DEPLOY_PARAMS = Stage=$(STAGE) BdoRegions=$(BDO_REGIONS) UseRdsProxy=$(USE_RDS_PROXY) AutoMigrate=$(AUTO_MIGRATE) MigrationsFingerprint=$(MIGRATIONS_FINGERPRINT) AutoBootstrap=$(AUTO_BOOTSTRAP) EnableDemoKey=/bdo-market-insights/$(STAGE)/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/$(STAGE)/domain/api-domain-name IconDomainName=/bdo-market-insights/$(STAGE)/domain/icon-domain-name HostedZoneId=/bdo-market-insights/$(STAGE)/domain/hosted-zone-id
+DEPLOY_PARAMS = Stage=$(STAGE) BdoRegions=$(BDO_REGIONS) ApiVersion=$(API_VERSION) UseRdsProxy=$(USE_RDS_PROXY) AutoMigrate=$(AUTO_MIGRATE) MigrationsFingerprint=$(MIGRATIONS_FINGERPRINT) AutoBootstrap=$(AUTO_BOOTSTRAP) EnableDemoKey=/bdo-market-insights/$(STAGE)/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/$(STAGE)/domain/api-domain-name IconDomainName=/bdo-market-insights/$(STAGE)/domain/icon-domain-name HostedZoneId=/bdo-market-insights/$(STAGE)/domain/hosted-zone-id
 
 # Built layer artifacts (CommonLayer is nested under PlatformStack, ADR-0032).
 LAYER_PYTHON := .aws-sam/build/PlatformStack/CommonLayer/python

@@ -15,6 +15,8 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from bdo_common.models import DailyRow, SnapshotRow
 
@@ -457,3 +459,140 @@ def test_insights_rejects_invalid_period(
     monkeypatch.setattr(mod.SummaryRepo, "get", staticmethod(lambda conn, **kw: None))
     resp = mod.handler(_event("/v1/insights", query={"period": "hourly"}), lambda_context)
     assert resp["statusCode"] == 400
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# /v1/meta route tests
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _presence(mod: ModuleType, **kwargs: Any) -> Any:
+    """Build a RegionPresence via the handler's imported model."""
+    from bdo_common.models import RegionPresence
+
+    defaults: dict[str, Any] = {
+        "item_count": 0,
+        "latest_snapshot_at": None,
+        "latest_daily_date": None,
+        "has_insights": False,
+    }
+    defaults.update(kwargs)
+    return RegionPresence(**defaults)
+
+
+def test_meta_returns_envelope_and_region_union(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The envelope unions configured-active and data-bearing regions truthfully."""
+    monkeypatch.setenv("ACTIVE_REGIONS", "tw,na")
+    monkeypatch.setenv("API_VERSION", "3.2.1")
+    availability = {
+        "tw": _presence(
+            mod,
+            item_count=312,
+            latest_snapshot_at=datetime(2026, 3, 15, 5, tzinfo=UTC),
+            latest_daily_date=date(2026, 3, 14),
+            has_insights=True,
+        ),
+        # eu is data-bearing but NOT in ACTIVE_REGIONS -> active:false, still shown.
+        "eu": _presence(mod, item_count=10, latest_snapshot_at=datetime(2026, 1, 1, tzinfo=UTC)),
+    }
+    monkeypatch.setattr(
+        mod.RegionRepo, "region_availability", staticmethod(lambda conn: availability)
+    )
+
+    resp = mod.handler(_event("/v1/meta"), lambda_context)
+    assert resp["statusCode"] == 200
+    body = json.loads(resp["body"])
+    assert body["api_version"] == "3.2.1"
+    assert body["periods"] == ["daily", "weekly"]
+
+    rows = {r["region"]: r for r in body["regions"]}
+    # Union of configured-active {tw,na} and data-bearing {tw,eu}.
+    assert set(rows) == {"tw", "na", "eu"}
+
+    # Active + data-bearing: freshness populated.
+    assert rows["tw"]["active"] is True
+    assert rows["tw"]["item_count"] == 312
+    assert rows["tw"]["latest_snapshot_at"].startswith("2026-03-15T05:00:00")
+    assert rows["tw"]["has_insights"] is True
+    # Configured-active but no data yet: active with null freshness.
+    assert rows["na"]["active"] is True
+    assert rows["na"]["item_count"] == 0
+    assert rows["na"]["latest_snapshot_at"] is None
+    assert rows["na"]["has_insights"] is False
+    # Data-bearing but no longer active.
+    assert rows["eu"]["active"] is False
+    assert rows["eu"]["item_count"] == 10
+
+
+def test_meta_sets_cache_control_header(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ACTIVE_REGIONS", "tw")
+    monkeypatch.setattr(mod.RegionRepo, "region_availability", staticmethod(lambda conn: {}))
+    resp = mod.handler(_event("/v1/meta"), lambda_context)
+    assert resp["statusCode"] == 200
+    # API Gateway REST proxy emits multiValueHeaders.
+    assert resp["multiValueHeaders"]["Cache-Control"] == [f"max-age={mod._META_CACHE_SECONDS}"]
+
+
+def test_meta_active_derived_from_env(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With ACTIVE_REGIONS unset, every region reports active:false."""
+    monkeypatch.delenv("ACTIVE_REGIONS", raising=False)
+    monkeypatch.setattr(
+        mod.RegionRepo,
+        "region_availability",
+        staticmethod(lambda conn: {"tw": _presence(mod, item_count=1)}),
+    )
+    resp = mod.handler(_event("/v1/meta"), lambda_context)
+    body = json.loads(resp["body"])
+    assert body["regions"][0]["region"] == "tw"
+    assert body["regions"][0]["active"] is False
+
+
+def test_meta_defaults_api_version_when_unset(
+    mod: ModuleType, lambda_context: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("API_VERSION", raising=False)
+    monkeypatch.setenv("ACTIVE_REGIONS", "tw")
+    monkeypatch.setattr(mod.RegionRepo, "region_availability", staticmethod(lambda conn: {}))
+    resp = mod.handler(_event("/v1/meta"), lambda_context)
+    assert json.loads(resp["body"])["api_version"] == "unknown"
+
+
+_ENUM_REGIONS = [
+    "na", "eu", "sea", "mena", "kr", "ru", "jp", "th", "tw", "sa",
+    "console_eu", "console_na", "console_asia",
+]  # fmt: skip
+
+
+@settings(max_examples=50, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    active=st.sets(st.sampled_from(_ENUM_REGIONS)),
+    data=st.sets(st.sampled_from(_ENUM_REGIONS)),
+)
+def test_meta_truthfulness_property(
+    mod: ModuleType,
+    lambda_context: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    active: set[str],
+    data: set[str],
+) -> None:
+    """P5: active iff configured, freshness non-null iff backing rows exist."""
+    monkeypatch.setenv("ACTIVE_REGIONS", ",".join(sorted(active)))
+    availability = {
+        r: _presence(mod, item_count=5, latest_snapshot_at=datetime(2026, 1, 1, tzinfo=UTC))
+        for r in data
+    }
+    monkeypatch.setattr(
+        mod.RegionRepo, "region_availability", staticmethod(lambda conn: availability)
+    )
+    resp = mod.handler(_event("/v1/meta"), lambda_context)
+    rows = {r["region"]: r for r in json.loads(resp["body"])["regions"]}
+    assert set(rows) == active | data
+    for region, row in rows.items():
+        assert row["active"] is (region in active)
+        assert (row["latest_snapshot_at"] is not None) is (region in data)
