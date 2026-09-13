@@ -88,36 +88,39 @@ tests, ADRs, and docs only.
     (data-bearing vs. empty regions, freshness fields present iff rows exist).
     - _Requirements: 3.1, 3.3_
 
-- [ ] 7. Add the `GET /v1/regions` discovery endpoint
-  - [ ] 7.1 Add `RegionAvailability` and `RegionsResponse` Pydantic v2 models and
-    a `get_regions` route to `src/functions/market_query/app.py`, using the
+- [ ] 7. Add the `GET /v1/meta` service-metadata endpoint
+  - [ ] 7.1 Add `RegionAvailability` and `MetaResponse` Pydantic v2 models and
+    a `get_meta` route to `src/functions/market_query/app.py`, using the
     existing Powertools handler/`_reading()` context.
-    - Return the union of configured-active regions (from the `ACTIVE_REGIONS`
-      env var) and data-bearing regions, with top-level `count` and per-region
-      `active`, `item_count`, `latest_snapshot_at`, `latest_daily_date`,
-      `has_insights`.
+    - Return the envelope: `api_version` (deployed API version from an env var /
+      package version), `regions` (the union of configured-active regions from
+      the `ACTIVE_REGIONS` env var and data-bearing regions, each with `active`,
+      `item_count`, `latest_snapshot_at`, `latest_daily_date`, `has_insights`),
+      and `periods`.
     - Set `active` true iff the region is in `ACTIVE_REGIONS`; set freshness
       fields non-null iff RDS holds the corresponding rows.
-    - Support an optional `region` filter; respond `400` on a value outside the
-      region enum, consistent with the existing market endpoints.
+    - Take no query parameters; serve the response with a `Cache-Control`
+      max-age aligned to the hourly ETL cadence (~1h). Keep the envelope
+      additively extensible.
     - _Requirements: 3.1, 3.2, 3.3, 3.4_
   - [ ] 7.2 Wire the `ACTIVE_REGIONS` env var (comma-joined `BdoRegions`) into
     the `marketQuery` function in `infra/api.yaml` (function still receives the
     scalar primary `BdoRegion` unchanged).
     - _Requirements: 3.2_
-  - [ ] 7.3 Write handler unit tests for `active` derivation from
-    `ACTIVE_REGIONS`, the union mapping (active-but-empty and
-    data-but-deactivated rows), and the `400` unknown-region path (P6).
-    - _Requirements: 3.2, 3.3, 3.4_
-  - [ ]* 7.4 Write a property-based test asserting `/v1/regions` truthfulness:
-    `active=true` iff the region is in the configured list and freshness
-    non-null iff backing rows exist, over random active-set/data-set
+  - [ ] 7.3 Write handler unit tests for the envelope fields (`api_version`,
+    `periods`), `active` derivation from `ACTIVE_REGIONS`, the union mapping
+    (active-but-empty and data-but-deactivated rows), and the `Cache-Control`
+    header.
+    - _Requirements: 3.1, 3.2, 3.3, 3.4_
+  - [ ]* 7.4 Write a property-based test asserting `/v1/meta` `regions`
+    truthfulness: `active=true` iff the region is in the configured list and
+    freshness non-null iff backing rows exist, over random active-set/data-set
     combinations (P5).
     - _Requirements: 3.1, 3.2, 3.3_
 
 - [ ] 8. Regenerate `infra/openapi.yaml` and confirm drift coverage
   - Run `scripts/export_openapi.py` to regenerate `infra/openapi.yaml` including
-    `/v1/regions`, and confirm the existing CI OpenAPI drift check
+    `/v1/meta`, and confirm the existing CI OpenAPI drift check
     (`git diff --exit-code infra/openapi.yaml`) covers the new route.
   - _Requirements: 3.5_
 
@@ -136,14 +139,15 @@ tests, ADRs, and docs only.
     the rejected alternatives (hand-written blocks, custom macro) plus the
     same-minute concurrency trade-off.
     - _Requirements: 5.1, 6.2, 6.3_
-  - [ ] 10.2 Author `docs/adr/0037-v1-regions-discovery-endpoint.md` (Nygard
-    format) recording hosting region discovery on the in-VPC `marketQuery` as a
-    top-level resource reporting configured-active ∪ data-bearing regions with
-    per-region freshness.
+  - [ ] 10.2 Author `docs/adr/0037-v1-meta-service-endpoint.md` (Nygard
+    format) recording the `/v1/meta` service-metadata endpoint on the in-VPC
+    `marketQuery` — a single extensible envelope (`api_version`, `regions` with
+    availability reporting configured-active ∪ data-bearing regions with
+    per-region freshness, `periods`).
     - _Requirements: 3.1_
   - [ ] 10.3 Add a "Region activation" section to `docs/runbook.md`
     (add region → deploy → confirm rules enabled → verify ingestion via
-    `/v1/regions` and the region-aware endpoints → reconcile spend → rollback),
+    `/v1/meta` and the region-aware endpoints → reconcile spend → rollback),
     and record the per-region cost estimate against the ≤ ~US$15/month cap.
     - _Requirements: 5.1, 5.2, 6.1_
 
@@ -157,7 +161,7 @@ flowchart TD
     T4["4. IaC fan-out tests"]
     T5["5. CI region-enum guard"]
     T6["6. RegionRepo.region_availability aggregate"]
-    T7["7. GET /v1/regions + ACTIVE_REGIONS env"]
+    T7["7. GET /v1/meta + ACTIVE_REGIONS env"]
     T8["8. Regenerate openapi.yaml + drift"]
     T9["9. Guardrail regression coverage (optional)"]
     T10["10. ADR-0036/0037 + runbook"]

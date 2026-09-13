@@ -5,10 +5,10 @@
 Multi-region readiness makes activating an additional server region a
 declarative, central operation: editing one `BdoRegions` list and deploying
 fans out per-region EventBridge schedules across every pipeline, and a new
-`GET /v1/regions` endpoint lets the frontend discover which regions are active
-and what data exists for each. The data plane is already region-partitioned and
-region-aware (v3); this feature changes only the trigger layer and adds a
-discovery endpoint. Readiness-first: the default stays `[tw]` and must behave
+`GET /v1/meta` service-metadata endpoint lets the frontend bootstrap the client
+(API version, active regions with data presence, supported periods) in a single
+call. The data plane is already region-partitioned and region-aware (v3); this
+feature changes only the trigger layer and adds a service-metadata endpoint. Readiness-first: the default stays `[tw]` and must behave
 exactly as today with zero new cost, so the mechanism is provable without
 turning on any new region. Each activated region must stay within the hard
 ≤ ~US$15/month incremental cost cap.
@@ -68,28 +68,29 @@ activates or deactivates its full pipeline set declaratively.
 5. THE system SHALL keep per-region ETL executions independent, such that each
    execution rolls up only its own region's previous UTC day.
 
-### Requirement 3: Region discovery endpoint
+### Requirement 3: Service metadata endpoint
 
-**User Story:** As a frontend developer, I want a region discovery endpoint, so
-that I can truthfully determine which regions are active and what data is
-available for each instead of guessing.
+**User Story:** As a frontend developer, I want one service-metadata endpoint, so
+that I can bootstrap the client (API version, available regions with data
+presence, supported periods) in a single call instead of several preflight
+requests.
 
 #### Acceptance Criteria
 
-1. THE `marketQuery` service SHALL expose `GET /v1/regions` returning the union
-   of configured-active and data-bearing regions, with a top-level `count` and
-   per-region `active`, `item_count`, `latest_snapshot_at`, `latest_daily_date`,
-   and `has_insights` fields.
+1. THE `marketQuery` service SHALL expose `GET /v1/meta` returning an envelope
+   with `api_version`, `regions` (the union of configured-active and data-bearing
+   regions, each with `active`, `item_count`, `latest_snapshot_at`,
+   `latest_daily_date`, and `has_insights`), and `periods`.
 2. THE system SHALL set `active` true if and only if the region is in the
    deployed `BdoRegions` list (via the `ACTIVE_REGIONS` env var).
 3. THE system SHALL set the freshness fields non-null if and only if RDS holds
    the corresponding rows, so a configured-active region with no data appears
    with `active: true` and null freshness, and a data-bearing region no longer
    configured appears with `active: false`.
-4. IF `GET /v1/regions` is called with a `region` filter that is not a member of
-   the region enum THEN the system SHALL respond `400`, consistent with the
-   existing market endpoints.
-5. THE system SHALL include `/v1/regions` in the generated `infra/openapi.yaml`
+4. THE system SHALL serve `GET /v1/meta` with no query parameters and with a
+   `Cache-Control` max-age aligned to the hourly ETL cadence, and SHALL keep the
+   envelope additively extensible.
+5. THE system SHALL include `/v1/meta` in the generated `infra/openapi.yaml`
    and guard it with the existing CI OpenAPI drift check.
 
 ### Requirement 4: Preserved guardrails
@@ -131,7 +132,7 @@ documented procedure using pure IaC discipline.
 
 1. THE system SHALL include a region-activation-and-verification runbook in
    `docs/runbook.md` (add region → deploy → confirm rules enabled → confirm
-   ingestion via `/v1/regions` and the region-aware endpoints → reconcile spend,
+   ingestion via `/v1/meta` and the region-aware endpoints → reconcile spend,
    plus rollback) as a required deliverable.
 2. THE system SHALL generate per-region rules declaratively via `Fn::ForEach`
    (`AWS::LanguageExtensions`), keeping the change within the trigger layer.

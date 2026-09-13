@@ -1,8 +1,9 @@
 # Multi-region readiness — Design
 
 > Design-first spec. Proposes ADR-0036 (region-list central toggle) and
-> ADR-0037 (`/v1/regions` discovery endpoint) — authored separately under
-> `docs/adr/`; the authoritative IaC detail will live in ADR-0036 and the code.
+> ADR-0037 (`/v1/meta` service-metadata (discovery) endpoint) — authored
+> separately under `docs/adr/`; the authoritative IaC detail will live in
+> ADR-0036 and the code.
 
 ## Overview
 
@@ -32,7 +33,7 @@ The **only** single-region pin is the **trigger layer**: `infra/etl.yaml` and
 `{"region": "${BdoRegion}"}`, bound to the scalar CloudFormation parameter
 `BdoRegion` (default `tw`). Today, activating another region is a manual rule
 edit. This feature makes activation **declarative and central** and adds a
-truthful **data-availability discovery** endpoint.
+truthful **service-metadata (discovery)** endpoint.
 
 ### Goals
 
@@ -40,8 +41,9 @@ truthful **data-availability discovery** endpoint.
    generates **one schedule per region across every pipeline** — hourly ETL
    (`etl.yaml`) and daily + weekly insights (`insights.yaml`) — with no manual
    per-region steps.
-2. Add `GET /v1/regions` so the frontend can discover **active regions and
-   per-region data presence** instead of guessing.
+2. Add `GET /v1/meta` so the frontend can bootstrap the client (API version,
+   **active regions and per-region data presence**, supported periods) in a
+   single call instead of guessing.
 3. **Readiness-first:** provable without turning on any new region (default
    stays `[tw]`), within the **≤ ~US$15/month** cost cap. Activating a real
    second region is an explicit, gated final step.
@@ -87,7 +89,7 @@ flowchart LR
     list --> weeklyR --> insSM
     etlSM --> rds
     insSM --> rds
-    client -->|"GET /v1/regions"| mq
+    client -->|"GET /v1/meta"| mq
     client -->|"GET /v1/market?region=…"| mq
     mq -->|"per-region presence"| rds
     list -.->|"ACTIVE_REGIONS env"| mq
@@ -108,9 +110,9 @@ schedule and deletes by age across all regions — region-agnostic, no fan-out.
 | `template.yaml` | `BdoRegion` scalar → `BdoRegions` list (the one toggle); primary = element 0 | IaC |
 | `infra/etl.yaml` | One hourly ETL schedule **per region** from the list | IaC |
 | `infra/insights.yaml` | One daily + one weekly schedule **per region** from the same list | IaC |
-| `marketQuery` (`market_query/app.py`) | New `GET /v1/regions` route + models; reads `ACTIVE_REGIONS` env | Code |
+| `marketQuery` (`market_query/app.py`) | New `GET /v1/meta` route + models; reads `ACTIVE_REGIONS` env | Code |
 | `bdo_common` repositories | New `RegionRepo.region_availability(conn)` (read-only aggregate) | Code |
-| `infra/openapi.yaml` | Regenerated to include `/v1/regions` (CI drift-checked) | Generated |
+| `infra/openapi.yaml` | Regenerated to include `/v1/meta` (CI drift-checked) | Generated |
 | `api.yaml`, `cdn.yaml`, `icons.yaml` | Unchanged shape — keep receiving a **scalar** primary region | IaC |
 
 ### Primary region vs. the region list
@@ -125,19 +127,23 @@ existing consumer behave exactly as today. Item identity is global, so
 validating a `POST` against the primary region is sufficient (the item is then
 polled in every active region by the global tracked set).
 
-### Data-availability discovery: `GET /v1/regions`
+### Service-metadata (discovery): `GET /v1/meta`
 
-**Endpoint choice — top-level `/v1/regions`, not `/v1/market/regions`.** Region
-availability is a cross-cutting discovery resource, not a sub-resource of one
-item's time series. `marketQuery` already owns top-level routes beyond
-`/v1/market/*` (it serves `/v1/insights`) and is the **only in-VPC RDS reader**,
-so hosting `/v1/regions` there adds **no new VPC Lambda**; `itemRegistry` runs
-outside the VPC and cannot read RDS. It answers *"what can I show for region
-X?"* by combining two truths: **configured-active** (in the deployed
-`BdoRegions` list, surfaced via `ACTIVE_REGIONS`) and **has data** (does RDS hold
-market/insights rows, and how fresh). A region can be active with no data yet, or
-have historical data but no longer be active; reporting both is the truthful
-answer.
+**Endpoint choice — single service-metadata endpoint on the in-VPC
+`marketQuery`.** Rather than several preflight calls, the frontend bootstraps
+from one extensible envelope: API version, available regions (with data
+presence), and supported periods. `marketQuery` already owns top-level routes
+beyond `/v1/market/*` (it serves `/v1/insights`) and is the **only in-VPC RDS
+reader**, so hosting `/v1/meta` there adds **no new VPC Lambda**; the freshness
+fields in the `regions` union need RDS, so the owner rationale is unchanged.
+`itemRegistry` runs outside the VPC and cannot read RDS. The `regions` field
+answers *"what can I show for region X?"* by combining two truths:
+**configured-active** (in the deployed `BdoRegions` list, surfaced via
+`ACTIVE_REGIONS`) and **has data** (does RDS hold market/insights rows, and how
+fresh). A region can be active with no data yet, or have historical data but no
+longer be active; reporting both is the truthful answer. The envelope is
+designed to be **additively extensible** (future fields — limits, models,
+feature flags — never require a new preflight call).
 
 ### IaC: region list → N schedules
 
@@ -190,31 +196,38 @@ is a per-region minute offset, but `Fn::ForEach` exposes no numeric index so a
 staggered cron would need an explicit per-region minute map — deferred (not
 needed at the target region count), documented as a conscious choice.
 
-### Endpoint contract: `GET /v1/regions`
+### Endpoint contract: `GET /v1/meta`
 
 Added to `market_query/app.py` (in-VPC, reads RDS via IAM auth using the
-existing `_reading()` rollback context). No required params; an optional
-`region` filter narrows to one row, `400` on an unknown value (matching the
-existing enum contract).
+existing `_reading()` rollback context). It takes **no query parameters** — a
+single bootstrap call returning the whole envelope — and is served with a
+`Cache-Control` max-age aligned to the hourly ETL cadence (~1h), since the
+`regions` freshness only advances once per ETL run.
 
 ```jsonc
-// GET /v1/regions
-{ "count": 2, "regions": [
-  { "region": "tw", "active": true, "item_count": 312,
-    "latest_snapshot_at": "2025-01-01T12:00:00Z",
-    "latest_daily_date": "2024-12-31", "has_insights": true },
-  { "region": "na", "active": true, "item_count": 0,
-    "latest_snapshot_at": null, "latest_daily_date": null,
-    "has_insights": false }        // configured-active, no data ingested yet
-]}
+// GET /v1/meta   (no query params; Cache-Control max-age ~1h)
+{ "api_version": "3.4.0",
+  "periods": ["daily", "weekly"],
+  "regions": [
+    { "region": "tw", "active": true, "item_count": 312,
+      "latest_snapshot_at": "2025-01-01T12:00:00Z",
+      "latest_daily_date": "2024-12-31", "has_insights": true },
+    { "region": "na", "active": true, "item_count": 0,
+      "latest_snapshot_at": null, "latest_daily_date": null,
+      "has_insights": false }      // configured-active, no data ingested yet
+  ]
+  // future-additive: limits, models, feature_flags, …
+}
 ```
 
-`active` is computed from the `ACTIVE_REGIONS` env var (comma-joined
-`BdoRegions`, injected for the `marketQuery` function). The row set is the
-**union** of configured-active regions and regions with any RDS data, so both
-"activated but empty" and "has history but deactivated" are visible. Because the
-tables are region-partitioned with `(region, …)` leading indexes, the
-`GROUP BY region` aggregates are cheap.
+`api_version` is the deployed API version (from an env var / package version).
+Within `regions`, `active` is computed from the `ACTIVE_REGIONS` env var
+(comma-joined `BdoRegions`, injected for the `marketQuery` function). The row
+set is the **union** of configured-active regions and regions with any RDS data,
+so both "activated but empty" and "has history but deactivated" are visible.
+Because the tables are region-partitioned with `(region, …)` leading indexes,
+the `GROUP BY region` aggregates are cheap. The envelope is additively
+extensible: new top-level fields can be added without a new preflight call.
 
 ### Files touched
 
@@ -223,9 +236,9 @@ template.yaml                    # BdoRegion scalar -> BdoRegions list; derive p
 infra/etl.yaml                   # + AWS::LanguageExtensions; Fn::ForEach hourly rules; shared schedule role
 infra/insights.yaml              # + AWS::LanguageExtensions; Fn::ForEach daily+weekly rules; shared role
 infra/api.yaml                   # marketQuery: + ACTIVE_REGIONS env (still receives scalar BdoRegion=primary)
-src/functions/market_query/app.py            # + get_regions route + RegionAvailability/RegionsResponse
+src/functions/market_query/app.py            # + get_meta route + RegionAvailability/MetaResponse
 src/layer/python/bdo_common/repositories.py  # + RegionRepo.region_availability
-infra/openapi.yaml               # regenerated (scripts/export_openapi.py); CI drift check
+infra/openapi.yaml               # regenerated (scripts/export_openapi.py) incl. /v1/meta; CI drift check
 docs/adr/0036-*.md, docs/adr/0037-*.md       # authored in a later phase
 ```
 
@@ -240,7 +253,7 @@ new in the data path: `fetch_data` uses `ArshaClient.fetch_raw_resilient`
 (adaptive bisect) — individually blocked items are **dropped** into `failed_ids`
 and the rest stored, so a dropped item simply has **no snapshot** for that hour in
 that region (exactly the "not available here" signal, reflected as absent data by
-`/v1/regions` and the region-aware endpoints). Drop count is emitted as
+`/v1/meta` and the region-aware endpoints). Drop count is emitted as
 `MarketItemsSkipped` (sustained drops trip the existing skip alarm; total upstream
 failure fails the stage loud via `ExecutionsFailed`).
 
@@ -280,15 +293,15 @@ Tasks; outline here):
    `…-insights-daily-na`, `…-weekly-na`).
 3. After the next `:07` window, confirm one execution ran and check
    `MarketItemsSkipped`.
-4. Verify data: `GET /v1/regions` shows `na` `active:true` with non-null
+4. Verify data: `GET /v1/meta` shows `na` `active:true` with non-null
    `latest_snapshot_at`; `…/snapshots?region=na` returns rows.
 5. After ~24h confirm `rollup_daily` produced `market_daily`; after the daily
    insights window confirm `has_insights:true`.
 6. Reconcile incremental spend against the cost model.
 
 **Rollback:** remove the region from `BdoRegions` and redeploy — per-region rules
-are deleted; historical rows remain (queryable, `active:false`) until the 90-day
-purge ages them out.
+are deleted; historical rows remain (queryable, `active:false` in `/v1/meta`)
+until the 90-day purge ages them out.
 
 ---
 
@@ -305,9 +318,11 @@ class RegionAvailability(BaseModel):
     latest_daily_date: date | None
     has_insights: bool                # any market_summary row exists
 
-class RegionsResponse(BaseModel):
-    regions: list[RegionAvailability]  # union of configured + data-bearing
-    count: int
+class MetaResponse(BaseModel):
+    api_version: str                    # deployed API version (env var / package version)
+    regions: list[RegionAvailability]   # union of configured-active ∪ data-bearing
+    periods: list[str]                  # e.g. ["daily", "weekly"]
+    # future-additive: limits, models, feature_flags, …
 ```
 
 New read-only aggregate in `bdo_common.repositories` (co-located with
@@ -328,7 +343,8 @@ class RegionRepo:
 ```
 
 The handler merges `region_availability` with the `ACTIVE_REGIONS` set to
-produce `RegionsResponse`.
+produce the `regions` field of `MetaResponse`, alongside `api_version` and
+`periods`.
 
 ---
 
@@ -346,12 +362,13 @@ produce `RegionsResponse`.
 - **P4 (primary invariance):** with element 0 = `tw`, every scalar `BDO_REGION`
   consumer (itemRegistry POST validation, icon path) is byte-for-byte unchanged
   from pre-feature behaviour.
-- **P5 (discovery truthfulness):** `GET /v1/regions` reports `active=true` iff
-  the region is in the deployed list, and non-null freshness fields iff RDS holds
-  the corresponding rows; a region with data but not in the list appears with
-  `active=false`.
-- **P6 (unknown region contract):** `GET /v1/regions?region=<not-in-enum>`
-  returns `400`, consistent with the existing market endpoints.
+- **P5 (discovery truthfulness):** the `regions` union in `GET /v1/meta` reports
+  `active=true` iff the region is in the deployed list, and non-null freshness
+  fields iff RDS holds the corresponding rows; a region with data but not in the
+  list appears with `active=false`.
+- **P6 (single-call bootstrap):** `/v1/meta` returns `api_version`, `periods`,
+  and the `regions` union in one response with no query params, served with an
+  ~1h `Cache-Control` aligned to the ETL cadence.
 - **P7 (rollup independence):** each region's ETL execution rolls up only its own
   region's previous UTC day.
 
@@ -360,7 +377,7 @@ produce `RegionsResponse`.
 - **Bad region in the list at deploy:** entries are validated against the enum in
   CI before deploy (see Testing); an unknown value fails the build rather than
   creating a rule that feeds an out-of-enum `region` downstream.
-- **`/v1/regions` DB unavailable:** same failure mode as the other in-VPC read
+- **`/v1/meta` DB unavailable:** same failure mode as the other in-VPC read
   routes (5xx counted by the API SLO alarm); no partial/stale cache is invented.
 - **Per-region upstream blocks:** handled by the resilient fetch; never fails a
   whole region's run for individually blocked items.
@@ -368,14 +385,15 @@ produce `RegionsResponse`.
 ## Testing strategy
 
 - **Unit:** `RegionRepo.region_availability` merge logic (data-bearing vs.
-  configured-active union); `get_regions` handler mapping incl. the `400` path;
-  `active` derivation from `ACTIVE_REGIONS`.
+  configured-active union); `get_meta` handler mapping (envelope fields
+  `api_version`/`periods`, the `regions` active/union mapping, and the
+  `Cache-Control` header); `active` derivation from `ACTIVE_REGIONS`.
 - **IaC:** `cfn-lint` over the `Fn::ForEach`-expanded templates; a test that the
   expansion yields N rules for a sample multi-region list and exactly the baseline
   set for `[tw]` (P1/P2); a CI check that every `BdoRegions` entry is a member of
   the marketQuery region enum.
 - **Contract:** `scripts/export_openapi.py` regenerates `infra/openapi.yaml` with
-  `/v1/regions`; the existing CI drift check guards it.
+  `/v1/meta`; the existing CI drift check guards it.
 - **Property-based** (repo convention): P2 over random distinct-region lists —
   generated rule count and per-rule input region match the list exactly.
 
@@ -389,7 +407,9 @@ Following the existing sequence (highest is `0035`):
   `insights.yaml`; primary region = element 0 for scalar consumers; default
   `[tw]`. Alternatives (hand-written blocks, custom macro) and the same-minute
   concurrency trade-off captured. Holds the authoritative IaC detail.
-- **ADR-0037 — `/v1/regions` data-availability discovery endpoint.** Records
-  hosting region discovery on the in-VPC `marketQuery` (owner of the only RDS
-  read path and of `/v1/insights`) as a top-level resource, reporting
-  configured-active ∪ data-bearing regions with per-region freshness.
+- **ADR-0037 — `/v1/meta` service-metadata (discovery) endpoint.** Records
+  hosting a single extensible service-metadata envelope (`api_version`, `regions`
+  with availability, `periods`) on the in-VPC `marketQuery` (owner of the only
+  RDS read path and of `/v1/insights`). `regions` — reporting configured-active ∪
+  data-bearing regions with per-region freshness — is its first field; the shape
+  is additively extensible so new fields never require a new preflight call.
