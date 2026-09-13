@@ -2190,3 +2190,37 @@ records (the sessions did not log at the time); dates are the merge dates._
   ignored); the leftover attribute is cleared with a one-off out-of-band scrub.
 - Historical ADRs 0018/0021/0023 left unchanged as records of the original
   design.
+
+
+## 2026-09-13 — Multi-region readiness (toggle, schedule fan-out, /v1/meta)
+
+**Agent:** Kiro
+**Mode:** Vibe
+**Branch:** `feat/multi-region-readiness`
+**Phase:** n/a — feature spec `.kiro/specs/multi-region-readiness/`
+**Commits:** `55a4ecf`..`d4b9854` (10) — PR #121
+
+### Done
+- Implemented all 10 spec tasks. Central `BdoRegions` `CommaDelimitedList`
+  toggle (default `tw`) replacing the scalar `BdoRegion`; primary = element 0
+  for scalar consumers.
+- Per-region schedule fan-out in `etl.yaml`/`insights.yaml` via `Fn::ForEach`
+  (`AWS::LanguageExtensions`) with a shared EventBridge→StartExecution role.
+- `samconfig.toml` as the single toggle source (Makefile + CI re-thread it via
+  `scripts/samconfig_regions.py`); CI region-enum + uniqueness guard
+  (`scripts/validate_regions.py`).
+- `GET /v1/meta` on marketQuery (`RegionRepo.region_availability` aggregate,
+  `ACTIVE_REGIONS`/`API_VERSION` env, ~1h Cache-Control); regenerated
+  `infra/openapi.yaml`.
+- IaC fan-out tests (baseline + property-based), guardrail regression tests,
+  RegionRepo unit + integration tests. Region-activation runbook section.
+
+### Decisions
+- Region-list toggle + `Fn::ForEach` fan-out → ADR-0036
+- `/v1/meta` service-metadata endpoint → ADR-0037
+
+### Deferred / open questions
+- Per-region cron minute-staggering and region-dimensioned skip metrics
+  (documented as options in the design; not needed at the target region count).
+- Actually ingesting a second region is a gated operational step (runbook), not
+  in this PR.
