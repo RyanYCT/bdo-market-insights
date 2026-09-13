@@ -17,6 +17,24 @@ from bdo_common.repositories import RegionRepo
 pytestmark = pytest.mark.integration
 
 
+def _seed_parents(
+    conn: psycopg.Connection[tuple[Any, ...]],
+    *,
+    region: str,
+    item_id: int,
+) -> None:
+    """Insert the item + item_sid parents that snapshot/daily FK-reference."""
+    conn.execute(
+        "INSERT INTO item (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+        (item_id, f"Item {item_id}"),
+    )
+    conn.execute(
+        "INSERT INTO item_sid (region, item_id, sid, max_enhance, price_min, price_max) "
+        "VALUES (%s, %s, 0, 0, 1, 1000) ON CONFLICT DO NOTHING",
+        (region, item_id),
+    )
+
+
 def _insert_snapshot(
     conn: psycopg.Connection[tuple[Any, ...]],
     *,
@@ -24,6 +42,7 @@ def _insert_snapshot(
     item_id: int,
     at: datetime,
 ) -> None:
+    _seed_parents(conn, region=region, item_id=item_id)
     conn.execute(
         "INSERT INTO market_snapshot (region, snapshot_at, item_id, sid, base_price, "
         "current_stock, total_trades, last_sold_price, last_sold_at) "
