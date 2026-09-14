@@ -19,7 +19,7 @@ s3_prefix = "bdo-market-insights/dev"
 region = "us-east-1"
 confirm_changeset = true
 capabilities = "CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
-parameter_overrides = "Stage=dev BdoRegions=tw UseRdsProxy=false"
+parameter_overrides = "Stage=dev BdoRegions=tw,na UseRdsProxy=false"
 
 [prod.deploy.parameters]
 stack_name = "bdo-market-prod"
