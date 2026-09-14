@@ -90,7 +90,20 @@ and generate per-region schedules with `Fn::ForEach`.
 - (−) Adds the `AWS::LanguageExtensions` transform to two nested templates.
   CI does not lint nested templates via `sam validate`, so the expansion is
   covered by a pytest IaC test that drives the same transform and asserts the
-  generated rule set.
+  generated rule set, plus a non-tag-gated `sam build` in the `validate` job.
+- (−) **Requires SAM CLI >= 1.160.0 with local language-extensions processing
+  enabled.** Local expansion is opt-in and off by default; without it the SAM
+  translator receives the raw `Fn::ForEach` list where it expects a resource
+  dict and `sam build` fails. The opt-in is persisted in `samconfig.toml`
+  (`language_extensions = true` for build, validate, and each stage's deploy),
+  so no operator flag is needed — but an older SAM CLI cannot deploy this repo.
+- (−) The child templates must declare a `Default` for `BdoRegions`. When
+  `sam package`/`sam deploy` expands a built **child** template standalone it
+  resolves the loop collection from that child's own `Default` (it does not
+  inherit the parent's `Parameters` at that stage), so a defaultless parameter
+  leaves `Ref: BdoRegions` unresolved and the expansion reports an incorrect
+  `Fn::ForEach` layout. The default is inert at deploy time — the root stack
+  always passes the real value.
 - (−) All N region rules for a pipeline fire on the same cron minute, so peak
   concurrent ETL Lambdas ≈ `N × Map MaxConcurrency` and upstream (arsha) load is
   multiplied at one instant. Well within limits at the target region count, and

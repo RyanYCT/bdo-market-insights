@@ -16,6 +16,12 @@ Parameters:
     AllowedValues: [dev, prod]
   BdoRegions:
     Type: CommaDelimitedList
+    # A Default is required for tooling that expands Fn::ForEach against this
+    # template standalone (sam package/deploy resolves the loop collection from
+    # the child's own Default, not the parent's Parameters). The deployed value
+    # always comes from the root stack, so this default never takes effect in a
+    # real deploy -- it only keeps local expansion resolvable.
+    Default: tw
     Description: >
       Active BDO server regions (ADR-0036), passed from the root stack as a
       comma-joined string. One hourly ETL schedule is generated per entry;

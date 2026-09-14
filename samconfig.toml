@@ -3,6 +3,18 @@ version = 0.1
 [default.build.parameters]
 cached = true
 parallel = true
+# Expand AWS::LanguageExtensions (Fn::ForEach) locally before the SAM transform.
+# Local processing is OPT-IN and off by default; without it the SAM translator
+# receives the unexpanded Fn::ForEach block (a list where it expects a resource
+# dict) and `sam build` fails with "'list' object has no attribute 'get'". The
+# per-region schedule fan-out in etl.yaml/insights.yaml needs this (ADR-0036).
+# Requires SAM CLI >= 1.160.0. Set on every command we run: build, validate, and
+# each stage's deploy (a --config-env deploy reads that stage's section, not
+# [default]).
+language_extensions = true
+
+[default.validate.parameters]
+language_extensions = true
 
 # Each stage uses its OWN s3_prefix so their deployment artifacts never share
 # object keys. SAM artifacts are content-addressed, so with a shared prefix an
@@ -19,6 +31,7 @@ s3_prefix = "bdo-market-insights/dev"
 region = "us-east-1"
 confirm_changeset = true
 capabilities = "CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
+language_extensions = true
 parameter_overrides = "Stage=dev BdoRegions=tw UseRdsProxy=false"
 
 [prod.deploy.parameters]
@@ -28,4 +41,5 @@ s3_prefix = "bdo-market-insights/prod"
 region = "us-east-1"
 confirm_changeset = true
 capabilities = "CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
+language_extensions = true
 parameter_overrides = "Stage=prod BdoRegions=tw UseRdsProxy=false"

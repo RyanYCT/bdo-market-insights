@@ -32,6 +32,10 @@ The stack below is locked. Any change requires an ADR in `docs/adr/`.
   (`network`, `data`, `platform`, `etl`, `api`, `insights`, `catalog`,
   `icons`, `cdn`, `bootstrap`, `observability`; ADR-0032).
   Not CDK, not raw CFN, not Terraform (ADR-0001).
+  **SAM CLI >= 1.160.0**, since `etl.yaml`/`insights.yaml` use
+  `Fn::ForEach` (`AWS::LanguageExtensions`) for the per-region schedule
+  fan-out and need its local expansion, enabled in `samconfig.toml`
+  (ADR-0036).
 - **IAM database authentication** for Lambdas (ADR-0008). Ad-hoc human
   DB access uses the in-VPC `adminQuery` Lambda (ADR-0026); there is no
   standing bastion, and break-glass is on-demand (ADR-0027).

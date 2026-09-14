@@ -506,7 +506,14 @@ one-command operations:
 
 ### Deployment notes
 
-Three things apply to every `make deploy`:
+Four things apply to every `make deploy`:
+
+- **SAM CLI >= 1.160.0 is required.** The per-region schedule fan-out uses
+  `Fn::ForEach` (`AWS::LanguageExtensions`, ADR-0036), and SAM only expands that
+  locally when language-extension processing is enabled — which `samconfig.toml`
+  already sets (`language_extensions = true`), so no flag is needed. On an older
+  SAM CLI, `sam build` fails with `'list' object has no attribute 'get'`; upgrade
+  rather than editing templates. Check with `sam --version`.
 
 - **Build on a native Linux filesystem, not a Windows-mounted `/mnt/*` path.**
   `make deploy` runs `make build` (including the verify-layer guard) first, so a

@@ -108,6 +108,12 @@ jobs:
       - uses: aws-actions/setup-sam@v2
       - run: uv sync
       - run: sam validate --lint
+      # `sam validate` only inspects the root template, which carries no
+      # Fn::ForEach -- so it cannot catch a nested template that the SAM
+      # translator chokes on. Build here (non-tag-gated) so the language-
+      # extensions expansion of etl.yaml/insights.yaml is exercised on every
+      # push and PR, not only on a release tag via the deploy job.
+      - run: sam build
       # Fail before deploy if any BdoRegions entry in samconfig.toml is not a
       # member of the canonical marketQuery region enum, or is a duplicate
       # (Req 5.3 / ADR-0036).
