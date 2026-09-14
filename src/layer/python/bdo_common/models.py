@@ -184,3 +184,20 @@ class DailyRow(BaseModel):
     total_trades_delta: int
     avg_stock: int
     snapshot_count: int
+
+
+class RegionPresence(BaseModel):
+    """Per-region data presence in RDS, backing ``GET /v1/meta`` (ADR-0037).
+
+    The freshness fields are non-null only when the corresponding rows exist, so
+    a region that is configured-active but not yet ingested reports
+    ``item_count == 0`` with null freshness, while a region with historical data
+    is visible regardless of whether it is still active.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    item_count: int  # distinct item_ids with any market_snapshot row
+    latest_snapshot_at: datetime | None  # newest market_snapshot.snapshot_at
+    latest_daily_date: date | None  # newest market_daily.trade_date
+    has_insights: bool  # any market_summary row exists

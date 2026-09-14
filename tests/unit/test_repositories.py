@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from bdo_common.models import DailyRow, SnapshotRow
-from bdo_common.repositories import DailyRepo, ItemRepo, ItemSidRepo, SnapshotRepo
+from bdo_common.repositories import DailyRepo, ItemRepo, ItemSidRepo, RegionRepo, SnapshotRepo
 
 
 @pytest.fixture()
@@ -266,6 +266,64 @@ class TestSnapshotPurge:
 # ---------------------------------------------------------------------------
 # DailyRepo.rollup_day
 # ---------------------------------------------------------------------------
+
+
+class TestRegionRepo:
+    """Test the cross-region presence merge/union (backs GET /v1/meta)."""
+
+    @staticmethod
+    def _result(rows: list[tuple[object, ...]]) -> MagicMock:
+        result = MagicMock()
+        result.fetchall.return_value = rows
+        return result
+
+    def test_region_availability_unions_and_merges(self, mock_conn: MagicMock) -> None:
+        ts_tw = datetime(2026, 3, 15, 5, tzinfo=UTC)
+        ts_na = datetime(2026, 3, 15, 4, tzinfo=UTC)
+        d_tw = date(2026, 3, 14)
+        # Three sequential execute() calls: snapshot, daily, summary (in order).
+        mock_conn.execute.side_effect = [
+            self._result([("tw", 5, ts_tw), ("na", 3, ts_na)]),  # snapshot
+            self._result([("tw", d_tw)]),  # daily (na has none yet)
+            self._result([("tw",), ("eu",)]),  # summary (eu only here)
+        ]
+
+        availability = RegionRepo.region_availability(mock_conn)
+
+        # Union across all three tables: tw (all), na (snapshot only), eu (summary only).
+        assert set(availability) == {"tw", "na", "eu"}
+
+        tw = availability["tw"]
+        assert (tw.item_count, tw.latest_snapshot_at, tw.latest_daily_date, tw.has_insights) == (
+            5,
+            ts_tw,
+            d_tw,
+            True,
+        )
+        # Snapshot-only region: no daily, no insights.
+        na = availability["na"]
+        assert (na.item_count, na.latest_snapshot_at, na.latest_daily_date, na.has_insights) == (
+            3,
+            ts_na,
+            None,
+            False,
+        )
+        # Summary-only region: has insights but no snapshot/daily rows.
+        eu = availability["eu"]
+        assert (eu.item_count, eu.latest_snapshot_at, eu.latest_daily_date, eu.has_insights) == (
+            0,
+            None,
+            None,
+            True,
+        )
+
+    def test_region_availability_empty(self, mock_conn: MagicMock) -> None:
+        mock_conn.execute.side_effect = [
+            self._result([]),
+            self._result([]),
+            self._result([]),
+        ]
+        assert RegionRepo.region_availability(mock_conn) == {}
 
 
 class TestDailyRollup:

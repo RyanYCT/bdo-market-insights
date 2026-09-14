@@ -21,7 +21,7 @@ tests, ADRs, and docs only.
     ordering in ADR-0036.
   - _Requirements: 2.1, 2.2_
 
-- [ ] 1. Introduce the central `BdoRegions` toggle in `template.yaml`
+- [x] 1. Introduce the central `BdoRegions` toggle in `template.yaml`
   - Replace the scalar `BdoRegion` parameter with a `BdoRegions`
     `CommaDelimitedList` parameter (default `tw`) as the single active-region
     toggle.
@@ -43,14 +43,14 @@ tests, ADRs, and docs only.
   - Keep exactly one root `template.yaml`; introduce no deploy-time Lambda/macro.
   - _Requirements: 1.1, 1.2, 1.4, 1.5, 6.3_
 
-- [ ] 2. Fan out per-region ETL schedules in `infra/etl.yaml`
-  - [ ] 2.1 Add `AWS::LanguageExtensions` to the template `Transform` list and
+- [x] 2. Fan out per-region ETL schedules in `infra/etl.yaml`
+  - [x] 2.1 Add `AWS::LanguageExtensions` to the template `Transform` list and
     accept the `BdoRegions` `CommaDelimitedList` parameter.
     - Remove the inline scalar-bound `Schedule` event from the ETL state machine
       (and the SAM auto-created rule/role it implied), keeping the state machine
       a single resource.
     - _Requirements: 1.1, 2.1, 6.2_
-  - [ ] 2.2 Generate one hourly `AWS::Events::Rule` per region via `Fn::ForEach`
+  - [x] 2.2 Generate one hourly `AWS::Events::Rule` per region via `Fn::ForEach`
     over `BdoRegions`, preserving `cron(7 * * * ? *)` and targeting the ETL
     state machine with input `{"region": "<region>"}`.
     - Add a single shared EventBridge→StartExecution IAM role for the stack,
@@ -59,7 +59,7 @@ tests, ADRs, and docs only.
       independent execution carrying its own region).
     - _Requirements: 2.1, 2.3, 2.4, 2.5, 6.2_
 
-- [ ] 3. Fan out per-region insights schedules in `infra/insights.yaml`
+- [x] 3. Fan out per-region insights schedules in `infra/insights.yaml`
   - Add `AWS::LanguageExtensions` to the `Transform` list and accept the
     `BdoRegions` `CommaDelimitedList` parameter; remove the inline scalar-bound
     daily and weekly schedules.
@@ -71,22 +71,22 @@ tests, ADRs, and docs only.
     insights state-machine ARN, backing all generated rules.
   - _Requirements: 2.2, 2.3, 2.4, 6.2_
 
-- [ ] 4. Add IaC tests for the schedule fan-out
-  - [ ] 4.1 Add `hypothesis` to the `dev` dependencies in `pyproject.toml` for
+- [x] 4. Add IaC tests for the schedule fan-out
+  - [x] 4.1 Add `hypothesis` to the `dev` dependencies in `pyproject.toml` for
     the property-based test in 4.3.
     - _Requirements: 2.1, 2.2_
-  - [ ] 4.2 Add a `tests/unit` IaC test that lints the `Fn::ForEach`-expanded
+  - [x] 4.2 Add a `tests/unit` IaC test that lints the `Fn::ForEach`-expanded
     `etl.yaml` and `insights.yaml` (via `cfn-lint` / `sam validate --lint`) and
     asserts that the default `BdoRegions=[tw]` yields exactly the baseline set —
     one hourly ETL rule, one daily and one weekly insights rule, all
     `region=tw`, and no others (P1).
     - _Requirements: 1.3, 2.1, 2.2_
-  - [ ]* 4.3 Write a property-based test over random distinct-region lists that
+  - [x]* 4.3 Write a property-based test over random distinct-region lists that
     asserts the expansion generates exactly N hourly ETL rules, N daily and N
     weekly insights rules, each with `Input` region equal to its list entry (P2).
     - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-- [ ] 5. Add the CI region-enum validation guard
+- [x] 5. Add the CI region-enum validation guard
   - Add a small script (invoked from the single existing
     `.github/workflows/ci.yml`) that parses `BdoRegions` from the authoritative
     deploy source (`samconfig.toml`, per Task 1) and, before deploy, fails the
@@ -95,8 +95,8 @@ tests, ADRs, and docs only.
     single source) or (ii) a duplicate entry.
   - _Requirements: 5.3_
 
-- [ ] 6. Add the `RegionRepo.region_availability` aggregate
-  - [ ] 6.1 Add a read-only `RegionRepo.region_availability(conn)` to
+- [x] 6. Add the `RegionRepo.region_availability` aggregate
+  - [x] 6.1 Add a read-only `RegionRepo.region_availability(conn)` to
     `src/layer/python/bdo_common/repositories.py`, co-located with the existing
     repositories, using parameterized SQL only (no ORM).
     - One pass per table merged in Python:
@@ -104,12 +104,12 @@ tests, ADRs, and docs only.
       `market_daily` → `MAX(trade_date)`; `market_summary` → any-row bool.
     - Keyed by region; rely on the caller's `_reading()` rollback context.
     - _Requirements: 3.1, 3.3_
-  - [ ] 6.2 Write unit tests for the merge/union logic against ephemeral Postgres
+  - [x] 6.2 Write unit tests for the merge/union logic against ephemeral Postgres
     (data-bearing vs. empty regions, freshness fields present iff rows exist).
     - _Requirements: 3.1, 3.3_
 
-- [ ] 7. Add the `GET /v1/meta` service-metadata endpoint
-  - [ ] 7.1 Add `RegionAvailability` and `MetaResponse` Pydantic v2 models and
+- [x] 7. Add the `GET /v1/meta` service-metadata endpoint
+  - [x] 7.1 Add `RegionAvailability` and `MetaResponse` Pydantic v2 models and
     a `get_meta` route to `src/functions/market_query/app.py`, using the
     existing Powertools handler/`_reading()` context.
     - Return the envelope: `api_version` (the deployed release version from the
@@ -123,51 +123,51 @@ tests, ADRs, and docs only.
       max-age aligned to the hourly ETL cadence (~1h). Keep the envelope
       additively extensible.
     - _Requirements: 3.1, 3.2, 3.3, 3.4_
-  - [ ] 7.2 Wire the `ACTIVE_REGIONS` env var into the `marketQuery` function in
+  - [x] 7.2 Wire the `ACTIVE_REGIONS` env var into the `marketQuery` function in
     `infra/api.yaml`, sourced from the comma-joined active-region list passed to
     `ApiStack` (the function still receives the scalar primary `BdoRegion`
     unchanged). Also inject the `API_VERSION` env var (from the release tag) as
     the single source for the `/v1/meta` `api_version` field.
     - _Requirements: 3.1, 3.2_
-  - [ ] 7.3 Write handler unit tests for the envelope fields (`api_version`,
+  - [x] 7.3 Write handler unit tests for the envelope fields (`api_version`,
     `periods`), `active` derivation from `ACTIVE_REGIONS`, the union mapping
     (active-but-empty and data-but-deactivated rows), and the `Cache-Control`
     header.
     - _Requirements: 3.1, 3.2, 3.3, 3.4_
-  - [ ]* 7.4 Write a property-based test asserting `/v1/meta` `regions`
+  - [x]* 7.4 Write a property-based test asserting `/v1/meta` `regions`
     truthfulness: `active=true` iff the region is in the configured list and
     freshness non-null iff backing rows exist, over random active-set/data-set
     combinations (P5).
     - _Requirements: 3.1, 3.2, 3.3_
 
-- [ ] 8. Regenerate `infra/openapi.yaml` and confirm drift coverage
+- [x] 8. Regenerate `infra/openapi.yaml` and confirm drift coverage
   - Run `scripts/export_openapi.py` to regenerate `infra/openapi.yaml` including
     `/v1/meta`, and confirm the existing CI OpenAPI drift check
     (`git diff --exit-code infra/openapi.yaml`) covers the new route.
   - _Requirements: 3.5_
 
-- [ ] 9. Add guardrail regression coverage
+- [x] 9. Add guardrail regression coverage
   - Add lightweight tests/assertions confirming the feature did not disturb the
     preserved guardrails: tracking stays global (single `tracked` boolean and one
     `tracked-index` GSI), `/v1/items` stays region-agnostic, and the DynamoDB
     model and RDS schema are unchanged (no new migration).
   - _Requirements: 4.1, 4.2, 4.3_
 
-- [ ] 10. Author ADRs and the region-activation runbook
-  - [ ] 10.1 Author `docs/adr/0036-region-list-central-toggle.md` (Nygard format)
+- [x] 10. Author ADRs and the region-activation runbook
+  - [x] 10.1 Author `docs/adr/0036-region-list-central-toggle.md` (Nygard format)
     recording the `BdoRegion` scalar → `BdoRegions` list toggle, per-region
     schedule generation via `Fn::ForEach` (`AWS::LanguageExtensions`) across
     `etl.yaml`/`insights.yaml`, primary region = element 0, default `[tw]`, and
     the rejected alternatives (hand-written blocks, custom macro) plus the
     same-minute concurrency trade-off.
     - _Requirements: 5.1, 6.2, 6.3_
-  - [ ] 10.2 Author `docs/adr/0037-v1-meta-service-endpoint.md` (Nygard
+  - [x] 10.2 Author `docs/adr/0037-v1-meta-service-endpoint.md` (Nygard
     format) recording the `/v1/meta` service-metadata endpoint on the in-VPC
     `marketQuery` — a single extensible envelope (`api_version`, `regions` with
     availability reporting configured-active ∪ data-bearing regions with
     per-region freshness, `periods`).
     - _Requirements: 3.1_
-  - [ ] 10.3 Add a "Region activation" section to `docs/runbook.md`
+  - [x] 10.3 Add a "Region activation" section to `docs/runbook.md`
     (add region → deploy → confirm rules enabled → verify ingestion via
     `/v1/meta` and the region-aware endpoints → reconcile spend → rollback),
     and record the per-region cost estimate against the ≤ ~US$15/month cap.

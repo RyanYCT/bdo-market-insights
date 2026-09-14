@@ -16,14 +16,16 @@ rather than Powertools' default 422.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 import psycopg
 from aws_lambda_powertools import Logger, Metrics, Tracer
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver, Response, content_types
+from aws_lambda_powertools.event_handler.middlewares import NextMiddleware
 from aws_lambda_powertools.event_handler.openapi.exceptions import RequestValidationError
 from aws_lambda_powertools.event_handler.openapi.params import Query
 from aws_lambda_powertools.metrics import MetricUnit
@@ -34,7 +36,7 @@ from bdo_common import analytics, db, pricing
 from bdo_common.insights.models import Period
 from bdo_common.insights.repositories import SummaryRepo
 from bdo_common.models import DailyRow, SnapshotRow
-from bdo_common.repositories import DailyRepo, SnapshotRepo
+from bdo_common.repositories import DailyRepo, RegionRepo, SnapshotRepo
 
 logger = Logger()
 tracer = Tracer()
@@ -63,8 +65,10 @@ MAX_DAILY_LIMIT = 990
 #: days (a time window, so the same span regardless of sid count).
 _DEFAULT_DAILY_WINDOW = timedelta(days=90)
 
-#: Valid BDO server regions. Mirrors the ``BdoRegion`` AllowedValues enum in
-#: ``template.yaml`` (the IaC source); an unknown region is rejected with 400.
+#: Valid BDO server regions -- the canonical region enum and single source of
+#: truth (ADR-0036). ``template.yaml``'s ``BdoRegions`` toggle carries no
+#: AllowedValues (a CommaDelimitedList cannot); CI instead validates every
+#: configured region against this Literal before deploy. Unknown region -> 400.
 Region = Literal[
     "na",
     "eu",
@@ -83,6 +87,28 @@ Region = Literal[
 
 #: Default region when the caller omits ``region``.
 DEFAULT_REGION: Region = "tw"
+
+#: Supported insights cadences, surfaced by ``GET /v1/meta`` (single source: the
+#: ``Period`` literal).
+PERIODS: list[str] = list(get_args(Period))
+
+#: ``Cache-Control`` max-age for ``/v1/meta`` (~1h), aligned to the hourly ETL
+#: cadence: the region freshness only advances once per ETL run. This is a
+#: rolling window from each response, so it does not align to the :07 wall-clock
+#: boundary -- a cached response can be up to ~2h stale, accepted for a
+#: bootstrap/discovery endpoint whose freshness fields are advisory (ADR-0037).
+_META_CACHE_SECONDS = 3600
+
+
+def _active_regions() -> set[str]:
+    """Return the configured-active regions from the ``ACTIVE_REGIONS`` env.
+
+    Injected as the comma-joined ``BdoRegions`` toggle (ADR-0036). Absent/blank
+    (e.g. a local invocation) yields an empty set, so every region reports
+    ``active: false`` rather than guessing.
+    """
+    raw = os.environ.get("ACTIVE_REGIONS", "")
+    return {region.strip() for region in raw.split(",") if region.strip()}
 
 
 class Coverage(BaseModel):
@@ -142,6 +168,36 @@ class DailyResponse(BaseModel):
     count: int
     coverage: DailyCoverage | None
     daily: list[DailyRow]
+
+
+class RegionAvailability(BaseModel):
+    """One region's availability in ``GET /v1/meta`` (ADR-0037).
+
+    Combines two truths: ``active`` (the region is in the deployed ``BdoRegions``
+    toggle, via ``ACTIVE_REGIONS``) and data presence (does RDS hold rows, and
+    how fresh). A region can be active with no data yet (``active: true`` +
+    null freshness) or have history but no longer be active (``active: false``).
+    """
+
+    region: str
+    active: bool
+    item_count: int
+    latest_snapshot_at: datetime | None
+    latest_daily_date: date | None
+    has_insights: bool
+
+
+class MetaResponse(BaseModel):
+    """Service-metadata envelope for ``GET /v1/meta`` (ADR-0037).
+
+    A single bootstrap document -- API version, per-region availability, and the
+    supported insights periods -- designed to be additively extensible so future
+    fields (limits, models, feature flags) never require a new preflight call.
+    """
+
+    api_version: str
+    regions: list[RegionAvailability]
+    periods: list[str]
 
 
 def handle_validation_error(exc: RequestValidationError) -> Response[str]:
@@ -504,6 +560,55 @@ def get_insights(
                 "narrative": summary.narrative.model_dump(mode="json"),
             }
         ),
+    )
+
+
+def _meta_cache_control(
+    app: APIGatewayRestResolver, next_middleware: NextMiddleware
+) -> Response[Any]:
+    """Attach a rolling ~1h ``Cache-Control`` to the ``/v1/meta`` response.
+
+    Route-scoped so the model return still drives the OpenAPI schema; the header
+    is injected on the built response (aligned to the hourly ETL cadence).
+    """
+    response = next_middleware(app)
+    headers = dict(response.headers or {})
+    headers["Cache-Control"] = f"max-age={_META_CACHE_SECONDS}"
+    response.headers = headers
+    return response
+
+
+@app.get("/v1/meta", middlewares=[_meta_cache_control])
+def get_meta() -> MetaResponse:
+    """Service metadata: API version, per-region availability, supported periods.
+
+    One bootstrap call, no query parameters. ``regions`` is the union of the
+    configured-active regions (``ACTIVE_REGIONS``) and the data-bearing regions
+    (RDS presence): ``active`` is true iff the region is configured-active, and
+    the freshness fields are non-null iff RDS holds the corresponding rows.
+    """
+    active = _active_regions()
+    with _reading() as conn:
+        presence = RegionRepo.region_availability(conn)
+
+    availability: list[RegionAvailability] = []
+    for region in sorted(active | set(presence)):
+        found = presence.get(region)
+        availability.append(
+            RegionAvailability(
+                region=region,
+                active=region in active,
+                item_count=found.item_count if found else 0,
+                latest_snapshot_at=found.latest_snapshot_at if found else None,
+                latest_daily_date=found.latest_daily_date if found else None,
+                has_insights=found.has_insights if found else False,
+            )
+        )
+
+    return MetaResponse(
+        api_version=os.environ.get("API_VERSION", "unknown"),
+        regions=availability,
+        periods=list(PERIODS),
     )
 
 

@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
-from bdo_common.models import DailyRow, SnapshotRow
+from bdo_common.models import DailyRow, RegionPresence, SnapshotRow
 
 if TYPE_CHECKING:
     import psycopg
@@ -209,6 +209,54 @@ class SnapshotRepo:
         cur = conn.cursor()
         cur.execute("DELETE FROM market_snapshot WHERE snapshot_at < %s", (cutoff,))
         return cur.rowcount
+
+
+class RegionRepo:
+    """Cross-region presence aggregate for GET /v1/meta (read-only)."""
+
+    @staticmethod
+    def region_availability(
+        conn: psycopg.Connection[tuple[Any, ...]],
+    ) -> dict[str, RegionPresence]:
+        """Return per-region data presence, keyed by region.
+
+        One aggregate pass per table, merged in Python (regions are few):
+
+        * ``market_snapshot`` -> ``COUNT(DISTINCT item_id)`` + ``MAX(snapshot_at)``
+        * ``market_daily``    -> ``MAX(trade_date)``
+        * ``market_summary``  -> whether any row exists (has_insights)
+
+        A region is included if it has rows in any of the three tables. The
+        tables are region-partitioned with ``(region, ...)`` leading indexes, so
+        the ``GROUP BY region`` aggregates are cheap. Read-only: the caller's
+        ``_reading()`` context rolls the transaction back.
+        """
+        snapshot_rows = conn.execute(
+            "SELECT region, COUNT(DISTINCT item_id), MAX(snapshot_at) "
+            "FROM market_snapshot GROUP BY region"
+        ).fetchall()
+        daily_rows = conn.execute(
+            "SELECT region, MAX(trade_date) FROM market_daily GROUP BY region"
+        ).fetchall()
+        summary_rows = conn.execute("SELECT DISTINCT region FROM market_summary").fetchall()
+
+        counts: dict[str, tuple[int, datetime | None]] = {
+            row[0]: (int(row[1]), row[2]) for row in snapshot_rows
+        }
+        latest_daily: dict[str, date | None] = {row[0]: row[1] for row in daily_rows}
+        regions_with_insights: set[str] = {row[0] for row in summary_rows}
+
+        all_regions = set(counts) | set(latest_daily) | regions_with_insights
+        availability: dict[str, RegionPresence] = {}
+        for region in all_regions:
+            item_count, latest_snapshot_at = counts.get(region, (0, None))
+            availability[region] = RegionPresence(
+                item_count=item_count,
+                latest_snapshot_at=latest_snapshot_at,
+                latest_daily_date=latest_daily.get(region),
+                has_insights=region in regions_with_insights,
+            )
+        return availability
 
 
 class DailyRepo:
