@@ -16,8 +16,8 @@ non-interactive **CLI mode** for agents, automation, and CI (machine-readable
 `--json`, `--yes`, `--dry-run`, never prompts) and an interactive **TUI mode**
 for humans (guided flows, confirmations). Both build the same typed `Command`
 and route it through the same `Dispatcher`, so the two modes are behaviourally
-equivalent. Five capabilities are exposed — **config**, **toggle**, **setup**,
-**deploy**, **trigger** — each mapped onto an executor rather than onto bespoke
+equivalent. Five capabilities are exposed — **config**, **flag**, **bootstrap**,
+**deploy**, **release** — each mapped onto an executor rather than onto bespoke
 Python. The wizard is packaged as a console entry point; there is no ops folder
 of scripts, and its dev/ops-only dependencies stay out of the Lambda layer and
 `bdo_common`.
@@ -78,7 +78,7 @@ CI/CD workflows).
 
 #### Acceptance Criteria
 
-1. THE Wizard SHALL provide CLI_Mode as a non-interactive front-end that accepts one subcommand per capability (`config`, `toggle`, `setup`, `deploy`, `trigger`) and the flags `--json`, `--yes`, and `--dry-run`, and SHALL NOT prompt for any input.
+1. THE Wizard SHALL provide CLI_Mode as a non-interactive front-end that accepts one subcommand per capability (`config`, `flag`, `bootstrap`, `deploy`, `release`) and the flags `--json`, `--yes`, and `--dry-run`, and SHALL NOT prompt for any input.
 2. WHERE `--json` is set, THE Wizard SHALL emit exactly one serialized `Result` object as the sole content on stdout and write all human-readable log lines to stderr.
 3. THE Wizard SHALL provide TUI_Mode as an interactive front-end that presents guided flows and renders the `Plan` at an explicit confirmation step before any mutating execution.
 4. THE Wizard SHALL have both CLI_Mode and TUI_Mode build the same typed `Command` and route it through the same `Dispatcher`, with each front-end limited to collecting intent and rendering the `Result`.
@@ -106,26 +106,27 @@ CI/CD workflows).
 3. WHEN `config set` changes deploy-time configuration held in a tracked file, THE ConfigStore SHALL open a pull request against that file via `gh` and SHALL NOT mutate the tracked file on the working branch directly.
 4. WHEN `config set` changes operational configuration, THE ConfigStore SHALL write the value to its Repo_Scoped_SSM_Path with an audit record and SHALL NOT write it to any tracked file.
 5. IF a `ConfigStore` write of an operational value fails, THEN THE Wizard SHALL return an error identifying the failed write and SHALL leave the prior value at the targeted Repo_Scoped_SSM_Path unchanged.
+6. WHEN deploy-time configuration or parameters (for example `BdoRegions`) are changed, THE ConfigStore SHALL apply the change to `samconfig.toml` by opening a pull request via `gh` and SHALL NOT flip it in-place at runtime.
 
-### Requirement 4: Toggle capability
+### Requirement 4: Flag capability (runtime feature flags)
 
-**User Story:** As an operator, I want deploy-time toggles and runtime feature flags handled through the right location, so that a config change either flows through review or flips live, and never lands in a fourth place.
-
-#### Acceptance Criteria
-
-1. WHEN a deploy-time toggle (for example `BdoRegions`) is changed, THE ConfigStore SHALL apply the change to `samconfig.toml` by opening a pull request via `gh` and SHALL NOT flip it in-place at runtime.
-2. WHEN a runtime Feature_Flag is changed, THE ConfigStore SHALL flip the flag in AWS AppConfig without requiring a redeploy.
-3. THE Wizard SHALL confine runtime Feature_Flag storage to AWS AppConfig, read in Lambdas through the Powertools feature-flags provider, and SHALL NOT introduce a fourth configuration location for any toggle or flag.
-
-### Requirement 5: Setup capability (one-time bootstrap helper)
-
-**User Story:** As an operator standing up a new environment, I want a clearly-labelled one-time helper for the platform bootstrap that a routine deploy cannot self-apply, so that I complete initial setup without turning it into a bespoke imperative orchestration on the routine path.
+**User Story:** As an operator, I want runtime feature flags flipped live in one canonical location, so that a runtime flag change takes effect without a redeploy and never lands in a fourth place.
 
 #### Acceptance Criteria
 
-1. THE Wizard SHALL expose the setup capability as a one-time helper that wraps `sam pipeline bootstrap` (provisioning the OIDC deploy role and the artifact bucket) and configures the GitHub Environments and secrets.
-2. THE Wizard SHALL label the setup capability in help output and menus as a one-time, out-of-band step so that it is not used on the routine deploy path.
-3. IF a step of the setup helper fails, THEN THE Wizard SHALL stop at the first failing step, report which steps completed and which step failed, and preserve the effects of any completed step without rolling them back.
+1. WHEN a runtime Feature_Flag is changed, THE ConfigStore SHALL flip the flag in AWS AppConfig without requiring a redeploy.
+2. THE Wizard SHALL have runtime Feature_Flag values read in Lambdas through the Powertools feature-flags provider.
+3. THE Wizard SHALL confine runtime Feature_Flag storage to AWS AppConfig and SHALL NOT introduce a fourth configuration location for any runtime flag.
+
+### Requirement 5: Bootstrap capability (one-time bootstrap helper)
+
+**User Story:** As an operator standing up a new environment, I want a clearly-labelled one-time helper for the platform bootstrap that a routine deploy cannot self-apply, so that I complete initial bootstrap without turning it into a bespoke imperative orchestration on the routine path.
+
+#### Acceptance Criteria
+
+1. THE Wizard SHALL expose the bootstrap capability as a one-time helper that wraps `sam pipeline bootstrap` (provisioning the OIDC deploy role and the artifact bucket) and configures the GitHub Environments and secrets.
+2. THE Wizard SHALL label the bootstrap capability in help output and menus as a one-time, out-of-band step so that it is not used on the routine deploy path.
+3. IF a step of the bootstrap helper fails, THEN THE Wizard SHALL stop at the first failing step, report which steps completed and which step failed, and preserve the effects of any completed step without rolling them back.
 
 ### Requirement 6: Deploy capability
 
@@ -134,7 +135,7 @@ CI/CD workflows).
 #### Acceptance Criteria
 
 1. WHEN `deploy` is invoked with `target=LOCAL` for a dev or personal stage, THE Wizard SHALL route to the SamExecutor and run `sam deploy --config-env <stage>` (or `sam sync` for the dev fast-loop).
-2. IF `deploy` is invoked with `target=LOCAL` and `stage=prod`, THEN THE Wizard SHALL reject the request at validation, exit with code `2`, make no CloudFormation, file, SSM, AppConfig, git, or SAM state change, and return an error naming the offending field and directing the operator to `trigger release`.
+2. IF `deploy` is invoked with `target=LOCAL` and `stage=prod`, THEN THE Wizard SHALL reject the request at validation, exit with code `2`, make no CloudFormation, file, SSM, AppConfig, git, or SAM state change, and return an error naming the offending field and directing the operator to `release`.
 3. WHEN `deploy` is invoked with `target=CI` for a shared-env or prod stage, THE Wizard SHALL route to the ActionsDispatcher and TRIGGER a GitHub Actions run, and SHALL NOT itself execute `sam deploy` for that stage.
 4. WHEN a fresh environment is deployed, THE Wizard SHALL reach target state through a single declarative deploy that relies on the stack self-bootstrapping (auto-migrate custom resource per ADR-0025; bootstrap orchestrator auto-run per ADR-0028) and SHALL NOT require any imperative multi-step orchestration on the routine path.
 
@@ -148,18 +149,18 @@ CI/CD workflows).
 2. THE Wizard SHALL reach production only by dispatching an environment-protected GitHub Actions job through the ActionsDispatcher.
 3. THE production GitHub Actions job SHALL run inside a GitHub Environment configured with required reviewers and OIDC keyless deploy (no static AWS credentials).
 
-### Requirement 8: Trigger capability
+### Requirement 8: Release capability
 
 **User Story:** As a release manager, I want to start a release through the wizard with the repo's guardrails applied, so that a tag-triggered prod pipeline runs and I can observe the dispatched run.
 
 #### Acceptance Criteria
 
-1. WHEN `trigger release` is invoked with a version matching the Release_Tag format `^v\d+\.\d+\.\d+$`, THE GitExecutor SHALL verify the release preconditions — working tree is clean, current branch is `main`, and the tag does not already exist locally or on the origin — before creating any tag.
-2. IF `trigger release` is invoked with a version that does not match `^v\d+\.\d+\.\d+$`, THEN THE Wizard SHALL reject the request with exit code `2`, SHALL NOT verify preconditions, and SHALL NOT create or push a tag.
+1. WHEN `release` is invoked with a version matching the Release_Tag format `^v\d+\.\d+\.\d+$`, THE GitExecutor SHALL verify the release preconditions — working tree is clean, current branch is `main`, and the tag does not already exist locally or on the origin — before creating any tag.
+2. IF `release` is invoked with a version that does not match `^v\d+\.\d+\.\d+$`, THEN THE Wizard SHALL reject the request with exit code `2`, SHALL NOT verify preconditions, and SHALL NOT create or push a tag.
 3. IF a release precondition is violated, THEN THE Wizard SHALL report which specific precondition failed, SHALL NOT create or push a tag, and SHALL leave the git working tree, current branch, and existing tags unchanged.
 4. WHEN the release preconditions pass and the action is confirmed, THE GitExecutor SHALL create the `vX.Y.Z` tag and push it to the origin so the tag-triggered pipeline runs.
-5. THE Wizard SHALL make `trigger release` the sole initiator of a production deploy, with `gh workflow run` manual dispatch as the alternative trigger, and SHALL NOT provide any other path that initiates a prod deploy.
-6. WHEN a trigger dispatches a CI run, THE Wizard SHALL surface the dispatched run's URL and status (via `gh run watch` / `gh run view`).
+5. THE Wizard SHALL make `release` the sole initiator of a production deploy, with `gh workflow run` manual dispatch (the `run`/`dispatch` alias) as the alternative path, and SHALL NOT provide any other path that initiates a prod deploy.
+6. WHEN `release` dispatches a CI run, THE Wizard SHALL surface the dispatched run's URL and status (via `gh run watch` / `gh run view`).
 
 ### Requirement 9: Purpose-scoped CI/CD workflows
 

@@ -27,8 +27,8 @@ Both front-ends build the **same typed `Command`** and hand it to the
 `Dispatcher`; their behavioural equivalence is a correctness property, not an
 aspiration.
 
-Five capabilities are exposed — **config**, **toggle**, **setup**, **deploy**,
-**trigger** — each mapped onto an executor rather than onto bespoke Python. The
+Five capabilities are exposed — **config**, **flag**, **bootstrap**, **deploy**,
+**release** — each mapped onto an executor rather than onto bespoke Python. The
 wizard is packaged as a console entry point in `pyproject.toml`; there is no ops
 folder of scripts (respecting the repo anti-pattern). All dev/ops-only
 dependencies (Typer/Textual/etc.) stay out of the Lambda layer and `bdo_common`.
@@ -119,8 +119,8 @@ sequenceDiagram
     D->>S: sam build && sam deploy --config-env dev
     S-->>F: Result(ok, exit=0)
 
-    U->>F: trigger release version=v1.4.0  (only prod path)
-    F->>D: Command(cap=trigger, target=CI)
+    U->>F: release version=v1.4.0  (only prod path)
+    F->>D: Command(cap=release, target=CI)
     D->>A: gh workflow run deploy.yml -f stage=prod -f version=v1.4.0
     A->>G: dispatch protected deploy job
     G->>G: required reviewers approve (prod Environment)
@@ -230,11 +230,11 @@ class ConfigStore(Protocol):
 
 | Capability | Executor(s) | Behaviour |
 |---|---|---|
-| **config** | ConfigStore | `config show` renders the merged view (samconfig + SSM + AppConfig). `config set` opens a PR (tracked files) or writes SSM with audit. |
-| **toggle** | ConfigStore | Deploy-time toggle (e.g. `BdoRegions`) → `samconfig.toml` param via PR. Runtime feature flag → AWS AppConfig, flipped without redeploy and read via Powertools (mandatory in this repo). |
-| **setup** | SamExecutor + ConfigStore | One-time, clearly labelled: wrap `sam pipeline bootstrap` (standard AWS CI/CD bootstrap — OIDC deploy role + artifact bucket) and configure the GitHub Environments / secrets. |
+| **config** | ConfigStore | `config show` renders the merged view (samconfig + SSM + AppConfig). `config set` opens a PR (tracked files) or writes SSM with audit. Also covers deploy-time configuration/parameters (e.g. `BdoRegions`) → changed in `samconfig.toml` via PR. |
+| **flag** | ConfigStore | Runtime feature flag → AWS AppConfig, flipped without redeploy and read via the Powertools feature-flags provider (mandatory in this repo). |
+| **bootstrap** | SamExecutor + ConfigStore | One-time, clearly labelled: wrap `sam pipeline bootstrap` (standard AWS CI/CD bootstrap — OIDC deploy role + artifact bucket) and configure the GitHub Environments / secrets. |
 | **deploy** | SamExecutor (LOCAL) / ActionsDispatcher (CI) | dev/personal → `sam deploy --config-env dev` or `sam sync`. shared/prod → trigger the CI job. A fresh environment reaches target state via a single declarative deploy — the stack self-bootstraps (auto-migrate custom resource, ADR-0025; bootstrap orchestrator auto-run, ADR-0028). No imperative multi-step orchestration. |
-| **trigger** | GitExecutor / ActionsDispatcher | `git tag` push (`deploy.yml` `push: tags: v*`) or `gh workflow run deploy.yml` (manual `workflow_dispatch`). `trigger release` is the **sole** initiator of a prod deploy. |
+| **release** | GitExecutor / ActionsDispatcher | `git tag` push (`deploy.yml` `push: tags: v*`) or `gh workflow run deploy.yml` (manual `workflow_dispatch`, a `run`/`dispatch` alias). `release` is the **sole** initiator of a prod deploy. |
 
 ## Data Models
 
@@ -243,8 +243,8 @@ free JSON serialization for `--json`.
 
 ```python
 class Capability(StrEnum):
-    CONFIG = "config"; TOGGLE = "toggle"; SETUP = "setup"
-    DEPLOY = "deploy"; TRIGGER = "trigger"
+    CONFIG = "config"; FLAG = "flag"; BOOTSTRAP = "bootstrap"
+    DEPLOY = "deploy"; RELEASE = "release"
 
 class Target(StrEnum):
     LOCAL = "local"   # -> SamExecutor (dev/personal only)
@@ -295,7 +295,7 @@ class ConfigDiff(BaseModel):
 - `stage` ∈ the environments defined in `samconfig.toml` (`dev`, `prod`).
 - A prod deploy `Command` may only be produced with `target == CI`; a
   `target == LOCAL` prod deploy is rejected at validation (exit `2`).
-- `version` for `trigger release` matches `^v\d+\.\d+\.\d+$` (becomes
+- `version` for `release` matches `^v\d+\.\d+\.\d+$` (becomes
   `ApiVersion`, ADR-0037).
 - Any SSM name written must be a repo-scoped
   `/bdo-market-insights/<stage>/<category>/<key>` path; a bare `/bdo/...` path is
@@ -358,7 +358,7 @@ dispatching the environment-protected CI job (structurally enforced by `Target`)
 
 ### Property 3: Config-as-data
 
-For every config or toggle change, the resulting `Plan` is either a pull request
+For every config or flag change, the resulting `Plan` is either a pull request
 against a tracked file or an audited SSM/AppConfig write — never a write to a
 fourth configuration location.
 
