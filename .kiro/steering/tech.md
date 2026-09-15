@@ -49,13 +49,18 @@ The stack below is locked. Any change requires an ADR in `docs/adr/`.
 - **ruff** (lint + format) and **mypy** (type-check) gate every PR.
 - **pytest** + **moto** for tests; ephemeral Postgres in CI for DB
   tests. **No coverage gate** — coverage is a signal, not a wall.
-- **Single GitHub Actions workflow** (`.github/workflows/ci.yml`).
-  Adding a second workflow is a smell.
+- **Purpose-scoped GitHub Actions workflows** (ADR-0038): one authoritative
+  validation workflow (`.github/workflows/ci.yml`) is the required gate. Add
+  a separate workflow only for a distinct trigger or permission scope, and
+  factor shared setup into a reusable workflow/composite action so they
+  cannot drift.
 
 ## Forbidden — already paid for in `rewrite-project`
 
 - Hand-rolled retry, circuit breaker, rate limiter, structured logger.
-- Multiple CI workflows that drift out of sync.
+- Copy-pasted workflow steps that drift across workflows (multiple
+  purpose-scoped workflows are fine — ADR-0038 — un-factored duplication is
+  not).
 - Per-Lambda `.env.example` files duplicating central config.
 - Bespoke shell scripts where SAM/Make would do.
 - DOCUMENTATION_MAP.md-style meta-docs that index other docs.
