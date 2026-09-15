@@ -125,7 +125,7 @@ sequenceDiagram
     A->>G: dispatch protected deploy job
     G->>G: required reviewers approve (prod Environment)
     G->>G: OIDC assume role -> sam deploy --config-env prod
-    A-->>F: Result(ok, run URL); gh run watch surfaces status
+    A-->>F: Result(ok, run URL) — gh run watch surfaces status
 ```
 
 ## Components and Interfaces
