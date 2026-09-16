@@ -161,6 +161,33 @@ class Dispatcher:
         the plan mutates and `confirmed` is False."""
 ```
 
+### Execution seam: `StepExecutor` (`core/executors/base.py`)
+
+The uniform seam between a planned step and the executor that performs it.
+
+```python
+class StepExecutor(Protocol):
+    def run_step(self, step: PlanStep) -> CommandResult: ...
+```
+
+Every executor below implements `StepExecutor`. `run_step` switches on
+`step.op` and reads `step.params`; it **never parses `step.command`**, which
+exists only as the display rendering. Each `op` maps onto the executor's own
+typed domain method — the ones documented below for `SamExecutor`,
+`ActionsDispatcher`, `GitExecutor` and `ConfigStore` — so those Protocols remain
+each executor's real API. This seam sits in front of them; it does not replace
+them.
+
+Because the intent arrives structured, each executor reaches its tool in its own
+native way: `sam`, `git` and `gh` steps shell out to those CLIs, while
+`ConfigStore` uses boto3 for SSM as already specified. The typed `params` are what
+make that possible — a step is not a shell string to be re-interpreted.
+
+**Why both fields.** Routing is decided exactly once, in `plan()`, and the same
+`PlanStep` value is consumed both for display and for execution. The previewed
+plan therefore cannot drift from what actually runs, which is what keeps
+Property 5 (dry-run purity) — and the operator's trust in `--dry-run` — meaningful.
+
 ### SamExecutor (`core/executors/sam.py`)
 
 Adapter over the SAM CLI for **local, non-prod** work. `samconfig.toml`
@@ -276,8 +303,10 @@ class Command(BaseModel):
 
 class PlanStep(BaseModel):
     description: str
-    command: str                               # exact line, e.g. "sam deploy --config-env dev"
+    command: str                    # faithful display rendering (dry-run / TUI preview)
     executor: Literal["sam", "actions", "git", "config"]
+    op: str                         # structured intent, e.g. "sam.deploy", "ssm.put", "git.tag"
+    params: dict[str, str | bool | list[str]] = Field(default_factory=dict)
 
 class Plan(BaseModel):
     capability: Capability
@@ -295,12 +324,26 @@ class Result(BaseModel):
     run_url: str | None = None                 # CI run reference when target == CI
     raw_output: str | None = None
 
+class CommandResult(BaseModel):
+    ok: bool
+    output: str                     # the tool's own output, surfaced verbatim on failure
+    run_url: str | None = None      # set when a dispatched CI run is created
+    changes: list[ConfigDiff] = Field(default_factory=list)
+
 class ConfigDiff(BaseModel):
     source: Literal["samconfig", "ssm"]
     key: str
     before: str | None
     after: str | None
 ```
+
+**`PlanStep` carries both intent and rendering.** `command` is the
+human-readable rendering of the step — the line shown by `--dry-run` and in the
+TUI preview, and nothing more. `op` + `params` are the structured intent the
+executor actually acts on. No executor ever parses `command`; a step's routing is
+decided once in `plan()` and read from `op`/`params` at execution. `CommandResult`
+is the value every executor call returns, and is folded into the front-end
+`Result`.
 
 **Exit-code contract:** `0` success · `1` failed · `2` usage/validation error
 (before any executor call) · `3` confirmation required.

@@ -9,10 +9,13 @@ deterministic: the same ``Command`` yields the same ``Plan`` — same steps, sam
 order, same strings — so CLI mode and TUI mode serialize byte-for-byte identical
 plans (design Property 1).
 
-Every ``PlanStep.command`` is the exact command line the executor runs. The
-``config`` executor's SSM operations are rendered as their equivalent AWS CLI
-invocation: the ``ConfigStore`` calls the SSM API through boto3, and the CLI form
-is the faithful, copy-pasteable rendering of that one API call.
+Every ``PlanStep`` carries both the structured intent its executor acts on
+(``op`` + ``params``, vocabulary defined below) and the faithful ``command``
+rendering shown by ``--dry-run`` and the TUI. The ``config`` executor's SSM
+operations are *rendered* as their equivalent AWS CLI invocation: the
+``ConfigStore`` calls the SSM API through boto3 off ``params``, and the CLI form
+is the faithful, copy-pasteable rendering of that one API call. No executor parses
+``command``.
 
 **No first-party prod deploy** (Requirement 6.1, design Property 2): the local
 SAM branch is reached only for ``target == LOCAL``, and a ``DEPLOY`` + ``LOCAL``
@@ -45,8 +48,8 @@ from bdo_deploy.core.errors import (
     UsageError,
     exit_code_for,
 )
-from bdo_deploy.core.executors import StepExecutor
 from bdo_deploy.core.executors.actions import ActionsDispatcher
+from bdo_deploy.core.executors.base import StepExecutor
 from bdo_deploy.core.executors.config import ConfigStore
 from bdo_deploy.core.executors.git import GitExecutor
 from bdo_deploy.core.executors.sam import SamExecutor
@@ -80,6 +83,60 @@ DISPATCH_ARG: Final = "dispatch"
 
 CONFIG_SHOW: Final = "show"
 CONFIG_SET: Final = "set"
+
+# -- the `op` vocabulary -----------------------------------------------------
+#
+# Every ``PlanStep`` carries an ``op``: the structured intent its executor acts
+# on, paired with the typed ``params`` that intent needs. The vocabulary is
+# defined here, once, as constants — never as scattered string literals — so
+# ``plan()`` and the executors that switch on ``op`` (tasks 3.1-3.4) cannot
+# drift. Names are dotted ``<tool>.<action>`` and say what the executor should
+# *do*, not how the command line happens to read; ``PlanStep.command`` remains
+# the display rendering, and no executor parses it.
+#
+# The ``params`` each op expects are documented on its constant. Keys are stable
+# names in the executor's own vocabulary (``config_env``, ``version``, ``path``,
+# …), so an executor reads a typed value rather than re-deriving it.
+
+OP_SAM_BUILD: Final = "sam.build"
+"""Build the deployment artifacts. No params."""
+
+OP_SAM_DEPLOY: Final = "sam.deploy"
+"""Deploy a stack. Params: ``config_env`` (the ``samconfig.toml`` environment)."""
+
+OP_SAM_SYNC: Final = "sam.sync"
+"""Dev fast-loop sync. Params: ``config_env``."""
+
+OP_SAM_PIPELINE_BOOTSTRAP: Final = "sam.pipeline_bootstrap"
+"""One-time OIDC role + artifact bucket. Params: ``stage``."""
+
+OP_ACTIONS_RUN_WORKFLOW: Final = "actions.run_workflow"
+"""Dispatch a workflow run. Params: ``workflow``, ``stage``, ``version`` (when set)."""
+
+OP_GIT_TAG: Final = "git.tag"
+"""Create a release tag. Params: ``version``, ``base_branch``."""
+
+OP_GIT_PUSH: Final = "git.push"
+"""Push a release tag. Params: ``version``, ``remote``."""
+
+OP_CONFIG_SHOW: Final = "config.show"
+"""Merged samconfig + SSM read. Params: ``stage``, ``ssm_path`` (the path prefix)."""
+
+OP_SSM_PUT: Final = "ssm.put"
+"""Audited ``PutParameter``. Params: ``path``, ``value``, ``overwrite``."""
+
+OP_SAMCONFIG_PR: Final = "samconfig.pr"
+"""Open a samconfig.toml PR. Params: ``stage``, ``key``, ``value``, ``branch``,
+``base``, ``title``."""
+
+OP_GH_ENVIRONMENT_SET: Final = "gh.environment_set"
+"""Create/update a GitHub Environment. Params: ``environment``."""
+
+OP_GH_SECRET_SET: Final = "gh.secret_set"
+"""Set an environment secret. Params: ``environment``, ``name``."""
+
+DEPLOY_ROLE_SECRET: Final = "AWS_DEPLOY_ROLE_ARN"
+"""The environment secret holding the OIDC deploy role ARN."""
 
 
 def _str_arg(cmd: Command, name: str) -> str:
@@ -329,6 +386,11 @@ class Dispatcher:
                         f"--path /bdo-market-insights/{cmd.stage}/ --recursive"
                     ),
                     executor="config",
+                    op=OP_CONFIG_SHOW,
+                    params={
+                        "stage": cmd.stage,
+                        "ssm_path": f"/bdo-market-insights/{cmd.stage}/",
+                    },
                 )
             ],
             effects=[f"nothing changes: reads the {cmd.stage} config and renders it"],
@@ -345,6 +407,8 @@ class Dispatcher:
                 description=f"write the operational value at {key} (audited)",
                 command=f"aws ssm put-parameter --name {key} --value {value} --overwrite",
                 executor="config",
+                op=OP_SSM_PUT,
+                params={"path": key, "value": value, "overwrite": True},
             )
             effects = [
                 f"sets {key} in SSM Parameter Store to {value!r}",
@@ -353,16 +417,25 @@ class Dispatcher:
         else:
             # Deploy-time config: version-controlled, changed through review.
             branch = f"config/{cmd.stage}-{key}"
+            title = f"config({cmd.stage}): set {key}={value}"
             step = PlanStep(
                 description=(
                     f"set {key} in [{cmd.stage}.deploy.parameters] of samconfig.toml "
                     f"on branch {branch} and open a pull request"
                 ),
                 command=(
-                    f"gh pr create --base {RELEASE_BASE_BRANCH} --head {branch} "
-                    f'--title "config({cmd.stage}): set {key}={value}"'
+                    f'gh pr create --base {RELEASE_BASE_BRANCH} --head {branch} --title "{title}"'
                 ),
                 executor="config",
+                op=OP_SAMCONFIG_PR,
+                params={
+                    "stage": cmd.stage,
+                    "key": key,
+                    "value": value,
+                    "branch": branch,
+                    "base": RELEASE_BASE_BRANCH,
+                    "title": title,
+                },
             )
             effects = [
                 f"opens a pull request setting {key}={value!r} in samconfig.toml",
@@ -396,6 +469,8 @@ class Dispatcher:
                     ),
                     command=f"sam pipeline bootstrap --stage {cmd.stage}",
                     executor="sam",
+                    op=OP_SAM_PIPELINE_BOOTSTRAP,
+                    params={"stage": cmd.stage},
                 ),
                 PlanStep(
                     description=f"create or update the {cmd.stage} GitHub Environment",
@@ -403,14 +478,18 @@ class Dispatcher:
                         f"gh api --method PUT repos/{{owner}}/{{repo}}/environments/{cmd.stage}"
                     ),
                     executor="config",
+                    op=OP_GH_ENVIRONMENT_SET,
+                    params={"environment": cmd.stage},
                 ),
                 PlanStep(
                     description=(
                         "record the OIDC deploy role ARN as the environment's "
-                        "AWS_DEPLOY_ROLE_ARN secret"
+                        f"{DEPLOY_ROLE_SECRET} secret"
                     ),
-                    command=f"gh secret set AWS_DEPLOY_ROLE_ARN --env {cmd.stage}",
+                    command=f"gh secret set {DEPLOY_ROLE_SECRET} --env {cmd.stage}",
                     executor="config",
+                    op=OP_GH_SECRET_SET,
+                    params={"environment": cmd.stage, "name": DEPLOY_ROLE_SECRET},
                 ),
             ],
             effects=[
@@ -452,6 +531,8 @@ class Dispatcher:
                         description=f"sync code changes into the {cmd.stage} stack (fast-loop)",
                         command=f"sam sync --config-env {cmd.stage}",
                         executor="sam",
+                        op=OP_SAM_SYNC,
+                        params={"config_env": cmd.stage},
                     )
                 ],
                 effects=[
@@ -468,11 +549,14 @@ class Dispatcher:
                     description="build the deployment artifacts",
                     command="sam build",
                     executor="sam",
+                    op=OP_SAM_BUILD,
                 ),
                 PlanStep(
                     description=f"deploy the {cmd.stage} stack",
                     command=f"sam deploy --config-env {cmd.stage}",
                     executor="sam",
+                    op=OP_SAM_DEPLOY,
+                    params={"config_env": cmd.stage},
                 ),
             ],
             effects=[
@@ -507,6 +591,8 @@ class Dispatcher:
                     description=f"trigger the protected {cmd.stage} deploy job",
                     command=self._workflow_run_command(cmd),
                     executor="actions",
+                    op=OP_ACTIONS_RUN_WORKFLOW,
+                    params=self._workflow_run_params(cmd),
                 )
             ],
             effects=effects,
@@ -540,6 +626,8 @@ class Dispatcher:
                         ),
                         command=self._workflow_run_command(cmd),
                         executor="actions",
+                        op=OP_ACTIONS_RUN_WORKFLOW,
+                        params=self._workflow_run_params(cmd),
                     )
                 ],
                 effects=[
@@ -559,11 +647,15 @@ class Dispatcher:
                     ),
                     command=f"git tag {version}",
                     executor="git",
+                    op=OP_GIT_TAG,
+                    params={"version": version, "base_branch": RELEASE_BASE_BRANCH},
                 ),
                 PlanStep(
                     description=f"push {version} so the tag-triggered pipeline runs",
                     command=f"git push {GIT_REMOTE} {version}",
                     executor="git",
+                    op=OP_GIT_PUSH,
+                    params={"version": version, "remote": GIT_REMOTE},
                 ),
             ],
             effects=[
@@ -589,5 +681,36 @@ class Dispatcher:
             line = f"{line} -f version={cmd.version}"
         return line
 
+    @staticmethod
+    def _workflow_run_params(cmd: Command) -> dict[str, str | bool | list[str]]:
+        """The typed intent behind that dispatch, for ``ActionsDispatcher``.
 
-__all__ = ["DEPLOY_WORKFLOW", "Dispatcher"]
+        Rendered from the same fields as ``_workflow_run_command`` so the
+        dispatched inputs and the previewed line cannot disagree (design
+        Property 4). ``version`` is present only when the command carries one.
+        """
+        params: dict[str, str | bool | list[str]] = {
+            "workflow": DEPLOY_WORKFLOW,
+            "stage": cmd.stage,
+        }
+        if cmd.version is not None:
+            params["version"] = cmd.version
+        return params
+
+
+__all__ = [
+    "DEPLOY_WORKFLOW",
+    "OP_ACTIONS_RUN_WORKFLOW",
+    "OP_CONFIG_SHOW",
+    "OP_GH_ENVIRONMENT_SET",
+    "OP_GH_SECRET_SET",
+    "OP_GIT_PUSH",
+    "OP_GIT_TAG",
+    "OP_SAMCONFIG_PR",
+    "OP_SAM_BUILD",
+    "OP_SAM_DEPLOY",
+    "OP_SAM_PIPELINE_BOOTSTRAP",
+    "OP_SAM_SYNC",
+    "OP_SSM_PUT",
+    "Dispatcher",
+]

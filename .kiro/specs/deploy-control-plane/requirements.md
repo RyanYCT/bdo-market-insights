@@ -43,8 +43,9 @@ CI/CD workflows).
 - **Dispatcher**: The single component that resolves a `Command` into a `Plan`
   and routes it to exactly one `Executor`. Planning is pure and side-effect-free.
 - **Plan**: The resolved, side-effect-free preview of a `Command` — the ordered
-  executor calls (exact command lines), the human-readable effects, and whether
-  confirmation is required.
+  executor calls (each carrying structured intent the executor acts on, plus the
+  command line rendered for preview only), the human-readable effects, and
+  whether confirmation is required.
 - **Result**: The typed outcome (`ok`, `exit_code`, `summary`, `changes`,
   `run_url`, `raw_output`) returned after execution.
 - **Executor**: An adapter over one sanctioned tool. The wizard shells out to

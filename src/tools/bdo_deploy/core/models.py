@@ -131,13 +131,34 @@ class Command(BaseModel):
 
 
 class PlanStep(BaseModel):
-    """One executor call in a plan."""
+    """One executor call in a plan: structured intent plus its rendering.
+
+    A step carries **both** because routing is decided exactly once, in
+    ``plan()``, and the same value is then consumed for display and for
+    execution — so the previewed plan cannot drift from what actually runs
+    (design Property 5).
+
+    ``op`` + ``params`` are the structured intent an executor acts on; ``command``
+    is display only. **No executor ever parses ``command``**: ``run_step``
+    switches on ``op`` and reads ``params``, which is what lets each adapter reach
+    its tool natively — ``sam``/``git``/``gh`` steps shell out, while
+    ``ConfigStore`` uses boto3 for SSM rather than re-parsing a shell string.
+    """
 
     description: str
     command: str
-    """The exact command line, e.g. ``sam deploy --config-env dev``."""
+    """The display rendering only — the line shown by ``--dry-run`` and the TUI
+    preview, e.g. ``sam deploy --config-env dev``. Never parsed by an executor."""
 
     executor: Literal["sam", "actions", "git", "config"]
+    op: str
+    """The structured intent, e.g. ``sam.deploy``, ``ssm.put``, ``git.tag``.
+
+    The vocabulary is defined once, as module constants in ``core.dispatch``.
+    """
+
+    params: dict[str, str | bool | list[str]] = Field(default_factory=dict)
+    """The typed values the executor needs, so it never has to parse ``command``."""
 
 
 class Plan(BaseModel):
@@ -160,7 +181,7 @@ class CommandResult(BaseModel):
     """
 
     ok: bool
-    output: str = ""
+    output: str
     run_url: str | None = None
     """Set by an actions/CI step that dispatched a run (Requirement 10.6)."""
 

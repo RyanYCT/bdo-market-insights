@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from bdo_deploy.core.executors import StepExecutor
+from bdo_deploy.core.executors.base import StepExecutor
 
 
 class ConfigStore(StepExecutor, Protocol):

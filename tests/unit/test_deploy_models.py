@@ -54,6 +54,8 @@ def _plan() -> Plan:
                 description="deploy the dev stack",
                 command="sam deploy --config-env dev",
                 executor="sam",
+                op="sam.deploy",
+                params={"config_env": "dev"},
             )
         ],
         effects=["updates the dev CloudFormation stack"],
