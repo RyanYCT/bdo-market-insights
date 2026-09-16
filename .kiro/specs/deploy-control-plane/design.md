@@ -350,17 +350,23 @@ a formal, machine-checkable statement of what the system must do.*
 For any operator/agent intent, the `Plan` produced through CLI mode and the
 `Plan` produced through TUI mode are byte-for-byte identical when serialized.
 
+**Validates: Requirements 1.5**
+
 ### Property 2: No first-party prod deploy
 
 For all commands the wizard can construct, none produces a `Plan` that executes
 `sam deploy --config-env prod` locally; a prod deploy is reachable only by
 dispatching the environment-protected CI job (structurally enforced by `Target`).
 
+**Validates: Requirements 7.1, 7.2**
+
 ### Property 3: Config-as-data
 
 For every config or flag change, the resulting `Plan` is either a pull request
 against a tracked file or an audited SSM/AppConfig write — never a write to a
 fourth configuration location.
+
+**Validates: Requirements 3.3, 3.4, 4.1, 4.3**
 
 ### Property 4: Dispatch fidelity
 
@@ -369,11 +375,15 @@ typed `workflow_dispatch` inputs are a superset of what the control plane sends,
 so the GitHub Actions UI and the control plane dispatch the identical `deploy.yml`
 run with identical inputs.
 
+**Validates: Requirements 9.3**
+
 ### Property 5: Dry-run purity
 
 For any command run with `--dry-run` (or TUI preview), the wizard renders the
 `Plan` and performs no file write, PR, AWS API mutation, SSM/AppConfig write,
 git mutation, `sam deploy`, or workflow dispatch — all state is left unchanged.
+
+**Validates: Requirements 11.5**
 
 ## Planned ADRs
 
