@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from bdo_deploy.core.executors import StepExecutor
 
-class ActionsDispatcher(Protocol):
+
+class ActionsDispatcher(StepExecutor, Protocol):
     """Protocol for the GitHub Actions adapter (methods defined in task 3.2)."""

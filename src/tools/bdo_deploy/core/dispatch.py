@@ -22,20 +22,43 @@ SAM branch is reached only for ``target == LOCAL``, and a ``DEPLOY`` + ``LOCAL``
 invariant: production is reached only by dispatching the environment-protected
 ``deploy.yml`` run.
 
-``execute()`` (the confirmation gate and dry-run contract) lands in task 2.2, and
-the executors themselves in tasks 3.1-3.4.
+``execute()`` is the **only** method here that can reach an executor: ``plan()``
+never touches ``self._sam`` and friends. A ``--dry-run`` (or TUI preview) run
+therefore stops at ``plan()`` and no mutation is even expressible — dry-run
+purity is a property of which methods hold executor references, not of a flag
+checked at run time. ``Plan`` deliberately carries no ``dry_run`` field: the
+preview and the applied plan are the same value, and only calling ``execute()``
+applies it.
+
+The executors themselves land in tasks 3.1-3.4.
 """
 
 from __future__ import annotations
 
 from typing import Final, assert_never
 
-from bdo_deploy.core.errors import UsageError
+from bdo_deploy.core.errors import (
+    ConfirmationRequired,
+    ControlPlaneError,
+    ExecutorFailed,
+    ExecutorUnavailable,
+    UsageError,
+    exit_code_for,
+)
+from bdo_deploy.core.executors import StepExecutor
 from bdo_deploy.core.executors.actions import ActionsDispatcher
 from bdo_deploy.core.executors.config import ConfigStore
 from bdo_deploy.core.executors.git import GitExecutor
 from bdo_deploy.core.executors.sam import SamExecutor
-from bdo_deploy.core.models import Capability, Command, Plan, PlanStep, Target
+from bdo_deploy.core.models import (
+    Capability,
+    Command,
+    ConfigDiff,
+    Plan,
+    PlanStep,
+    Result,
+    Target,
+)
 from bdo_deploy.core.validation import PROD_STAGE, validate_ssm_path
 
 DEPLOY_WORKFLOW: Final = "deploy.yml"
@@ -89,12 +112,28 @@ def _bool_arg(cmd: Command, name: str) -> bool:
     return value
 
 
+def _step_failed(step: PlanStep, *, position: int, total: int) -> str:
+    """Name the step that failed, so the operator knows where the run stopped."""
+    return f"step {position}/{total} failed ({step.executor}): {step.command}"
+
+
+def _raised_output(exc: BaseException) -> str:
+    """The executor's own words for a raised failure — never a traceback.
+
+    An ``ExecutorFailed`` already carries the tool's verbatim output; anything
+    else is rendered as its message, falling back to the exception's type name
+    when the message is empty (a bare ``NotImplementedError``, say).
+    """
+    if isinstance(exc, ExecutorFailed) and exc.output is not None:
+        return exc.output
+    return str(exc) or type(exc).__name__
+
+
 class Dispatcher:
     """Resolves a ``Command`` into a ``Plan`` and routes it to one executor.
 
-    Executors are injected so ``execute()`` (task 2.2) can be tested against
-    recorded invocations; ``plan()`` never uses them, which is what keeps
-    planning pure.
+    Executors are injected so ``execute()`` can be tested against recorded
+    invocations; ``plan()`` never uses them, which is what keeps planning pure.
     """
 
     def __init__(
@@ -127,6 +166,131 @@ class Dispatcher:
                 return self._plan_release(cmd)
             case _:  # pragma: no cover - exhaustive over Capability
                 assert_never(cmd.capability)
+
+    # -- execution ----------------------------------------------------------
+
+    def execute(self, plan: Plan, *, confirmed: bool) -> Result:
+        """Run ``plan``'s steps in order through their injected executors.
+
+        Raises ``ConfirmationRequired`` — carrying ``plan`` — when the plan
+        mutates and ``confirmed`` is false; the gate is checked before any step
+        is resolved, so nothing has run (Requirement 10.4). Raising rather than
+        returning is what the design's signature specifies and what keeps
+        ``exit_code_for`` the single mapping: it maps a terminating *outcome* to
+        an exit code, and ``Result`` has no field that could carry the plan the
+        caller needs in order to re-invoke with ``--yes``.
+
+        Every other outcome is a ``Result``. Execution stops at the first failing
+        step, the remaining steps are skipped, and the failing executor's output
+        is surfaced verbatim with exit ``1`` and no traceback (Requirement 10.2).
+        """
+        if plan.requires_confirmation and not confirmed:
+            raise ConfirmationRequired(
+                f"{plan.capability.value}: confirmation required, nothing has run",
+                plan=plan,
+            )
+
+        total = len(plan.steps)
+        try:
+            wired = self._wire(plan)
+        except ExecutorUnavailable as exc:
+            # Resolution precedes execution, so no step ran and nothing mutated;
+            # the error says so itself, hence no "steps skipped" tail.
+            return self._failure(plan, error=exc, skipped=0)
+
+        changes: list[ConfigDiff] = []
+        outputs: list[str] = []
+        run_url: str | None = None
+
+        for position, (step, executor) in enumerate(wired, start=1):
+            try:
+                outcome = executor.run_step(step)
+            except Exception as exc:
+                return self._failure(
+                    plan,
+                    error=ExecutorFailed(
+                        _step_failed(step, position=position, total=total),
+                        output=_raised_output(exc),
+                    ),
+                    skipped=total - position,
+                    changes=changes,
+                    run_url=run_url,
+                )
+            changes.extend(outcome.changes)
+            outputs.append(outcome.output)
+            if outcome.run_url is not None:
+                run_url = outcome.run_url
+            if not outcome.ok:
+                return self._failure(
+                    plan,
+                    error=ExecutorFailed(
+                        _step_failed(step, position=position, total=total),
+                        output=outcome.output,
+                    ),
+                    skipped=total - position,
+                    changes=changes,
+                    run_url=run_url,
+                )
+
+        summary = f"{plan.capability.value}: completed {total} step(s)"
+        if run_url is not None:
+            summary = f"{summary}; the dispatched run is authoritative: {run_url}"
+        return Result(
+            capability=plan.capability,
+            ok=True,
+            exit_code=exit_code_for(None),
+            summary=summary,
+            changes=changes,
+            run_url=run_url,
+            raw_output="\n".join(text for text in outputs if text) or None,
+        )
+
+    def _wire(self, plan: Plan) -> list[tuple[PlanStep, StepExecutor]]:
+        """Pair every step with its injected executor, or raise.
+
+        Resolving the whole plan up front means an unwired executor is reported
+        as a named ``ExecutorUnavailable`` before the first step runs, rather
+        than as an ``AttributeError`` on ``None`` halfway through.
+        """
+        injected: dict[str, StepExecutor | None] = {
+            "sam": self._sam,
+            "actions": self._actions,
+            "git": self._git,
+            "config": self._config,
+        }
+        wired: list[tuple[PlanStep, StepExecutor]] = []
+        for position, step in enumerate(plan.steps, start=1):
+            executor = injected[step.executor]
+            if executor is None:
+                raise ExecutorUnavailable(
+                    f"step {position}/{len(plan.steps)} needs the {step.executor!r} executor, "
+                    "which was not injected into the Dispatcher; nothing has run"
+                )
+            wired.append((step, executor))
+        return wired
+
+    @staticmethod
+    def _failure(
+        plan: Plan,
+        *,
+        error: ControlPlaneError,
+        skipped: int,
+        changes: list[ConfigDiff] | None = None,
+        run_url: str | None = None,
+    ) -> Result:
+        """Build the ``Result`` for a stopped run; ``exit_code_for`` maps the code."""
+        summary = error.summary
+        if skipped > 0:
+            summary = f"{summary}; {skipped} remaining step(s) skipped"
+        return Result(
+            capability=plan.capability,
+            ok=False,
+            exit_code=exit_code_for(error),
+            summary=summary,
+            changes=changes if changes is not None else [],
+            run_url=run_url,
+            raw_output=error.output if isinstance(error, ExecutorFailed) else None,
+        )
 
     # -- config -------------------------------------------------------------
 

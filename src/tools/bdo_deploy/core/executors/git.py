@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from bdo_deploy.core.executors import StepExecutor
 
-class GitExecutor(Protocol):
+
+class GitExecutor(StepExecutor, Protocol):
     """Protocol for the ``git`` adapter (methods defined in task 3.3)."""

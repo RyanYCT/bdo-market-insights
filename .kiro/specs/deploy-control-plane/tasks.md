@@ -53,7 +53,7 @@ nothing ships half-built.
     plans "trigger the protected CI job"
   - _Requirements: 2.1, 2.4, 6.1_
 
-- [~] 2.2 Implement `Dispatcher.execute()` with the confirmation and dry-run contract
+- [x] 2.2 Implement `Dispatcher.execute()` with the confirmation and dry-run contract
   - Raise/return exit `3` with the `Plan` when a mutating plan is unconfirmed;
     a `--dry-run` / preview plan performs no mutation of any kind
   - _Requirements: 2.1, 10.4, 10.5_

@@ -13,11 +13,16 @@ so a ``UsageError`` raised by a validator reaches the caller intact.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import ValidationError as PydanticValidationError
 
 from bdo_deploy.core.exit_codes import ExitCode
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle guard
+    # ``core.models`` imports ``UsageError`` from this module, so the ``Plan``
+    # annotation stays a type-checking-only import.
+    from bdo_deploy.core.models import Plan
 
 
 class ControlPlaneError(Exception):
@@ -70,14 +75,30 @@ class ExecutorFailed(ControlPlaneError):
         super().__init__(summary)
 
 
+class ExecutorUnavailable(ControlPlaneError):
+    """A plan needs an executor that was never injected (exit ``1``).
+
+    A wiring fault, not operator input: raised while resolving a plan's steps,
+    before any executor is called, so nothing has been mutated. Named so the
+    caller sees the missing executor instead of an ``AttributeError`` or a
+    ``None`` dereference.
+    """
+
+    exit_code: ClassVar[ExitCode] = ExitCode.EXECUTOR_FAILED
+
+
 class ConfirmationRequired(ControlPlaneError):
     """A mutating plan was invoked without confirmation (exit ``3``).
 
-    Nothing has been executed; the caller inspects the plan's effects and
-    re-invokes with ``--yes`` (Requirement 10.4).
+    Nothing has been executed; ``plan`` carries the effects the caller inspects
+    before re-invoking with ``--yes`` (Requirement 10.4).
     """
 
     exit_code: ClassVar[ExitCode] = ExitCode.CONFIRMATION_REQUIRED
+
+    def __init__(self, summary: str, *, plan: Plan | None = None) -> None:
+        self.plan = plan
+        super().__init__(summary)
 
 
 def exit_code_for(outcome: BaseException | None) -> ExitCode:
@@ -104,6 +125,7 @@ __all__ = [
     "ConfirmationRequired",
     "ControlPlaneError",
     "ExecutorFailed",
+    "ExecutorUnavailable",
     "ExitCode",
     "UsageError",
     "exit_code_for",

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from bdo_deploy.core.executors import StepExecutor
 
-class ConfigStore(Protocol):
+
+class ConfigStore(StepExecutor, Protocol):
     """Protocol for the config-as-data adapter (methods defined in task 3.4)."""

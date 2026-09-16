@@ -152,6 +152,21 @@ class Plan(BaseModel):
     requires_confirmation: bool
 
 
+class CommandResult(BaseModel):
+    """What one executor call reported: the design's executor return type.
+
+    ``output`` is the sanctioned tool's own output, kept verbatim so the
+    dispatcher can surface it without reformatting (Requirement 10.2).
+    """
+
+    ok: bool
+    output: str = ""
+    run_url: str | None = None
+    """Set by an actions/CI step that dispatched a run (Requirement 10.6)."""
+
+    changes: list[ConfigDiff] = Field(default_factory=list)
+
+
 class Result(BaseModel):
     """The typed outcome returned after execution."""
 
@@ -169,6 +184,7 @@ class Result(BaseModel):
 __all__ = [
     "Capability",
     "Command",
+    "CommandResult",
     "ConfigDiff",
     "ExitCode",
     "Plan",

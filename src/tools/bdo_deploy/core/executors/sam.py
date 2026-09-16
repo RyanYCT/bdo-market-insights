@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from bdo_deploy.core.executors import StepExecutor
 
-class SamExecutor(Protocol):
+
+class SamExecutor(StepExecutor, Protocol):
     """Protocol for the SAM CLI adapter (methods defined in task 3.1)."""
