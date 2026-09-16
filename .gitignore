@@ -36,3 +36,4 @@ build/
 
 # Kiro spec config (internal per-spec metadata; kept local, not committed)
 .kiro/specs/*/.config.kiro
+.kiro/specs/*/tasks.meta.json

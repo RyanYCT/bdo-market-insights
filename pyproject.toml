@@ -8,6 +8,11 @@ dependencies = [
     "psycopg[binary]>=3,<4",
 ]
 
+[project.scripts]
+# Deploy control plane, packaged as a console entry point rather than an ops
+# folder of scripts (deploy-control-plane spec, Requirement 2.3).
+bdo-deploy = "bdo_deploy.cli:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -50,15 +55,23 @@ dev = [
     # per-region schedule fan-out tests (ADR-0036). CI's validate job also uses
     # sam's bundled cfn-lint; this pins it for the pytest-driven IaC tests.
     "cfn-lint",
+    # Deploy control-plane front-ends (deploy-control-plane spec): dev/ops-only,
+    # deliberately NOT in [project.dependencies] so they stay out of the
+    # bdo-common Lambda layer and bdo_common itself (Requirement 9.4).
+    "typer",
+    "textual",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/layer/python/bdo_common"]
+# src/tools/bdo_deploy is included so the bdo-deploy console script resolves
+# when the project is installed (uv sync). It is NOT part of the bdo-common
+# Lambda layer, which SAM builds from src/layer/python only.
+packages = ["src/layer/python/bdo_common", "src/tools/bdo_deploy"]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 99
-src = ["src/layer/python"]
+src = ["src/layer/python", "src/tools"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -71,11 +84,11 @@ plugins = ["pydantic.mypy"]
 # entry point per src/functions/<name>/). explicit_package_bases + mypy_path
 # give each a unique module name (<name>.app) and resolve the shared layer.
 explicit_package_bases = true
-mypy_path = ["src/layer/python", "src/functions"]
+mypy_path = ["src/layer/python", "src/functions", "src/tools"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src/layer/python"]
+pythonpath = ["src/layer/python", "src/tools"]
 markers = [
     "integration: end-to-end tests that require a real Postgres (set TEST_DATABASE_URL; skipped otherwise)",
 ]
