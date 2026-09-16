@@ -7,8 +7,11 @@ feature branch off `main` (tick its checkbox in the same commit). The wizard is 
 **thin control plane** — it dispatches to the SAM CLI, GitHub Actions (`gh`), and
 `git`; it reimplements no deploy logic and adds no `scripts/` ops folder. Four
 capabilities are built — **config**, **bootstrap**, **deploy**, **release** — each
-mapped onto an executor. Runtime feature flags (and AppConfig wiring) are
-**deferred to a follow-up spec** and are not built here, and this feature adds
+mapped onto an executor. Runtime feature flags are **deferred to a follow-up
+spec** and are not built here; when they are built, the flag store will be a
+**DynamoDB** table read via Powertools over the existing free DynamoDB Gateway
+endpoint — **not** AppConfig, which is rejected on cost because it would require
+a paid PrivateLink interface endpoint under no-NAT (ADR-0006). This feature adds
 **no new AWS infrastructure**: the only non-Python artefacts are the GitHub
 Actions workflows and the shared composite action. Sub-tasks marked `*` are
 optional tests and are not implemented by default. Phases end at checkpoints;
@@ -257,9 +260,11 @@ completeness — AGENTS.md). Each cites the requirement(s) it defends.
 ## Notes
 
 - Four capabilities are in scope: **config**, **bootstrap**, **deploy**,
-  **release**. There is no runtime feature-flag capability and no AppConfig or
-  Powertools feature-flag wiring in this spec — runtime flags are deferred to a
-  follow-up spec (whose sanctioned store will be DynamoDB, not AppConfig).
+  **release**. This spec builds no runtime feature-flag capability; runtime flags
+  are deferred to a follow-up spec, whose sanctioned store will be a DynamoDB
+  table read via Powertools over the existing free DynamoDB Gateway endpoint.
+  AppConfig is not the store — it is rejected on cost, since it would require a
+  paid PrivateLink interface endpoint under no-NAT (ADR-0006).
 - This feature adds **no new AWS infrastructure**: no new stacks, resources, or
   VPC endpoints. The only infrastructure-adjacent artefacts are the GitHub
   Actions workflows (`deploy.yml`, refactored `ci.yml`) and the shared composite

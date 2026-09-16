@@ -233,12 +233,23 @@ class ConfigStore(Protocol):
 | **bootstrap** | SamExecutor + ConfigStore | One-time, clearly labelled: wrap `sam pipeline bootstrap` (standard AWS CI/CD bootstrap — OIDC deploy role + artifact bucket) and configure the GitHub Environments / secrets. |
 | **deploy** | SamExecutor (LOCAL) / ActionsDispatcher (CI) | dev/personal → `sam deploy --config-env dev` or `sam sync`. shared/prod → trigger the CI job. A fresh environment reaches target state via a single declarative deploy — the stack self-bootstraps (auto-migrate custom resource, ADR-0025; bootstrap orchestrator auto-run, ADR-0028). No imperative multi-step orchestration. |
 | **release** | GitExecutor / ActionsDispatcher | `git tag` push (`deploy.yml` `push: tags: v*`) or `gh workflow run deploy.yml` (manual `workflow_dispatch`, a `run`/`dispatch` alias). Production is initiated **only by the sanctioned pipeline triggers** — a pushed release tag, or an authorised `workflow_dispatch` of `deploy.yml` (whether dispatched by the control plane or from the GitHub Actions UI). No LOCAL path initiates a production deploy. |
+| **flag** *(planned — deferred, not built in this spec)* | ConfigStore + DynamoDB (planned) | Flip a runtime feature flag without a redeploy. Flag values are stored in a DynamoDB table and read in Lambdas via the Powertools feature-flags provider (a custom `StoreProvider`), or the Powertools parameters `DynamoDBProvider` for plain booleans. Reachable from in-VPC Lambdas through the existing free DynamoDB Gateway endpoint. |
 
-**Deferred: runtime feature flags.** Runtime feature flags are out of scope here.
-When they are introduced, the sanctioned store is **DynamoDB** — read in Lambdas
-via Powertools through the existing free DynamoDB Gateway endpoint — *not* AWS
-AppConfig, which would require a paid PrivateLink interface endpoint under no-NAT
-(ADR-0006). That work carries its own spec and ADR.
+**Deferred: runtime feature flags.** Runtime feature flags are out of scope here;
+the row above records the intended shape, not work this spec builds.
+
+- **Command shape (intended):** `flag list` shows the current flags; `flag set
+  <name> on|off` flips one.
+- **Store:** a DynamoDB table, read in Lambdas via Powertools over the existing
+  free DynamoDB Gateway endpoint.
+- **Why not AppConfig:** under no-NAT (ADR-0006) it would require a paid
+  PrivateLink interface endpoint, so AppConfig is **rejected on cost** — not
+  merely postponed.
+- **`FLAG` is deliberately kept OUT of the `Capability` enum** until the
+  capability is built, so the CLI never advertises a subcommand with no executor
+  behind it.
+- The work carries its own spec and ADR; no requirement or task in this spec
+  covers it.
 
 ## Data Models
 
