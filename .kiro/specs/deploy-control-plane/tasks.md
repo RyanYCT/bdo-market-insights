@@ -58,35 +58,35 @@ nothing ships half-built.
     a `--dry-run` / preview plan performs no mutation of any kind
   - _Requirements: 2.1, 10.4, 10.5_
 
-- [ ]* 2.3 Plan unit tests per capability + target (executors mocked)
+- [x]* 2.3 Plan unit tests per capability + target (executors mocked)
   - Assert exact command lines, effects, and `requires_confirmation` for each
     capability/target combination
   - _Requirements: 2.1, 2.4_
 
-- [~] 2.4 Checkpoint — Ensure all tests pass, ask the user if questions arise.
+- [x] 2.4 Checkpoint — Ensure all tests pass, ask the user if questions arise.
   - Verifies the dispatcher core: pure planning, single-executor routing, the
     confirmation gate, and dry-run purity
   - _Requirements: 2.1, 2.4, 6.1, 10.4, 10.5_
 
 ### Phase 3 — Executors (adapters over sanctioned tools)
 
-- [~] 3.1 Implement `SamExecutor`
+- [ ] 3.1 Implement `SamExecutor`
   - `validate` / `build` / `deploy(config_env)` / `sync(config_env)`; select only
     `--config-env` (never compose `--parameter-overrides`); `deploy` refuses
     `config_env == "prod"`
   - _Requirements: 2.2, 5.1, 6.1_
 
-- [~] 3.2 Implement `ActionsDispatcher`
+- [ ] 3.2 Implement `ActionsDispatcher`
   - `run_workflow` → `gh workflow run deploy.yml -f stage=… -f version=…`;
     `watch` → `gh run watch`; `view` → `gh run view`; return the dispatched run ref
   - _Requirements: 5.3, 6.2, 7.6, 8.3, 10.6_
 
-- [~] 3.3 Implement `GitExecutor`
+- [ ] 3.3 Implement `GitExecutor`
   - `release_preconditions` (clean tree, on `main`, tag absent locally + on origin);
     `tag_and_push` creates and pushes `vX.Y.Z`
   - _Requirements: 7.1, 7.3, 7.4_
 
-- [~] 3.4 Implement `ConfigStore`
+- [ ] 3.4 Implement `ConfigStore`
   - `read_merged` (samconfig + SSM) with secret masking (SecureString or a key
     name containing `secret` / `password` / `token` / `key`)
   - `open_config_pr` via `gh` for tracked files — including `BdoRegions`, the
@@ -103,31 +103,31 @@ nothing ships half-built.
     no traceback)
   - _Requirements: 3.4, 3.5, 9.1, 10.2_
 
-- [~] 3.6 Checkpoint — Ensure all tests pass, ask the user if questions arise.
+- [ ] 3.6 Checkpoint — Ensure all tests pass, ask the user if questions arise.
   - Verifies every executor adapter: `--config-env`-only SAM invocation, the
     `deploy.yml` dispatch, release preconditions, and config-as-data writes
   - _Requirements: 2.2, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 7.1, 9.1, 10.2_
 
 ### Phase 4 — Capabilities wired end-to-end
 
-- [~] 4.1 Wire the **config** capability
+- [ ] 4.1 Wire the **config** capability
   - `config show` renders the masked merged view; `config set` opens a PR for
     tracked files or writes SSM with audit
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.6_
 
-- [~] 4.2 Wire the **bootstrap** capability
+- [ ] 4.2 Wire the **bootstrap** capability
   - One-time, clearly-labelled helper wrapping `sam pipeline bootstrap` (OIDC
     deploy role + artifact bucket) and configuring GitHub Environments/secrets;
     stop at the first failing step and preserve completed effects
   - _Requirements: 4.1, 4.2, 4.3, 6.3_
 
-- [~] 4.3 Wire the **deploy** capability
+- [ ] 4.3 Wire the **deploy** capability
   - `target=LOCAL` dev/personal → `sam deploy --config-env <stage>` / `sam sync`;
     `target=CI` shared/prod → trigger the CI job; LOCAL prod rejected (exit `2`);
     fresh env reaches target state via a single declarative deploy
   - _Requirements: 5.1, 5.2, 5.3, 5.4_
 
-- [~] 4.4 Wire the **release** capability
+- [ ] 4.4 Wire the **release** capability
   - Verify preconditions, then tag + push (`push: tags: v*`) or `gh workflow run`
     dispatch; surface the dispatched run URL/status
   - Production is initiated only by the sanctioned pipeline triggers (a pushed
@@ -142,17 +142,17 @@ nothing ships half-built.
 
 ### Phase 5 — Front-ends over one shared core
 
-- [~] 5.1 Implement the Typer CLI front-end
+- [ ] 5.1 Implement the Typer CLI front-end
   - One subcommand per capability; `--json` (sole `Result` on stdout, logs to
     stderr), `--yes`, `--dry-run`; never prompts; deterministic exit codes
   - _Requirements: 1.1, 1.2, 10.1, 10.2, 10.7_
 
-- [~] 5.2 Implement the Textual TUI front-end
+- [ ] 5.2 Implement the Textual TUI front-end
   - Guided flows that render the `Plan` at an explicit confirmation step before any
     mutating execution (convenience skin, not system of record)
   - _Requirements: 1.3_
 
-- [~] 5.3 Wire both front-ends to the shared `Dispatcher`
+- [ ] 5.3 Wire both front-ends to the shared `Dispatcher`
   - Each front-end only collects intent and renders the `Result`; both build the
     same typed `Command` and route through the same `Dispatcher`
   - _Requirements: 1.4_
@@ -161,30 +161,30 @@ nothing ships half-built.
   - Same intent through CLI and TUI produces byte-for-byte identical serialized `Plan`s
   - _Requirements: 1.5_
 
-- [~] 5.5 Checkpoint — Ensure all tests pass, ask the user if questions arise.
+- [ ] 5.5 Checkpoint — Ensure all tests pass, ask the user if questions arise.
   - Verifies both front-ends over one shared core: non-interactive CLI contract,
     TUI confirmation step, and front-end equivalence
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 10.1, 10.2, 10.7_
 
 ### Phase 6 — CI/CD workflows
 
-- [~] 6.1 Add the reusable composite action `.github/actions/setup/`
+- [ ] 6.1 Add the reusable composite action `.github/actions/setup/`
   - Factor checkout → `setup-python` → `uv sync` so workflows cannot drift (ADR-0038)
   - _Requirements: 8.4_
 
-- [~] 6.2 Add `.github/workflows/deploy.yml`
+- [ ] 6.2 Add `.github/workflows/deploy.yml`
   - Triggers on `push: tags: v*` and `workflow_dispatch` with typed inputs (`stage`,
     `version`, toggles); environment-gated deploy jobs (`environment: prod` with the
     protection); OIDC keyless deploy (`id-token: write`); consumes the composite action.
     Its `workflow_dispatch` inputs are a superset of what the wizard sends
   - _Requirements: 6.3, 8.1, 8.3_
 
-- [~] 6.3 Refactor `ci.yml` to consume the composite action
+- [ ] 6.3 Refactor `ci.yml` to consume the composite action
   - Validation behavior unchanged — it remains the branch-protection gate; only the
     shared setup steps are swapped for the composite action (ADR-0038)
   - _Requirements: 8.2, 8.4, 8.5_
 
-- [~] 6.4 Checkpoint — Ensure the workflows parse, both consume the composite
+- [ ] 6.4 Checkpoint — Ensure the workflows parse, both consume the composite
       action, and all tests pass; ask the user if questions arise.
   - Verifies the purpose-scoped workflow split, the prod environment gate, and
     the factored shared setup (no new AWS infrastructure is added)
@@ -192,13 +192,13 @@ nothing ships half-built.
 
 ### Phase 7 — ADRs
 
-- [~] 7.1 ADR: wizard as a thin control plane, console entry point (no `scripts/` folder)
+- [ ] 7.1 ADR: wizard as a thin control plane, console entry point (no `scripts/` folder)
   - _Requirements: 2.3_
 
-- [~] 7.2 ADR: prod gating via GitHub Environments (required reviewers) + OIDC keyless deploy
+- [ ] 7.2 ADR: prod gating via GitHub Environments (required reviewers) + OIDC keyless deploy
   - _Requirements: 6.3_
 
-- [~] 7.3 ADR: CLI framework (Typer) and TUI framework (Textual) choices
+- [ ] 7.3 ADR: CLI framework (Typer) and TUI framework (Textual) choices
   - _Requirements: 1.1, 1.3_
 
 ### Phase 8 — Property-based testing
@@ -226,7 +226,7 @@ completeness — AGENTS.md). Each cites the requirement(s) it defends.
   - **Property 5: Dry-run purity**
   - **Validates: Requirements 10.5**
 
-- [~] 8.6 Final checkpoint — Ensure `ruff` / `mypy` / `pytest` pass, ask the user if questions arise.
+- [ ] 8.6 Final checkpoint — Ensure `ruff` / `mypy` / `pytest` pass, ask the user if questions arise.
   - Verifies every stated invariant holds end-to-end across the four capabilities
   - _Requirements: 1.5, 3.3, 3.4, 3.6, 6.1, 6.2, 8.3, 10.5_
 
