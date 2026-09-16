@@ -40,7 +40,7 @@ nothing ships half-built.
     (exit `2`); map outcomes to exit `{0,1,2,3}`
   - _Requirements: 5.2, 7.2, 9.1, 10.3, 10.7_
 
-- [ ]* 1.4 Unit tests for models and validation rules
+- [x]* 1.4 Unit tests for models and validation rules
   - Cover the version regex, LOCAL-prod rejection, SSM-path rejection, exit-code
     mapping, and round-trip JSON serialization
   - _Requirements: 5.2, 7.2, 9.1, 10.3, 10.7_

@@ -95,7 +95,9 @@ def validate_stage(stage: str) -> str:
 
 def validate_version(version: str) -> str:
     """Return ``version`` if it matches the release-tag format (Requirement 7.2)."""
-    if RELEASE_VERSION_PATTERN.match(version) is None:
+    # fullmatch, not match: Python's ``$`` also matches just before a trailing
+    # newline, so ``match`` would accept "v1.4.0\n" as a tag name.
+    if RELEASE_VERSION_PATTERN.fullmatch(version) is None:
         raise UsageError(
             field="version",
             value=version,
