@@ -34,7 +34,7 @@ nothing ships half-built.
     per the design's Data Models (JSON-serializable for `--json`)
   - _Requirements: 1.4, 10.6, 10.7_
 
-- [~] 1.3 Implement model validation and the exit-code contract
+- [x] 1.3 Implement model validation and the exit-code contract
   - `stage` ∈ `samconfig.toml` envs; `version` matches `^v\d+\.\d+\.\d+$`;
     reject a `LOCAL` prod deploy (exit `2`); reject any non-repo-scoped SSM path
     (exit `2`); map outcomes to exit `{0,1,2,3}`
