@@ -47,7 +47,7 @@ nothing ships half-built.
 
 ### Phase 2 — Dispatcher core
 
-- [~] 2.1 Implement pure `Dispatcher.plan()`
+- [x] 2.1 Implement pure `Dispatcher.plan()`
   - Resolve every `Command` into a `Plan` routed to exactly one executor selected
     from `cmd.target`; planning is side-effect-free; a prod deploy only ever
     plans "trigger the protected CI job"
