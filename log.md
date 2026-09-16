@@ -2224,3 +2224,41 @@ records (the sessions did not log at the time); dates are the merge dates._
   (documented as options in the design; not needed at the target region count).
 - Actually ingesting a second region is a gated operational step (runbook), not
   in this PR.
+
+---
+
+## 2026-09-14 — Deploy control-plane spec; purpose-scoped workflows (ADR-0038)
+
+**Agent:** Kiro
+**Mode:** Spec
+**Branch:** `feat/deploy-control-plane`
+**Phase:** n/a — feature spec `.kiro/specs/deploy-control-plane/`
+**Commits:** `ad20b12`.. — PR #124
+
+### Done
+- New spec `.kiro/specs/deploy-control-plane/` (requirements, design, tasks): a
+  thin control plane with a non-interactive CLI and an interactive TUI over one
+  command core, dispatching to the SAM CLI, GitHub Actions (`gh`) and `git`
+  rather than reimplementing deploy logic. Four capabilities: config, bootstrap,
+  deploy, release.
+- Production is platform-gated, not code-gated: no first-party prod
+  `sam deploy` path; prod is reached only by dispatching the
+  environment-protected `deploy.yml` (required reviewers + OIDC keyless).
+- Replaced the single-CI-workflow constraint with purpose-scoped workflows;
+  amended `AGENTS.md` and `.kiro/steering/tech.md` to match.
+- Two-axis review of the branch, then fixed the findings: requirement
+  renumbering, a task-id collision, missing checkpoint citations, dependency-graph
+  ordering, and two contradictory acceptance criteria.
+
+### Decisions
+- Purpose-scoped GitHub Actions workflows → ADR-0038
+- Thin control plane, platform prod gating, CLI/TUI framework choices → planned
+  ADRs recorded in the spec
+
+### Deferred / open questions
+- Runtime feature flags are out of scope. When introduced, the store is DynamoDB
+  read via Powertools through the existing free Gateway endpoint — not AppConfig,
+  which would need a paid PrivateLink interface endpoint under no-NAT (ADR-0006).
+- Optional cleanup: rename `ActionsDispatcher` → `ActionsExecutor` (it currently
+  collides conceptually with the core `Dispatcher`).
+

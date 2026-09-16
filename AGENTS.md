@@ -85,7 +85,14 @@ steering files manually.
   retry, circuit breaker, rate limiter, or correlation propagation.
 - DB access: `psycopg[binary]` v3, parameterized SQL only, repository
   pattern in `bdo_common/repositories.py`. No ORM.
-- Exactly **one** CI workflow (`.github/workflows/ci.yml`).
+- Workflows are purpose-scoped (ADR-0038): one authoritative *validation*
+  workflow (`.github/workflows/ci.yml`) is the branch-protection gate. Add a
+  separate workflow only for a distinct trigger (`schedule`,
+  `workflow_dispatch`, `push: tags`) or permission scope (`id-token: write`
+  for deploy, `security-events: write` for scanning); anything that is just
+  more PR checks is a job in `ci.yml`, not a new file. Shared setup MUST be
+  factored into a reusable workflow or composite action — never copy-pasted —
+  so workflows cannot drift.
 - Exactly **one** root SAM `template.yaml` with nested stacks.
 
 ## Testing
@@ -124,7 +131,10 @@ steering files manually.
 The previous rewrite failed by accumulating these. Do not reintroduce
 them.
 
-- Multiple CI workflows that drift out of sync.
+- Copy-pasted / un-factored workflow steps duplicated across workflows that
+  then drift out of sync. (Multiple purpose-scoped workflows are fine —
+  ADR-0038; duplicated *logic* is not: share it via a reusable workflow or
+  composite action.)
 - Hand-rolled circuit breakers, retry decorators, rate limiters,
   structured loggers.
 - An ops folder full of bespoke shell scripts where SAM/Make would do.
