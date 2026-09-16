@@ -27,11 +27,12 @@ Both front-ends build the **same typed `Command`** and hand it to the
 `Dispatcher`; their behavioural equivalence is a correctness property, not an
 aspiration.
 
-Five capabilities are exposed — **config**, **flag**, **bootstrap**, **deploy**,
+Four capabilities are exposed — **config**, **bootstrap**, **deploy**,
 **release** — each mapped onto an executor rather than onto bespoke Python. The
 wizard is packaged as a console entry point in `pyproject.toml`; there is no ops
 folder of scripts (respecting the repo anti-pattern). All dev/ops-only
 dependencies (Typer/Textual/etc.) stay out of the Lambda layer and `bdo_common`.
+This feature adds no new AWS infrastructure.
 
 ## Architecture
 
@@ -57,7 +58,7 @@ graph TD
         SAM["SamExecutor<br/>sam validate/build/deploy/sync"]
         ACT["ActionsDispatcher<br/>gh workflow run deploy.yml / gh run watch"]
         GIT["GitExecutor<br/>git tag + push"]
-        CS["ConfigStore<br/>samconfig.toml (PR) · SSM · AppConfig"]
+        CS["ConfigStore<br/>samconfig.toml (PR) · SSM"]
     end
 
     CLI --> DISP
@@ -72,7 +73,6 @@ graph TD
     GIT -->|"push vX.Y.Z"| GHA
     CS -->|"open PR"| TOML[("samconfig.toml")]
     CS -->|"GetParameter/PutParameter"| SSM[("SSM Parameter Store")]
-    CS -->|"feature flags"| APPCFG[("AWS AppConfig")]
     GHA -->|"OIDC keyless, env-protected"| PROD[("prod stack")]
 ```
 
@@ -86,10 +86,12 @@ graph TD
 **CI is the deploy executor and the platform-enforced gate.** Following the
 purpose-scoped-workflow convention (ADR-0038), the CD path lives in a **dedicated
 `.github/workflows/deploy.yml`** — *not* an extension of `ci.yml`. `deploy.yml`
-triggers on `push: tags: v*` and `workflow_dispatch` (typed inputs: `stage`,
-`version`, toggles), runs environment-gated deploy jobs, and uses OIDC keyless
+triggers on `push: tags: v*` and `workflow_dispatch` (typed inputs `stage` and
+`version`), runs environment-gated deploy jobs, and uses OIDC keyless
 deploy. `ci.yml` remains the authoritative **validation** gate (lint / typecheck /
-test / …) and is unchanged by this feature. GitHub **Environments** `dev` and
+test / …) and its validation behaviour is unchanged by this feature, while its
+shared setup steps are replaced by the reusable composite action. GitHub
+**Environments** `dev` and
 `prod`, with **required reviewers on `prod`** and **OIDC keyless deploy** (via
 `AWS_DEPLOY_ROLE_ARN` + `id-token: write`), enforce the prod gate. Production
 deploys are gated by the *platform* (environment protection + OIDC trust), not by
@@ -185,8 +187,8 @@ prod deploy path.
 class ActionsDispatcher(Protocol):
     def run_workflow(self, *, stage: str, version: str | None,
                      inputs: dict[str, str]) -> RunRef:
-        """gh workflow run deploy.yml -f stage=... -f version=... (+ toggle
-        inputs). Targets the dedicated CD workflow (ADR-0038). Returns a
+        """gh workflow run deploy.yml -f stage=... -f version=...
+        Targets the dedicated CD workflow (ADR-0038). Returns a
         reference to the dispatched run."""
     def watch(self, run: RunRef) -> CommandResult:        # gh run watch
     def view(self, run: RunRef) -> RunStatus: ...         # gh run view / gh api
@@ -206,35 +208,37 @@ class GitExecutor(Protocol):
 
 ### ConfigStore (`core/executors/config.py`)
 
-Config-as-data across the three sanctioned locations — and no fourth. Deploy-time
+Config-as-data across the two sanctioned locations — and no third. Deploy-time
 config is version-controlled in `samconfig.toml` and changed via a PR the wizard
 opens with `gh`; operational config lives in **SSM Parameter Store** (repo-scoped
-paths); runtime feature flags live in **AWS AppConfig**.
+paths, audited writes).
 
 ```python
 class ConfigStore(Protocol):
     def read_merged(self, stage: str) -> ConfigView:
-        """Merged read of samconfig.toml + SSM + AppConfig for `config show`."""
+        """Merged read of samconfig.toml + SSM for `config show`."""
     def open_config_pr(self, stage: str, changes: list[ConfigDiff]) -> PrRef:
         """Edit a tracked file (e.g. samconfig.toml BdoRegions) on a branch and
         open a PR via gh. Deploy-time config changes flow through review."""
     def put_ssm(self, path: str, value: str) -> ConfigDiff:
         """PutParameter with audit. Rejects any name that is not a repo-scoped
         /bdo-market-insights/<stage>/<category>/<key> path."""
-    def set_flag(self, stage: str, flag: str, enabled: bool) -> ConfigDiff:
-        """Flip an AWS AppConfig feature flag (no redeploy), surfaced in Lambdas
-        through the Powertools feature-flags provider."""
 ```
 
 ### Capability mapping
 
 | Capability | Executor(s) | Behaviour |
 |---|---|---|
-| **config** | ConfigStore | `config show` renders the merged view (samconfig + SSM + AppConfig). `config set` opens a PR (tracked files) or writes SSM with audit. Also covers deploy-time configuration/parameters (e.g. `BdoRegions`) → changed in `samconfig.toml` via PR. |
-| **flag** | ConfigStore | Runtime feature flag → AWS AppConfig, flipped without redeploy and read via the Powertools feature-flags provider (mandatory in this repo). |
+| **config** | ConfigStore | `config show` renders the merged view (samconfig + SSM). `config set` opens a PR (tracked files) or writes SSM with audit. Also covers deploy-time configuration/parameters (e.g. `BdoRegions`) → changed in `samconfig.toml` via PR. |
 | **bootstrap** | SamExecutor + ConfigStore | One-time, clearly labelled: wrap `sam pipeline bootstrap` (standard AWS CI/CD bootstrap — OIDC deploy role + artifact bucket) and configure the GitHub Environments / secrets. |
 | **deploy** | SamExecutor (LOCAL) / ActionsDispatcher (CI) | dev/personal → `sam deploy --config-env dev` or `sam sync`. shared/prod → trigger the CI job. A fresh environment reaches target state via a single declarative deploy — the stack self-bootstraps (auto-migrate custom resource, ADR-0025; bootstrap orchestrator auto-run, ADR-0028). No imperative multi-step orchestration. |
-| **release** | GitExecutor / ActionsDispatcher | `git tag` push (`deploy.yml` `push: tags: v*`) or `gh workflow run deploy.yml` (manual `workflow_dispatch`, a `run`/`dispatch` alias). `release` is the **sole** initiator of a prod deploy. |
+| **release** | GitExecutor / ActionsDispatcher | `git tag` push (`deploy.yml` `push: tags: v*`) or `gh workflow run deploy.yml` (manual `workflow_dispatch`, a `run`/`dispatch` alias). Production is initiated **only by the sanctioned pipeline triggers** — a pushed release tag, or an authorised `workflow_dispatch` of `deploy.yml` (whether dispatched by the control plane or from the GitHub Actions UI). No LOCAL path initiates a production deploy. |
+
+**Deferred: runtime feature flags.** Runtime feature flags are out of scope here.
+When they are introduced, the sanctioned store is **DynamoDB** — read in Lambdas
+via Powertools through the existing free DynamoDB Gateway endpoint — *not* AWS
+AppConfig, which would require a paid PrivateLink interface endpoint under no-NAT
+(ADR-0006). That work carries its own spec and ADR.
 
 ## Data Models
 
@@ -243,7 +247,7 @@ free JSON serialization for `--json`.
 
 ```python
 class Capability(StrEnum):
-    CONFIG = "config"; FLAG = "flag"; BOOTSTRAP = "bootstrap"
+    CONFIG = "config"; BOOTSTRAP = "bootstrap"
     DEPLOY = "deploy"; RELEASE = "release"
 
 class Target(StrEnum):
@@ -281,7 +285,7 @@ class Result(BaseModel):
     raw_output: str | None = None
 
 class ConfigDiff(BaseModel):
-    source: Literal["samconfig", "ssm", "appconfig"]
+    source: Literal["samconfig", "ssm"]
     key: str
     before: str | None
     after: str | None
@@ -336,9 +340,8 @@ class ConfigDiff(BaseModel):
 - No account-specific hosts are committed: SSM key paths, not values, flow to
   CloudFormation (ADR-0024). Secret-typed / secret-named SSM values are masked
   on `config show`.
-- Runtime feature flags live in AppConfig. Note: no NAT (ADR-0006) means in-VPC
-  Lambdas need an AppConfig/AppConfigData VPC endpoint to read flags (planned
-  ADR c). IAM database authentication is unchanged and never bypassed.
+- No NAT (ADR-0006) remains in force; this feature adds no new AWS
+  infrastructure. IAM database authentication is unchanged and never bypassed.
 
 ## Correctness Properties
 
@@ -358,15 +361,15 @@ For all commands the wizard can construct, none produces a `Plan` that executes
 `sam deploy --config-env prod` locally; a prod deploy is reachable only by
 dispatching the environment-protected CI job (structurally enforced by `Target`).
 
-**Validates: Requirements 7.1, 7.2**
+**Validates: Requirements 6.1, 6.2**
 
 ### Property 3: Config-as-data
 
-For every config or flag change, the resulting `Plan` is either a pull request
-against a tracked file or an audited SSM/AppConfig write — never a write to a
-fourth configuration location.
+For every config change, the resulting `Plan` is either a pull request against a
+tracked file or an audited SSM write — never a write to a third configuration
+location.
 
-**Validates: Requirements 3.3, 3.4, 4.1, 4.3**
+**Validates: Requirements 3.3, 3.4, 3.6**
 
 ### Property 4: Dispatch fidelity
 
@@ -375,15 +378,15 @@ typed `workflow_dispatch` inputs are a superset of what the control plane sends,
 so the GitHub Actions UI and the control plane dispatch the identical `deploy.yml`
 run with identical inputs.
 
-**Validates: Requirements 9.3**
+**Validates: Requirements 8.3**
 
 ### Property 5: Dry-run purity
 
 For any command run with `--dry-run` (or TUI preview), the wizard renders the
-`Plan` and performs no file write, PR, AWS API mutation, SSM/AppConfig write,
-git mutation, `sam deploy`, or workflow dispatch — all state is left unchanged.
+`Plan` and performs no file write, PR, AWS API mutation, SSM write, git mutation,
+`sam deploy`, or workflow dispatch — all state is left unchanged.
 
-**Validates: Requirements 11.5**
+**Validates: Requirements 10.5**
 
 ## Planned ADRs
 
@@ -394,17 +397,13 @@ Rationale is captured as ADRs rather than expanded inline (per AGENTS.md):
   ops folder — respects the repo anti-pattern).
 - **(b)** Prod gating via GitHub Environments (required reviewers) + OIDC keyless
   deploy, enforced by the platform rather than application code.
-- **(c)** Runtime feature flags via AWS AppConfig surfaced through Powertools,
-  including that no-NAT (ADR-0006) requires an AppConfig/AppConfigData VPC
-  endpoint for in-VPC Lambdas.
-- **(d)** **ADR-0038 (accepted)** — purpose-scoped GitHub Actions workflows.
+- **(c)** **ADR-0038 (accepted)** — purpose-scoped GitHub Actions workflows.
   The former "one-workflow deviation" (extend `ci.yml` rather than add
   `deploy.yml`) is now **DECIDED against**: workflows are split by trigger /
   permission scope, with shared setup factored into a reusable composite action
-  so they cannot drift. Workflow set: `ci.yml` (validation gate), `deploy.yml`
-  (CD — tag / `workflow_dispatch`, OIDC), and (planned) `codeql.yml` and
-  `smoke.yml`.
-- **(e)** CLI framework (Typer vs stdlib argparse) and TUI framework (Textual vs
+  so they cannot drift. Workflow set: `ci.yml` (validation gate) and `deploy.yml`
+  (CD — tag / `workflow_dispatch`, OIDC).
+- **(d)** CLI framework (Typer vs stdlib argparse) and TUI framework (Textual vs
   questionary + rich) choices.
 
 ## Constraints and Conventions
