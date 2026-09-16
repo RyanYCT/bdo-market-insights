@@ -29,7 +29,7 @@ nothing ships half-built.
     the Lambda layer and `bdo_common`
   - _Requirements: 1.1, 2.3, 9.4_
 
-- [~] 1.2 Define the Pydantic v2 command-core models
+- [x] 1.2 Define the Pydantic v2 command-core models
   - `Capability`, `Target`, `Command`, `PlanStep`, `Plan`, `Result`, `ConfigDiff`
     per the design's Data Models (JSON-serializable for `--json`)
   - _Requirements: 1.4, 10.6, 10.7_
