@@ -198,7 +198,7 @@ nothing ships half-built.
     contract). The run URL is surfaced either way
   - _Requirements: 7.6, 10.6_
 
-- [ ]* 5.5 Front-end equivalence test
+- [x]* 5.5 Front-end equivalence test
   - Same intent through CLI and TUI produces byte-for-byte identical serialized `Plan`s
   - _Requirements: 1.5_
 
