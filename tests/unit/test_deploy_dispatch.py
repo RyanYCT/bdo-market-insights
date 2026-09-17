@@ -128,19 +128,34 @@ class FakeGitHubExecutor(FakeExecutor):
         return CommandResult(ok=True, output=f"{self.name}: secret {name} on {environment}")
 
 
+class FakeGitExecutor(FakeExecutor):
+    """A ``FakeExecutor`` that also satisfies ``GitExecutor``'s release methods.
+
+    Only ``run_step`` is ever called through the dispatcher's seam; these two
+    exist so the fake structurally matches the Protocol the ``git=`` keyword is
+    typed against — and they touch no real git state.
+    """
+
+    def release_preconditions(self, version: str) -> list[str]:
+        return []
+
+    def tag_and_push(self, version: str) -> CommandResult:
+        return CommandResult(ok=True, output=f"{self.name}: tag and push {version}")
+
+
 def _wired(
     recorder: Recorder,
     *,
     sam: FakeSamExecutor | None = None,
     github: FakeGitHubExecutor | None = None,
-    git: FakeExecutor | None = None,
+    git: FakeGitExecutor | None = None,
     config: FakeExecutor | None = None,
 ) -> Dispatcher:
     """A ``Dispatcher`` with all four executors faked unless one is overridden."""
     return Dispatcher(
         sam=sam if sam is not None else FakeSamExecutor("sam", recorder),
         github=github if github is not None else FakeGitHubExecutor("github", recorder),
-        git=git if git is not None else FakeExecutor("git", recorder),
+        git=git if git is not None else FakeGitExecutor("git", recorder),
         config=config if config is not None else FakeExecutor("config", recorder),
     )
 

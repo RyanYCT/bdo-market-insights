@@ -97,7 +97,7 @@ nothing ships half-built.
     calls them stays in 4.2
   - _Requirements: 4.1, 4.4, 5.3, 6.2, 7.6, 8.3, 10.6_
 
-- [ ] 3.3 Implement `GitExecutor`
+- [x] 3.3 Implement `GitExecutor`
   - `release_preconditions` (clean tree, on `main`, tag absent locally + on origin);
     `tag_and_push` creates and pushes `vX.Y.Z`
   - _Requirements: 7.1, 7.3, 7.4_
