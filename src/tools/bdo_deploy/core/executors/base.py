@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from bdo_deploy.core.errors import UsageError
 from bdo_deploy.core.models import CommandResult, PlanStep
 
 
@@ -35,4 +36,39 @@ class StepExecutor(Protocol):
         raise NotImplementedError
 
 
-__all__: list[str] = ["StepExecutor"]
+def str_param(step: PlanStep, name: str) -> str:
+    """Read a required string out of ``step.params``, or raise ``UsageError``.
+
+    A step reaching an executor without the value its op documents is a planning
+    fault; naming the missing param beats a ``KeyError`` or an invocation built
+    around ``None``.
+
+    Lives here rather than in each adapter because every executor needs exactly
+    this: four copies of the same eight lines is the duplication this repo's
+    anti-pattern list warns about (``AGENTS.md``), and a copy that drifts would
+    change what a missing param reports depending on which tool the step routed
+    to.
+    """
+    value = step.params.get(name)
+    if not isinstance(value, str):
+        raise UsageError(
+            field=f"params.{name}",
+            value=value,
+            problem=f"{step.op.value} needs a string {name!r} param",
+        )
+    return value
+
+
+def optional_str_param(step: PlanStep, name: str) -> str | None:
+    """Read an optional string out of ``step.params``.
+
+    Some params are present only when the command carried one (``version`` on a
+    dispatch, say), so absence is normal; a present-but-wrongly-typed value is
+    still a planning fault and is reported by ``str_param``.
+    """
+    if name not in step.params:
+        return None
+    return str_param(step, name)
+
+
+__all__: list[str] = ["StepExecutor", "optional_str_param", "str_param"]

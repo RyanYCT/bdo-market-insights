@@ -30,9 +30,11 @@ from bdo_deploy.core.models import (
     Command,
     CommandResult,
     ConfigDiff,
+    ConfigView,
     Op,
     Plan,
     PlanStep,
+    PrRef,
     Target,
 )
 
@@ -159,20 +161,50 @@ class FakeGitExecutor(FakeExecutor):
         return CommandResult(ok=True, output=f"{self.name}: tag and push {version}")
 
 
+class FakeConfigStore(FakeExecutor):
+    """A ``FakeExecutor`` that also satisfies ``ConfigStore``'s domain methods.
+
+    Only ``run_step`` is ever called through the dispatcher's seam; these exist
+    so the fake structurally matches the Protocol the ``config=`` keyword is
+    typed against — and they touch no real SSM parameter and no tracked file.
+    """
+
+    def read_merged(self, stage: str) -> ConfigView:
+        return ConfigView(stage=stage)
+
+    def open_config_pr(
+        self,
+        stage: str,
+        changes: list[ConfigDiff],
+        *,
+        branch: str | None = None,
+        base: str | None = None,
+        title: str | None = None,
+    ) -> PrRef:
+        return PrRef(
+            branch=branch or f"config/{stage}",
+            base=base or "main",
+            title=title or f"config({stage})",
+        )
+
+    def put_ssm(self, path: str, value: str) -> ConfigDiff:
+        return ConfigDiff(source="ssm", key=path, before=None, after=value)
+
+
 def _wired(
     recorder: Recorder,
     *,
     sam: FakeSamExecutor | None = None,
     github: FakeGitHubExecutor | None = None,
     git: FakeGitExecutor | None = None,
-    config: FakeExecutor | None = None,
+    config: FakeConfigStore | None = None,
 ) -> Dispatcher:
     """A ``Dispatcher`` with all four executors faked unless one is overridden."""
     return Dispatcher(
         sam=sam if sam is not None else FakeSamExecutor("sam", recorder),
         github=github if github is not None else FakeGitHubExecutor("github", recorder),
         git=git if git is not None else FakeGitExecutor("git", recorder),
-        config=config if config is not None else FakeExecutor("config", recorder),
+        config=config if config is not None else FakeConfigStore("config", recorder),
     )
 
 
@@ -855,7 +887,7 @@ class TestExecuteStepOrdering:
     def test_changes_from_every_step_are_collected(self) -> None:
         recorder = Recorder()
         diff = ConfigDiff(source="ssm", key=SSM_KEY, before=None, after="api.example.test")
-        config = FakeExecutor(
+        config = FakeConfigStore(
             "config",
             recorder,
             results=[CommandResult(ok=True, output="put", changes=[diff])],
@@ -911,7 +943,7 @@ class TestExecuteFailure:
 
     def test_an_uninjected_executor_fails_before_any_step_runs(self) -> None:
         recorder = Recorder()
-        dispatcher = Dispatcher(config=FakeExecutor("config", recorder))
+        dispatcher = Dispatcher(config=FakeConfigStore("config", recorder))
         plan = dispatcher.plan(Command(capability=Capability.DEPLOY, target=Target.LOCAL))
         result = dispatcher.execute(plan, confirmed=True)
         assert recorder.calls == []

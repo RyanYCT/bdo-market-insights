@@ -102,7 +102,7 @@ nothing ships half-built.
     `tag_and_push` creates and pushes `vX.Y.Z`
   - _Requirements: 7.1, 7.3, 7.4_
 
-- [ ] 3.4 Implement `ConfigStore`
+- [x] 3.4 Implement `ConfigStore`
   - `read_merged` (samconfig + SSM) with secret masking (SecureString or a key
     name containing `secret` / `password` / `token` / `key`)
   - `open_config_pr` via `gh` for tracked files — including `BdoRegions`, the

@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Final, Protocol, assert_never
 
 from bdo_deploy.core.errors import UsageError
 from bdo_deploy.core.executors._process import CommandRunner, run_command
-from bdo_deploy.core.executors.base import StepExecutor
+from bdo_deploy.core.executors.base import StepExecutor, str_param
 from bdo_deploy.core.models import CommandResult, Op, PlanStep
 from bdo_deploy.core.validation import PROD_STAGE
 
@@ -126,11 +126,11 @@ class SamCli:
             case Op.SAM_BUILD:
                 return self.build()
             case Op.SAM_DEPLOY:
-                return self.deploy(_str_param(step, CONFIG_ENV_PARAM))
+                return self.deploy(str_param(step, CONFIG_ENV_PARAM))
             case Op.SAM_SYNC:
-                return self.sync(_str_param(step, CONFIG_ENV_PARAM))
+                return self.sync(str_param(step, CONFIG_ENV_PARAM))
             case Op.SAM_PIPELINE_BOOTSTRAP:
-                return self.pipeline_bootstrap(_str_param(step, STAGE_PARAM))
+                return self.pipeline_bootstrap(str_param(step, STAGE_PARAM))
             case (
                 Op.GITHUB_RUN_WORKFLOW
                 | Op.GITHUB_ENVIRONMENT_SET
@@ -163,23 +163,6 @@ class SamCli:
                 ),
                 hint="use `release` to tag a version and let that CI job deploy",
             )
-
-
-def _str_param(step: PlanStep, name: str) -> str:
-    """Read a required string out of ``step.params``, or raise ``UsageError``.
-
-    A step reaching an executor without the value its op documents is a planning
-    fault; naming the missing param beats a ``KeyError`` or an invocation built
-    around ``None``.
-    """
-    value = step.params.get(name)
-    if not isinstance(value, str):
-        raise UsageError(
-            field=f"params.{name}",
-            value=value,
-            problem=f"{step.op.value} needs a string {name!r} param",
-        )
-    return value
 
 
 if TYPE_CHECKING:  # pragma: no cover - a type-check-time assertion, not runtime code

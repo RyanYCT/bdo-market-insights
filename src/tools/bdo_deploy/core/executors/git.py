@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Final, Protocol, assert_never
 
 from bdo_deploy.core.errors import UsageError
 from bdo_deploy.core.executors._process import CommandRunner, run_command
-from bdo_deploy.core.executors.base import StepExecutor
+from bdo_deploy.core.executors.base import StepExecutor, str_param
 from bdo_deploy.core.models import CommandResult, Op, PlanStep
 
 GIT: Final = "git"
@@ -197,13 +197,13 @@ class Git:
         match step.op:
             case Op.GIT_TAG:
                 return self.tag(
-                    _str_param(step, VERSION_PARAM),
-                    base_branch=_str_param(step, BASE_BRANCH_PARAM),
+                    str_param(step, VERSION_PARAM),
+                    base_branch=str_param(step, BASE_BRANCH_PARAM),
                 )
             case Op.GIT_PUSH:
                 return self.push(
-                    _str_param(step, VERSION_PARAM),
-                    remote=_str_param(step, REMOTE_PARAM),
+                    str_param(step, VERSION_PARAM),
+                    remote=str_param(step, REMOTE_PARAM),
                 )
             case (
                 Op.SAM_BUILD
@@ -337,23 +337,6 @@ def _unverifiable(precondition: str, output: str) -> str:
     reporting it as clear would let a release proceed on an assumption.
     """
     return f"could not verify that {precondition}: {output.rstrip()}"
-
-
-def _str_param(step: PlanStep, name: str) -> str:
-    """Read a required string out of ``step.params``, or raise ``UsageError``.
-
-    A step reaching an executor without the value its op documents is a planning
-    fault; naming the missing param beats a ``KeyError`` or an invocation built
-    around ``None``.
-    """
-    value = step.params.get(name)
-    if not isinstance(value, str):
-        raise UsageError(
-            field=f"params.{name}",
-            value=value,
-            problem=f"{step.op.value} needs a string {name!r} param",
-        )
-    return value
 
 
 if TYPE_CHECKING:  # pragma: no cover - a type-check-time assertion, not runtime code

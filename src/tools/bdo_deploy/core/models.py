@@ -138,6 +138,50 @@ class ConfigDiff(BaseModel):
         return self
 
 
+class ConfigView(BaseModel):
+    """The merged, mask-applied config read behind ``config show``.
+
+    Two dicts rather than one flat namespace, because *where* a value lives is
+    the point: ``samconfig`` is deploy-time config that changes only through a
+    reviewed pull request, ``ssm`` is operational config changed by an audited
+    write. Collapsing them would hide which of the two sanctioned locations an
+    operator has to go to (design Property 3).
+
+    A value that must not be rendered is held as a ``SecretStr`` rather than
+    pre-rendered as ``"***"``: the mask then survives ``model_dump_json()``, so
+    ``--json`` cannot print it either (Requirement 3.2). The un-masked entries
+    stay plain ``str`` so a read remains useful.
+    """
+
+    stage: str
+    samconfig: dict[str, str | SecretStr] = Field(default_factory=dict)
+    """``[<stage>.deploy.parameters]``, with ``parameter_overrides`` expanded into
+    its individual CloudFormation parameters (``BdoRegions``, ``Stage``, …)."""
+
+    ssm: dict[str, str | SecretStr] = Field(default_factory=dict)
+    """Repo-scoped SSM parameters for the stage, keyed by full path."""
+
+    masked: list[str] = Field(default_factory=list)
+    """The keys whose values were masked, so a reader can tell a masked value
+    from a literally-absent one without inspecting the dicts' value types."""
+
+
+class PrRef(BaseModel):
+    """A reference to the pull request a deploy-time config change opened.
+
+    ``url`` is optional because the PR is opened by ``gh``, which is the
+    authoritative record: a PR that certainly exists but whose URL could not be
+    parsed out of ``gh``'s output is still a successful outcome, and reporting it
+    as a failure would describe a change as un-proposed when it has been
+    proposed.
+    """
+
+    branch: str
+    base: str
+    title: str
+    url: str | None = None
+
+
 class Command(BaseModel):
     """The typed request object both front-ends build.
 
@@ -284,10 +328,12 @@ __all__ = [
     "Command",
     "CommandResult",
     "ConfigDiff",
+    "ConfigView",
     "ExitCode",
     "Op",
     "Plan",
     "PlanStep",
+    "PrRef",
     "Result",
     "Target",
 ]

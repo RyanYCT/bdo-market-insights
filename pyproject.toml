@@ -60,6 +60,11 @@ dev = [
     # bdo-common Lambda layer and bdo_common itself (Requirement 9.4).
     "typer",
     "textual",
+    # tomlkit edits samconfig.toml for a `config set` pull request while
+    # preserving its comments and formatting; tomllib (stdlib) reads it, but a
+    # tomllib+tomli-w round-trip would drop every comment in the file. Also
+    # dev/ops-only, for the same Requirement 9.4 reason as the two above.
+    "tomlkit",
 ]
 
 [tool.hatch.build.targets.wheel]

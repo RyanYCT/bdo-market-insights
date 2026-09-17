@@ -68,7 +68,11 @@ from pydantic import BaseModel
 
 from bdo_deploy.core.errors import UsageError
 from bdo_deploy.core.executors._process import CommandRunner, run_command
-from bdo_deploy.core.executors.base import StepExecutor
+from bdo_deploy.core.executors.base import (
+    StepExecutor,
+    optional_str_param,
+    str_param,
+)
 from bdo_deploy.core.models import CommandResult, Op, PlanStep
 
 GH: Final = "gh"
@@ -353,16 +357,16 @@ class GitHubCli:
         match step.op:
             case Op.GITHUB_RUN_WORKFLOW:
                 return self.run_workflow(
-                    stage=_str_param(step, STAGE_PARAM),
-                    version=_optional_str_param(step, VERSION_PARAM),
-                    workflow=_str_param(step, WORKFLOW_PARAM),
+                    stage=str_param(step, STAGE_PARAM),
+                    version=optional_str_param(step, VERSION_PARAM),
+                    workflow=str_param(step, WORKFLOW_PARAM),
                 )
             case Op.GITHUB_ENVIRONMENT_SET:
-                return self.set_environment(name=_str_param(step, ENVIRONMENT_PARAM))
+                return self.set_environment(name=str_param(step, ENVIRONMENT_PARAM))
             case Op.GITHUB_SECRET_SET:
-                name = _str_param(step, NAME_PARAM)
+                name = str_param(step, NAME_PARAM)
                 return self.set_environment_secret(
-                    environment=_str_param(step, ENVIRONMENT_PARAM),
+                    environment=str_param(step, ENVIRONMENT_PARAM),
                     name=name,
                     value=_secret_from_environment(name),
                 )
@@ -516,34 +520,6 @@ def _id_field(fields: dict[str, object], name: str) -> str | None:
     if isinstance(value, int):
         return str(value)
     return value if isinstance(value, str) else None
-
-
-def _str_param(step: PlanStep, name: str) -> str:
-    """Read a required string out of ``step.params``, or raise ``UsageError``.
-
-    A step reaching an executor without the value its op documents is a planning
-    fault; naming the missing param beats a ``KeyError`` or an invocation built
-    around ``None``.
-    """
-    value = step.params.get(name)
-    if not isinstance(value, str):
-        raise UsageError(
-            field=f"params.{name}",
-            value=value,
-            problem=f"{step.op.value} needs a string {name!r} param",
-        )
-    return value
-
-
-def _optional_str_param(step: PlanStep, name: str) -> str | None:
-    """Read an optional string out of ``step.params``.
-
-    ``version`` is present only when the command carried one, so its absence is
-    normal; a present-but-wrongly-typed value is still a planning fault.
-    """
-    if name not in step.params:
-        return None
-    return _str_param(step, name)
 
 
 if TYPE_CHECKING:  # pragma: no cover - a type-check-time assertion, not runtime code
