@@ -577,7 +577,12 @@ class Dispatcher:
     # -- deploy -------------------------------------------------------------
 
     def _plan_deploy(self, cmd: Command) -> Plan:
-        """Route ``deploy`` by target: LOCAL to the SAM CLI, CI to ``deploy.yml``."""
+        """Route ``deploy`` by target: LOCAL to the SAM CLI, CI to ``deploy.yml``.
+
+        Both branches read the same ``args``, and only the LOCAL one can honour
+        ``sync``, so the incompatible combination is refused rather than dropped
+        — see ``_plan_ci_deploy``.
+        """
         match cmd.target:
             case Target.LOCAL:
                 return self._plan_local_deploy(cmd)
@@ -643,7 +648,37 @@ class Dispatcher:
 
         The control plane only triggers; CI executes the deploy (Requirement
         5.3). For prod this is the only producible plan (Requirement 6.1).
+
+        A ``sync`` request is **refused** here rather than ignored. ``sam sync``
+        is a local fast-loop against a stack the operator owns; a CI deploy is a
+        full declarative ``sam deploy`` of the whole template (Requirement 5.4),
+        and there is nothing in the dispatched ``deploy.yml`` inputs that could
+        carry the fast-loop across. Silently dropping the flag would run a
+        *different, slower, wider* operation than the one asked for and say
+        nothing about it, so the operator is told which arg is the problem
+        (exit ``2``, nothing dispatched).
+
+        This is enforced in the planner, not on ``Command``: unlike the LOCAL
+        prod deploy, it is not an invariant about what production may ever be
+        reached by — it is a statement about which *plan shape* can express the
+        intent, which is precisely what planning decides. Making it a model rule
+        would also make ``target`` and ``args`` co-validating on a model whose
+        ``args`` are deliberately capability-agnostic.
         """
+        if _bool_arg(cmd, SYNC_ARG):
+            raise UsageError(
+                field=f"args.{SYNC_ARG}",
+                value=True,
+                problem=(
+                    f"{SYNC_ARG!r} cannot be combined with target={Target.CI.value}; "
+                    "the sam sync fast-loop is a local-only SAM feature, and the CI job "
+                    "runs a full declarative deploy"
+                ),
+                hint=(
+                    f"drop --{SYNC_ARG} to dispatch the CI deploy, or re-run with "
+                    f"target={Target.LOCAL.value} to sync a stack you own"
+                ),
+            )
         effects = [
             f"dispatches the {DEPLOY_WORKFLOW} run that deploys {cmd.stage}",
             "the dispatched run is authoritative: its URL and status are surfaced",

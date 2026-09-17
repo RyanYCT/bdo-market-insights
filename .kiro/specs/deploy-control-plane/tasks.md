@@ -145,7 +145,7 @@ nothing ships half-built.
     secret's name, never its value
   - _Requirements: 4.1, 4.2, 4.3, 6.3_
 
-- [ ] 4.3 Wire the **deploy** capability
+- [x] 4.3 Wire the **deploy** capability
   - `target=LOCAL` dev/personal → `sam deploy --config-env <stage>` / `sam sync`;
     `target=CI` shared/prod → trigger the CI job; LOCAL prod rejected (exit `2`);
     fresh env reaches target state via a single declarative deploy
