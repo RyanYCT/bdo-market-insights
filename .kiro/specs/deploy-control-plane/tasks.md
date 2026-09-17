@@ -174,7 +174,7 @@ nothing ships half-built.
     satisfied at the CLI_Mode boundary it describes
   - _Requirements: 1.1, 1.2, 10.1, 10.2, 10.4, 10.7_
 
-- [ ] 5.2 Implement the Textual TUI front-end
+- [x] 5.2 Implement the Textual TUI front-end
   - Guided flows that render the `Plan` at an explicit confirmation step before any
     mutating execution (convenience skin, not system of record)
   - _Requirements: 1.3_

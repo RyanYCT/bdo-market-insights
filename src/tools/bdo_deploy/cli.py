@@ -41,7 +41,6 @@ import sys
 from typing import Annotated, Final
 
 import typer
-from pydantic import ValidationError as PydanticValidationError
 
 from bdo_deploy.core.assembly import build_dispatcher
 from bdo_deploy.core.dispatch import (
@@ -54,12 +53,7 @@ from bdo_deploy.core.dispatch import (
     VALUE_ARG,
     Dispatcher,
 )
-from bdo_deploy.core.errors import (
-    ConfirmationRequired,
-    ControlPlaneError,
-    ExecutorFailed,
-    exit_code_for,
-)
+from bdo_deploy.core.errors import ConfirmationRequired, exit_code_for
 from bdo_deploy.core.exit_codes import ExitCode
 from bdo_deploy.core.models import (
     REVIEWERS_ARG,
@@ -69,6 +63,7 @@ from bdo_deploy.core.models import (
     Result,
     Target,
 )
+from bdo_deploy.presentation import failed_result, plan_lines, result_lines
 
 PROG_NAME: Final = "bdo-deploy"
 DEFAULT_STAGE: Final = "dev"
@@ -378,7 +373,7 @@ def _run(
         # Requirement 10.2 forbids leaking a traceback to the operator. Every
         # outcome still maps through `exit_code_for`, which knows only four codes,
         # so breadth here cannot invent a fifth.
-        result = _failed_result(capability, exc)
+        result = failed_result(capability, exc)
     console.render_result(result)
     return int(result.exit_code)
 
@@ -395,32 +390,6 @@ def _dispatcher(ctx: typer.Context) -> Dispatcher:
     if isinstance(ctx.obj, Dispatcher):
         return ctx.obj
     return build_dispatcher()
-
-
-def _failed_result(capability: Capability, exc: BaseException) -> Result:
-    """Render any raised failure as a ``Result``, never as a traceback.
-
-    A ``ControlPlaneError`` already names the offending field or step, so its own
-    summary is used verbatim. A Pydantic ``ValidationError`` — a malformed
-    ``Command`` — is reduced to its messages for the same reason: an operator
-    needs the field that is wrong, not the frames that discovered it.
-    """
-    if isinstance(exc, ControlPlaneError):
-        summary = exc.summary
-    elif isinstance(exc, PydanticValidationError):
-        summary = "; ".join(
-            f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
-            for error in exc.errors()
-        )
-    else:
-        summary = str(exc) or type(exc).__name__
-    return Result(
-        capability=capability,
-        ok=False,
-        exit_code=exit_code_for(exc),
-        summary=summary,
-        raw_output=exc.output if isinstance(exc, ExecutorFailed) else None,
-    )
 
 
 # -- rendering ----------------------------------------------------------------
@@ -441,13 +410,14 @@ class _Console:
         print(line, file=sys.stderr if self._json else sys.stdout)
 
     def render_plan(self, plan: Plan) -> None:
-        """Show what will run, in order, and what it will change."""
-        self._log(f"plan: {plan.capability.value} -> {plan.target.value}")
-        for position, step in enumerate(plan.steps, start=1):
-            self._log(f"  {position}. {step.description}")
-            self._log(f"     $ {step.command}")
-        for effect in plan.effects:
-            self._log(f"  * {effect}")
+        """Show what will run, in order, and what it will change.
+
+        The lines come from ``presentation.plan_lines``, the vocabulary the TUI
+        renders too, so a dry run and a TUI confirmation step describe the same
+        pending mutation in the same words.
+        """
+        for line in plan_lines(plan):
+            self._log(line)
 
     def render_result(self, result: Result) -> None:
         """Emit the outcome: one JSON object, or human lines."""
@@ -457,16 +427,13 @@ class _Console:
             # serialization rather than merely skipped by a renderer.
             print(result.model_dump_json(), file=sys.stdout)
             return
-        self._log(f"{'ok' if result.ok else 'failed'}: {result.summary}")
-        for change in result.changes:
-            self._log(f"  {change.source} {change.key}: {change.before!r} -> {change.after!r}")
-        if result.run_url is not None:
-            self._log(f"  run: {result.run_url}")
-        if result.plan is not None:
-            self._log("  re-invoke with --yes to run the plan above")
-        if result.raw_output:
-            # Verbatim, unreformatted executor output (Requirement 10.2).
-            self._log(result.raw_output)
+        # `--yes` is this front-end's confirmation channel, so the hint naming it
+        # is supplied here rather than baked into the shared renderer: the TUI
+        # confirms by a keypress and has no flag to point at.
+        for line in result_lines(
+            result, confirmation_hint="re-invoke with --yes to run the plan above"
+        ):
+            self._log(line)
 
 
 def main(argv: list[str] | None = None, *, dispatcher: Dispatcher | None = None) -> int:
