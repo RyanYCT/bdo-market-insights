@@ -166,7 +166,7 @@ CI/CD workflows).
 3. IF a release precondition is violated, THEN THE Wizard SHALL report which specific precondition failed, SHALL NOT create or push a tag, and SHALL leave the git working tree, current branch, and existing tags unchanged.
 4. WHEN the release preconditions pass and the action is confirmed, THE GitExecutor SHALL create the `vX.Y.Z` tag and push it to the origin so the tag-triggered pipeline runs.
 5. THE Wizard SHALL confine initiation of a production deploy to the sanctioned pipeline triggers — a pushed Release_Tag, or an authorised `workflow_dispatch` of `deploy.yml` (dispatched either by the Wizard or from the GitHub Actions UI) — and SHALL keep every LOCAL path free of any production deploy execution, so that no `Plan` runs a production deploy on the operator's machine even when the sanctioned trigger (a tag push or a `workflow_dispatch`) is issued locally.
-6. WHEN `release` dispatches a CI run, THE Wizard SHALL surface the dispatched run's URL, and the front-end SHALL follow the run's status from that URL (via `gh run watch` / `gh run view`) after execution has returned.
+6. WHEN `release` dispatches a CI run, THE Wizard SHALL surface the dispatched run's URL in every mode, and the front-end SHALL follow the run's status (via `gh run watch` / `gh run view`) after execution has returned — unconditionally for human-readable output, and WHERE `--json` is set only when `--watch` is also supplied.
 
 ### Requirement 8: Purpose-scoped CI/CD workflows
 
@@ -202,7 +202,7 @@ CI/CD workflows).
 3. IF a `Command` fails validation (unknown stage, malformed version, non-repo-scoped SSM path, or a LOCAL prod deploy), THEN THE Wizard SHALL exit with code `2` before any executor call, return a `Result` naming the offending field, and make no mutation to any external system so that all target state is preserved unchanged.
 4. IF a mutating `Command` is invoked in CLI_Mode without `--yes`, THEN THE Wizard SHALL exit with code `3`, return a `Result` containing the `Plan` so the caller can inspect the effects and re-invoke with `--yes`, and make no mutation to any external system.
 5. WHEN `--dry-run` is supplied in CLI_Mode or preview is chosen in TUI_Mode, THE Wizard SHALL render the `Plan` and perform no file write, PR, AWS API mutation, SSM write, git mutation, `sam deploy`, or workflow dispatch, leaving all state unchanged.
-6. WHEN a `Command` has `target=CI`, THE Wizard SHALL report the dispatched CI run URL, the front-end SHALL follow the run's status from that URL after execution has returned, and THE Wizard SHALL treat the CI run itself as the authoritative pass or fail.
+6. WHEN a `Command` has `target=CI`, THE Wizard SHALL report the dispatched CI run URL in every mode, the front-end SHALL follow the run's status after execution has returned — unconditionally for human-readable output, and WHERE `--json` is set only when `--watch` is also supplied — and THE Wizard SHALL treat the CI run itself as the authoritative pass or fail.
 7. THE Wizard SHALL map every terminating outcome to exactly one exit code from the set {`0` = success, `1` = executor or action failed, `2` = usage/validation error before any executor call, `3` = confirmation required}.
 
 ## Out of Scope

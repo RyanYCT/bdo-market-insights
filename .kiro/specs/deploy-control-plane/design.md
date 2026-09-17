@@ -160,14 +160,52 @@ sequenceDiagram
 
 ### Front-ends (`cli.py`, `tui.py`)
 
-Collect intent, build a `Command`, render a `Result`. No planning, no
-dispatch, no executor calls.
+Collect intent, build a `Command`, render a `Result`. No planning and no
+dispatch; the only executor call a front-end makes is following a dispatched run
+after `execute()` has returned (`follow_run()`, below).
 
 ```python
 def main(argv: list[str] | None = None) -> int:
     """Typer app. A subcommand runs CLI mode; `--tui` (or no subcommand on a
     tty) launches Textual. Returns the process exit code."""
 ```
+
+**Run-following: one shared helper (`presentation.py`).** Following a dispatched
+CI run is presentation, so it lives beside the rest of the shared front-end
+rendering vocabulary:
+
+```python
+def follow_run(github: GitHubExecutor, result: Result) -> Result:
+    """Follow `result.run` to completion (gh run watch / gh run view) and fold
+    the run's authoritative pass/fail into the returned Result. No-op when
+    result.run is None."""
+```
+
+Both front-ends call this one helper, so CLI and TUI cannot grow two different
+notions of "did the run pass". Following is **default-on for human output** and
+**opt-in under `--json` via a `--watch` flag**: a blocking watch cannot coexist
+with `--json`'s "exactly one serialized `Result` is the sole content of stdout"
+contract (Requirement 1.2). The run URL is surfaced either way.
+
+### Composition root (`core/assembly.py`)
+
+The one place the concrete adapters are named, so both front-ends inherit the
+same wiring rather than each assembling their own.
+
+```python
+class ControlPlane(NamedTuple):
+    dispatcher: Dispatcher
+    github: GitHubExecutor     # exposed for follow_run(); never routed to by a plan
+
+def build_dispatcher(...) -> Dispatcher: ...        # unchanged
+def build_control_plane(...) -> ControlPlane: ...   # dispatcher + the GitHub executor
+```
+
+`build_control_plane()` sits beside the existing `build_dispatcher()`, which keeps
+working unchanged. Exposing the `GitHubExecutor` to the front-ends is what makes
+run-following possible **without a plan** — see the `watch` / `view` note below.
+Assembling still reaches no tool (no subprocess, no AWS client, no network), so it
+remains safe to call before a `--dry-run` is known about.
 
 ### Dispatcher (`core/dispatch.py`)
 
@@ -287,12 +325,14 @@ class GitHubExecutor(Protocol):
         in any tracked file."""
 ```
 
-**`watch` / `view` are deliberately not reachable from any `Op`.** A dispatch
-plans only the trigger; following the run afterwards is presentation, performed
-by the front-end on `Result.run_url` once `execute()` has returned. Keeping it
-out of the plan is what preserves dry-run purity (Property 5) — a preview must
-reach no tool — and plan equivalence (Property 1), since a blocking watch is not
-part of what a plan describes.
+**`watch` / `view` are deliberately not reachable from any `Op`, and stay that
+way.** A dispatch plans only the trigger; following the run afterwards is
+presentation, performed by the front-end via `follow_run()` on `Result.run` once
+`execute()` has returned — a direct call on the `GitHubExecutor` the composition
+root exposes (`build_control_plane()`), not a planned step. Keeping it out of the
+plan is what preserves dry-run purity (Property 5) — a preview must reach no tool
+— and plan equivalence (Property 1), since a blocking watch is not part of what a
+plan describes.
 
 **Secret values never reach a plan.** For `secret_set` steps only the secret's
 **name** is rendered into `PlanStep.command` / `Plan.effects`. The role ARN value
@@ -420,7 +460,12 @@ class Result(BaseModel):
     exit_code: int                             # see exit-code contract
     summary: str
     changes: list[ConfigDiff] = []
-    run_url: str | None = None                 # CI run reference when target == CI
+    run_url: str | None = None                 # display-only CI run URL when target == CI
+    run: RunRef | None = None
+    # The structured reference to the dispatched run, set alongside run_url when
+    # target == CI. `follow_run()` needs a RunRef for GitHubExecutor.watch/view;
+    # parsing one back out of the URL string would give run identity two sources
+    # of truth.
     raw_output: str | None = None
     plan: Plan | None = None
     # Set when a mutating plan was refused for want of confirmation, so the
@@ -518,9 +563,10 @@ rule holds for every diff — planned, previewed, or returned — not only at th
   step runs**, and returns exit `1`. Failing up-front rather than mid-plan means a
   misconfigured wiring can never leave a plan half-applied.
 - For `target == CI` deploys, the wizard reports the dispatched run URL and the
-  front-end follows the run's status from it (via `gh run watch` / `gh run view`)
-  after `execute()` has returned; the CI run itself remains the authoritative
-  pass/fail.
+  front-end follows `Result.run` (via `follow_run()` → `gh run watch` /
+  `gh run view`) after `execute()` has returned — default-on for human output,
+  opt-in under `--json` via `--watch`; the CI run itself remains the
+  authoritative pass/fail.
 
 ## Testing Strategy
 

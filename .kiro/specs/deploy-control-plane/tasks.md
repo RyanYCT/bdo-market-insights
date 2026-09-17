@@ -184,11 +184,25 @@ nothing ships half-built.
     same typed `Command` and route through the same `Dispatcher`
   - _Requirements: 1.4_
 
-- [ ]* 5.4 Front-end equivalence test
+- [ ] 5.4 Wire run-following into both front-ends
+  - Add `Result.run: RunRef | None` alongside the display-only `run_url`, so the
+    dispatched run has one identity rather than one parsed back out of a URL
+  - Add `ControlPlane` (`Dispatcher` + `GitHubExecutor`) and
+    `build_control_plane()` to `core/assembly.py` beside the unchanged
+    `build_dispatcher()`, exposing the executor for following without a plan —
+    no `Op` routes to `watch`/`view`
+  - Add the shared `follow_run()` helper to `presentation.py` and call it from
+    **both** front-ends, so CLI and TUI share one notion of "did the run pass"
+  - Following is default-on for human output; under `--json` it requires the new
+    `--watch` flag (a blocking watch cannot coexist with the sole-`Result`-on-stdout
+    contract). The run URL is surfaced either way
+  - _Requirements: 7.6, 10.6_
+
+- [ ]* 5.5 Front-end equivalence test
   - Same intent through CLI and TUI produces byte-for-byte identical serialized `Plan`s
   - _Requirements: 1.5_
 
-- [ ] 5.5 Checkpoint — Ensure all tests pass, ask the user if questions arise.
+- [ ] 5.6 Checkpoint — Ensure all tests pass, ask the user if questions arise.
   - Verifies both front-ends over one shared core: non-interactive CLI contract,
     TUI confirmation step, and front-end equivalence
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 10.1, 10.2, 10.7_
@@ -276,10 +290,11 @@ completeness — AGENTS.md). Each cites the requirement(s) it defends.
     { "id": 11, "tasks": ["5.1", "5.2"] },
     { "id": 12, "tasks": ["5.3"] },
     { "id": 13, "tasks": ["5.4"] },
-    { "id": 14, "tasks": ["6.1"] },
-    { "id": 15, "tasks": ["6.2", "6.3"] },
-    { "id": 16, "tasks": ["7.1", "7.2", "7.3"] },
-    { "id": 17, "tasks": ["8.1", "8.2", "8.3", "8.4", "8.5"] }
+    { "id": 14, "tasks": ["5.5"] },
+    { "id": 15, "tasks": ["6.1"] },
+    { "id": 16, "tasks": ["6.2", "6.3"] },
+    { "id": 17, "tasks": ["7.1", "7.2", "7.3"] },
+    { "id": 18, "tasks": ["8.1", "8.2", "8.3", "8.4", "8.5"] }
   ]
 }
 ```
