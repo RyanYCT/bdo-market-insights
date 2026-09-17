@@ -224,7 +224,7 @@ nothing ships half-built.
     `id-token: write` inside the validation workflow (ADR-0038)
   - _Requirements: 6.3, 8.1, 8.3_
 
-- [ ] 6.3 Refactor `ci.yml` to consume the composite action
+- [x] 6.3 Refactor `ci.yml` to consume the composite action
   - Validation behavior unchanged — it remains the branch-protection gate; only the
     shared setup steps are swapped for the composite action (ADR-0038)
   - _Requirements: 8.2, 8.4, 8.5_
