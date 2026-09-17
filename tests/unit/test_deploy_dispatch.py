@@ -837,6 +837,16 @@ class TestPlanUsageErrors:
         )
         assert "boolean" in str(error)
 
+    def test_sync_on_a_ci_deploy_is_refused_not_dropped(self) -> None:
+        """A fast-loop the CI job cannot run is named, never silently widened."""
+        error = self._rejects(
+            Command(capability=Capability.DEPLOY, target=Target.CI, args={"sync": True}),
+            "args.sync",
+        )
+        assert error.value is True
+        assert "cannot be combined with target=ci" in str(error)
+        assert "target=local" in str(error)
+
     def test_release_without_a_version(self) -> None:
         error = self._rejects(Command(capability=Capability.RELEASE), "version")
         assert error.value is None
@@ -980,3 +990,64 @@ class TestExecuteRunUrl:
         assert result.ok is True
         assert result.run_url == RUN_URL
         assert RUN_URL in result.summary
+
+
+# -- E. execute() per capability + target ------------------------------------
+
+
+class TestExecuteEveryRouting:
+    """Every supported capability + target executes exactly the plan it produced.
+
+    The plan-side suite above pins each plan's shape; these walk the same
+    commands through ``execute()`` so routing, the confirmation gate and failure
+    reporting are asserted for *each* capability rather than for one
+    representative of it.
+    """
+
+    @pytest.mark.parametrize("index", range(len(_all_commands())))
+    def test_confirmed_execution_runs_the_planned_steps_in_order(self, index: int) -> None:
+        cmd = _all_commands()[index]
+        recorder = Recorder()
+        dispatcher = _wired(recorder)
+        plan = dispatcher.plan(cmd)
+        result = dispatcher.execute(plan, confirmed=True)
+        assert [step for _, step in recorder.calls] == plan.steps
+        assert recorder.executors == [step.executor for step in plan.steps]
+        assert result.capability is cmd.capability
+        assert result.ok is True
+        assert result.exit_code is ExitCode.SUCCESS
+        assert f"{len(plan.steps)} step(s)" in result.summary
+
+    @pytest.mark.parametrize("index", range(len(_all_commands())))
+    def test_the_confirmation_gate_holds_for_every_mutating_capability(self, index: int) -> None:
+        cmd = _all_commands()[index]
+        recorder = Recorder()
+        dispatcher = _wired(recorder)
+        plan = dispatcher.plan(cmd)
+        if not plan.requires_confirmation:
+            assert dispatcher.execute(plan, confirmed=False).ok is True
+            return
+        with pytest.raises(ConfirmationRequired) as excinfo:
+            dispatcher.execute(plan, confirmed=False)
+        assert excinfo.value.plan == plan
+        assert recorder.calls == []
+
+    @pytest.mark.parametrize("index", range(len(_all_commands())))
+    def test_a_failing_first_step_is_reported_not_raised(self, index: int) -> None:
+        cmd = _all_commands()[index]
+        recorder = Recorder()
+        failure = [CommandResult(ok=False, output="executor: refused")]
+        dispatcher = _wired(
+            recorder,
+            sam=FakeSamExecutor("sam", recorder, results=list(failure)),
+            github=FakeGitHubExecutor("github", recorder, results=list(failure)),
+            git=FakeGitExecutor("git", recorder, results=list(failure)),
+            config=FakeConfigStore("config", recorder, results=list(failure)),
+        )
+        plan = dispatcher.plan(cmd)
+        result = dispatcher.execute(plan, confirmed=True)
+        assert len(recorder.calls) == 1
+        assert result.ok is False
+        assert result.exit_code is ExitCode.EXECUTOR_FAILED
+        assert result.raw_output == "executor: refused"
+        assert "step 1/" in result.summary

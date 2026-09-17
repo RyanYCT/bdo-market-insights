@@ -160,7 +160,7 @@ nothing ships half-built.
   - The Release_Tag is the source of `ApiVersion` (ADR-0037)
   - _Requirements: 6.2, 7.1, 7.4, 7.5, 7.6, 9.3_
 
-- [ ]* 4.5 Capability plan/unit tests per capability + target
+- [x]* 4.5 Capability plan/unit tests per capability + target
   - Executors mocked; assert routing, effects, and rejection paths for each capability
   - _Requirements: 2.1, 4.3, 5.2, 7.3_
 
