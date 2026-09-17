@@ -69,11 +69,6 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           sam: 'true'
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          # Matches the `region` of every samconfig.toml stage.
-          aws-region: us-east-1
       # A dispatch from the Actions UI does not pass through the wizard's
       # validation, so reject a malformed explicit version here -- before the
       # deploy -- rather than shipping it as GET /v1/meta's api_version.
@@ -82,6 +77,32 @@ jobs:
         run: |
           echo "$API_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' \
             || { echo "version must look like v1.2.3, got '$API_VERSION'"; exit 1; }
+      # The one validation this workflow owns. ci.yml is still the authoritative
+      # validation gate, but Actions cannot express a cross-workflow `needs`, so a
+      # tag push starts this workflow without waiting on it. A tagged commit is on
+      # main under branch protection and therefore already validated; the gap is
+      # samconfig.toml's BdoRegions for THIS stage, the one input `sam build`
+      # cannot check (it validates the template, not the deploy config) and the one
+      # whose breakage lands as generated per-region schedules feeding an invalid
+      # `region` into the pipelines (Req 5.3 / ADR-0036).
+      #
+      # This is a second CALL SITE of one authoritative script, not duplicated
+      # logic: the rules live only in scripts/validate_regions.py, which ci.yml
+      # also invokes, so the two workflows cannot drift apart -- exactly the
+      # sharing ADR-0038 asks for (what it forbids is copy-pasted step logic).
+      # Scoped to $STAGE (the script defaults to checking dev + prod) so a deploy
+      # is never blocked by a problem in the stage it is not deploying.
+      #
+      # Placed before `configure-aws-credentials` and `sam build`: it needs neither,
+      # and failing here costs seconds and leaves AWS untouched -- no role assumed,
+      # no artifacts uploaded.
+      - name: Validate BdoRegions for the target stage
+        run: uv run python scripts/validate_regions.py "$STAGE"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          # Matches the `region` of every samconfig.toml stage.
+          aws-region: us-east-1
       - run: sam build
       # Deploy the COMPLETE stage state. `sam deploy --parameter-overrides`
       # replaces the whole parameter set (unspecified params revert to template

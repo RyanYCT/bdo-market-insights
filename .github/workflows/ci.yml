@@ -87,9 +87,13 @@ jobs:
       # extensions expansion of etl.yaml/insights.yaml is exercised on every
       # push and PR, not only on a release tag via the deploy job.
       - run: sam build
-      # Fail before deploy if any BdoRegions entry in samconfig.toml is not a
-      # member of the canonical marketQuery region enum, or is a duplicate
-      # (Req 5.3 / ADR-0036).
+      # Fail this PR/push if any BdoRegions entry in samconfig.toml (dev and prod)
+      # is not a member of the canonical marketQuery region enum, or is a
+      # duplicate (Req 5.3 / ADR-0036). This runs on every push and PR, so a bad
+      # region cannot reach main -- but it no longer *orders* itself before a
+      # deploy: since the deploy moved to deploy.yml (ADR-0038) there is no
+      # cross-workflow `needs`, so deploy.yml invokes the same script itself,
+      # scoped to the stage it is deploying.
       - run: uv run python scripts/validate_regions.py
 
   openapi:

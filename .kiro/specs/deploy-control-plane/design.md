@@ -116,7 +116,19 @@ triggers on `push: tags: v*` and `workflow_dispatch` (typed inputs `stage` and
 `version`), runs environment-gated deploy jobs, and uses OIDC keyless
 deploy. `ci.yml` remains the authoritative **validation** gate (lint / typecheck /
 test / …) and its validation behaviour is unchanged by this feature, while its
-shared setup steps are replaced by the reusable composite action. GitHub
+shared setup steps are replaced by the reusable composite action.
+
+**The deploy is deliberately not gated on the full validation suite.** Actions has
+no cross-workflow `needs`, and the two workflows are *not* coupled to fake one: a
+tagged commit reached `main` under branch protection and is therefore already
+validated, and re-running the whole suite would only add latency to every release.
+The one check that genuinely protects a deploy — `scripts/validate_regions.py`,
+which validates `samconfig.toml`'s `BdoRegions` (`sam build` already covers
+template validity) — runs inside `deploy.yml` itself, scoped to the target stage.
+It is a second *call site* of one authoritative script, not duplicated logic
+(ADR-0038). Rationale in full: ADR (task 7.2).
+
+GitHub
 **Environments** `dev` and
 `prod`, with **required reviewers on `prod`** and **OIDC keyless deploy** (via
 `AWS_DEPLOY_ROLE_ARN` + `id-token: write`), enforce the prod gate. Production
