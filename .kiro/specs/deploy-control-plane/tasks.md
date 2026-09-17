@@ -74,7 +74,7 @@ nothing ships half-built.
 
 ### Phase 3 — Executors (adapters over sanctioned tools)
 
-- [ ] 3.1 Implement `SamExecutor`
+- [x] 3.1 Implement `SamExecutor`
   - `validate` / `build` / `deploy(config_env)` / `sync(config_env)`; select only
     `--config-env` (never compose `--parameter-overrides`); `deploy` refuses
     `config_env == "prod"`

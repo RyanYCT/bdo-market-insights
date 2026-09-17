@@ -91,7 +91,7 @@ class Op(StrEnum):
     GITHUB_ENVIRONMENT_SET = "github.environment_set"
     """Create/update a GitHub Environment. Params: ``environment``."""
 
-    GITHUB_SECRET_SET = "github.secret_set"
+    GITHUB_SECRET_SET = "github.secret_set"  # nosec B105 - op name; no secret value in source
     """Set an environment secret. Params: ``environment``, ``name``.
 
     Only the secret's name is ever planned; the value is supplied at execution

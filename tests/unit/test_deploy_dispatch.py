@@ -78,6 +78,30 @@ class FakeExecutor:
         return CommandResult(ok=True, output=f"{self.name}: ok")
 
 
+class FakeSamExecutor(FakeExecutor):
+    """A ``FakeExecutor`` that also satisfies ``SamExecutor``'s domain methods.
+
+    Only ``run_step`` is ever called through the dispatcher's seam; these exist
+    so the fake structurally matches the Protocol the ``sam=`` keyword is typed
+    against.
+    """
+
+    def validate(self) -> CommandResult:
+        return CommandResult(ok=True, output=f"{self.name}: validate")
+
+    def build(self) -> CommandResult:
+        return CommandResult(ok=True, output=f"{self.name}: build")
+
+    def deploy(self, config_env: str) -> CommandResult:
+        return CommandResult(ok=True, output=f"{self.name}: deploy {config_env}")
+
+    def sync(self, config_env: str) -> CommandResult:
+        return CommandResult(ok=True, output=f"{self.name}: sync {config_env}")
+
+    def pipeline_bootstrap(self, stage: str) -> CommandResult:
+        return CommandResult(ok=True, output=f"{self.name}: bootstrap {stage}")
+
+
 class FakeGitHubExecutor(FakeExecutor):
     """A ``FakeExecutor`` that also satisfies ``GitHubExecutor``'s admin methods.
 
@@ -107,14 +131,14 @@ class FakeGitHubExecutor(FakeExecutor):
 def _wired(
     recorder: Recorder,
     *,
-    sam: FakeExecutor | None = None,
+    sam: FakeSamExecutor | None = None,
     github: FakeGitHubExecutor | None = None,
     git: FakeExecutor | None = None,
     config: FakeExecutor | None = None,
 ) -> Dispatcher:
     """A ``Dispatcher`` with all four executors faked unless one is overridden."""
     return Dispatcher(
-        sam=sam if sam is not None else FakeExecutor("sam", recorder),
+        sam=sam if sam is not None else FakeSamExecutor("sam", recorder),
         github=github if github is not None else FakeGitHubExecutor("github", recorder),
         git=git if git is not None else FakeExecutor("git", recorder),
         config=config if config is not None else FakeExecutor("config", recorder),
@@ -840,7 +864,7 @@ class TestExecuteFailure:
     def test_a_raising_executor_surfaces_its_message_not_a_traceback(self) -> None:
         recorder = Recorder()
 
-        class Raising(FakeExecutor):
+        class Raising(FakeSamExecutor):
             def run_step(self, step: PlanStep) -> CommandResult:
                 super().run_step(step)
                 raise RuntimeError("sam: build failed")
