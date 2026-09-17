@@ -202,7 +202,7 @@ nothing ships half-built.
   - Same intent through CLI and TUI produces byte-for-byte identical serialized `Plan`s
   - _Requirements: 1.5_
 
-- [ ] 5.6 Checkpoint — Ensure all tests pass, ask the user if questions arise.
+- [x] 5.6 Checkpoint — Ensure all tests pass, ask the user if questions arise.
   - Verifies both front-ends over one shared core: non-interactive CLI contract,
     TUI confirmation step, and front-end equivalence
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 10.1, 10.2, 10.7_

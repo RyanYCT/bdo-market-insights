@@ -2302,3 +2302,36 @@ records (the sessions did not log at the time); dates are the merge dates._
 - Two defects the tests caught: the release-tag regex accepted a trailing
   newline, and plan previews rendered operational values.
 
+## 2026-09-17 — Deploy control plane: executors, capabilities, front-ends (Phases 3-5)
+
+**Agent:** Kiro
+**Mode:** Spec
+**Branch:** `feat/deploy-control-plane-impl`
+**Phase:** Phases 3-5 of `.kiro/specs/deploy-control-plane/tasks.md`
+**Commits:** `..7c374ee` — PR #125
+
+### Done
+- Executors over the sanctioned tools: `SamCli`, `GitHubCli` (secret on stdin),
+  `Git`, `SsmSamconfigStore` (tomlkit), behind one `run_step(step)` seam that
+  switches on `Op` and never parses the display command string.
+- All four capabilities wired end-to-end: config, bootstrap (prod refuses to
+  bootstrap without a required reviewer — enforced as a model validator, so an
+  unprotected prod Environment is unconstructable), deploy, release.
+- Both front-ends over one core: Typer CLI (`--json`, `--yes`, `--dry-run`,
+  never prompts, four exit codes) and Textual TUI (confirmation step driven by
+  the core's own refusal, not a second copy of the safety rule). One entry
+  point selects the mode; `presentation.py` holds the single rendering
+  vocabulary. 835 tests.
+
+### Decisions
+- Run-status following is a front-end concern: `Result.run` carries a `RunRef`,
+  the composition root exposes the `GitHubExecutor` (`build_control_plane()`),
+  and one shared `follow_run()` folds the run's own verdict in. Default-on for
+  humans, `--watch` under `--json` → recorded in the design; Reqs 7.6/10.6
+  clarified
+- `--sync` with `target=CI` is refused in the planner, not the model: it is a
+  statement about which plan shape can express the intent → no ADR
+
+### Deferred / open questions
+- Phase 6 (composite action, `deploy.yml`, `ci.yml` refactor) is the first
+  phase to touch real CI. Phases 7-8: three ADRs, five property tests.
