@@ -668,8 +668,9 @@ Expected: `Count >= 1`.
 - [ ] Final diff reviewed: `git diff main~1 main`.
 
 #### Steps
-1. Create and push a version tag (semver `vX.Y.Z`) — this triggers the CI deploy
-   job, which runs after all checks pass and then invokes the migrator.
+1. Create and push a version tag (semver `vX.Y.Z`) — this triggers the
+   `deploy.yml` deploy job, which waits on the `prod` environment's required
+   reviewers and then invokes the migrator.
    ```bash
    git tag v1.2.0
    git push origin v1.2.0
@@ -677,7 +678,7 @@ Expected: `Count >= 1`.
 2. Monitor the deployment in GitHub Actions.
    ```bash
    # https://github.com/RyanYCT/bdo-market-insights/actions  (or via CLI:)
-   gh run list --workflow ci.yml --branch main --limit 1
+   gh run list --workflow deploy.yml --limit 1
    gh run view <RUN_ID> --log
    ```
 
@@ -729,7 +730,7 @@ cat /tmp/migrate.json
    ```bash
    git tag v1.1.9
    git push origin v1.1.9
-   gh run list --workflow ci.yml --branch main --limit 1
+   gh run list --workflow deploy.yml --limit 1
    ```
 3. Re-run [Verify (prod)](#prod-deployment-cicd).
 
@@ -934,7 +935,7 @@ cost. Activation is a gated, explicit step (readiness is delivered without it).
 
 #### Steps (activate)
 1. Add the region to `BdoRegions` for the stage in `samconfig.toml` (the single
-   source of truth — do not hardcode it in `ci.yml` or the Makefile).
+   source of truth — do not hardcode it in `deploy.yml` or the Makefile).
    ```toml
    # [prod.deploy.parameters]
    parameter_overrides = "Stage=prod BdoRegions=tw,na UseRdsProxy=false"

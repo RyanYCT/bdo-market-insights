@@ -1,0 +1,112 @@
+name: Deploy
+
+# The dedicated CD workflow (ADR-0038): a distinct trigger (`push: tags` /
+# `workflow_dispatch`) and a distinct permission scope (`id-token: write`), so it
+# does not belong in ci.yml. ci.yml stays the authoritative *validation* gate and
+# no longer carries a deploy job -- this file supersedes it, so a pushed tag runs
+# exactly one deploy.
+#
+# This workflow is the deploy EXECUTOR and the platform-enforced prod gate: the
+# deploy control plane (`bdo-deploy`) only ever *triggers* it, either by pushing a
+# release tag or by `gh workflow run deploy.yml -f stage=... -f version=...`.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    # Typed inputs. These names are a superset of exactly what the control plane
+    # sends (`stage`, and optionally `version` -- see `_input_flags` in
+    # src/tools/bdo_deploy/core/executors/github.py), so the Actions UI form and
+    # a wizard dispatch reach the identical job with identical inputs (Req 8.3).
+    inputs:
+      stage:
+        description: 'Target stage (a samconfig.toml environment).'
+        type: choice
+        required: true
+        default: dev
+        options: [dev, prod]
+      version:
+        description: >-
+          Release version vX.Y.Z, used as ApiVersion (ADR-0037). Leave empty to
+          fall back to the dispatched ref name.
+        type: string
+        required: false
+        default: ''
+
+# A tag push is prod (`push` has no `inputs`), a dispatch deploys the stage it
+# asked for. Derived once here so the job body never repeats the branch.
+env:
+  STAGE: ${{ github.event_name == 'push' && 'prod' || inputs.stage }}
+  # ApiVersion. On a tag push `inputs.version` is empty and `github.ref_name` IS
+  # the release tag, which is how the tag-gated deploy has always derived it; on
+  # a dispatch the explicit `version` input wins, falling back to the dispatched
+  # ref name when none was given. One expression covers both triggers.
+  API_VERSION: ${{ inputs.version || github.ref_name }}
+
+# Nothing is granted workflow-wide; the deploy job scopes what it needs.
+permissions: {}
+
+# Never let two deploys of the same stage race each other. Queued rather than
+# cancelled: a half-applied CloudFormation update is worse than a wait.
+concurrency:
+  group: deploy-${{ github.event_name == 'push' && 'prod' || inputs.stage }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # The GitHub Environment IS the gate (Req 6.3): prod carries required
+    # reviewers and the OIDC role ARN as an Environment secret, so the platform
+    # holds the deploy before any step runs. It follows the selected stage rather
+    # than being hardcoded, and every path into this job passes through it --
+    # there is no unprotected route to prod.
+    environment: ${{ github.event_name == 'push' && 'prod' || inputs.stage }}
+    permissions:
+      id-token: write # OIDC keyless deploy -- no static AWS credentials
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          sam: 'true'
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          # Matches the `region` of every samconfig.toml stage.
+          aws-region: us-east-1
+      # A dispatch from the Actions UI does not pass through the wizard's
+      # validation, so reject a malformed explicit version here -- before the
+      # deploy -- rather than shipping it as GET /v1/meta's api_version.
+      - name: Check the explicit version input
+        if: ${{ inputs.version != '' }}
+        run: |
+          echo "$API_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "version must look like v1.2.3, got '$API_VERSION'"; exit 1; }
+      - run: sam build
+      # Deploy the COMPLETE stage state. `sam deploy --parameter-overrides`
+      # replaces the whole parameter set (unspecified params revert to template
+      # defaults), so every one is listed here. Domain, demo-key and hosted-zone
+      # values are resolved from SSM Parameter Store at deploy (ADR-0024): the
+      # overrides pass SSM *key paths*, not values, so nothing account-specific
+      # is committed and a full-state deploy can't drop the custom domain. Seed
+      # the keys once per stage with `make seed-config STAGE=<stage>`. The paths
+      # are stage-scoped, so they follow $STAGE rather than being pinned to prod.
+      #
+      # MigrationsFingerprint is a content hash of migrations/versions; when it
+      # changes, the auto-migrate custom resource re-runs `alembic upgrade head`
+      # as lambda_migrator during the deploy and fails the deploy on a bad
+      # migration (ADR-0025) -- so there is no separate migration step. Introduce
+      # the custom resource to an environment two-phase (deploy AUTO_MIGRATE=false
+      # + `make db-bootstrap`, then AUTO_MIGRATE=true); see ADR-0025.
+      - name: Deploy (full stage state)
+        run: |
+          fingerprint=$(find migrations/versions -type f -name '*.py' -exec sha256sum {} \; | sort | sha256sum | cut -c1-32)
+          # BdoRegions is the single active-region toggle and lives only in
+          # samconfig.toml (Req 1.5 / ADR-0036). A full-state --parameter-overrides
+          # replaces the whole set, so the value is read back from that stage's
+          # config here rather than hardcoded -- keeping one authoritative source.
+          bdo_regions=$(uv run python scripts/samconfig_regions.py "$STAGE")
+          # ApiVersion is the release tag on a tag run (resolved in `env` above);
+          # it is the single source for GET /v1/meta's api_version (ADR-0037).
+          sam deploy --config-env "$STAGE" --no-confirm-changeset \
+            --parameter-overrides "Stage=$STAGE BdoRegions=$bdo_regions ApiVersion=$API_VERSION UseRdsProxy=false AutoMigrate=true MigrationsFingerprint=$fingerprint EnableDemoKey=/bdo-market-insights/$STAGE/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/$STAGE/domain/api-domain-name IconDomainName=/bdo-market-insights/$STAGE/domain/icon-domain-name HostedZoneId=/bdo-market-insights/$STAGE/domain/hosted-zone-id"

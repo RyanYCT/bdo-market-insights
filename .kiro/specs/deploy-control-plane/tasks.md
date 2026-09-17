@@ -213,11 +213,15 @@ nothing ships half-built.
   - Factor checkout → `setup-python` → `uv sync` so workflows cannot drift (ADR-0038)
   - _Requirements: 8.4_
 
-- [ ] 6.2 Add `.github/workflows/deploy.yml`
+- [x] 6.2 Add `.github/workflows/deploy.yml`
   - Triggers on `push: tags: v*` and `workflow_dispatch` with typed inputs (`stage`,
     `version`, toggles); environment-gated deploy jobs (`environment: prod` with the
     protection); OIDC keyless deploy (`id-token: write`); consumes the composite action.
     Its `workflow_dispatch` inputs are a superset of what the wizard sends
+  - Cutover, not an addition: also **removes the superseded tag-gated `deploy` job from
+    `ci.yml`**, whose deployment capability `deploy.yml` carries forward. Leaving both
+    would run two concurrent prod deploys per pushed tag, and would keep
+    `id-token: write` inside the validation workflow (ADR-0038)
   - _Requirements: 6.3, 8.1, 8.3_
 
 - [ ] 6.3 Refactor `ci.yml` to consume the composite action
