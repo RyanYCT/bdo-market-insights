@@ -209,7 +209,7 @@ nothing ships half-built.
 
 ### Phase 6 — CI/CD workflows
 
-- [ ] 6.1 Add the reusable composite action `.github/actions/setup/`
+- [x] 6.1 Add the reusable composite action `.github/actions/setup/`
   - Factor checkout → `setup-python` → `uv sync` so workflows cannot drift (ADR-0038)
   - _Requirements: 8.4_
 
