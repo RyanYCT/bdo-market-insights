@@ -22,10 +22,14 @@ cannot drift from the CLI's. The alternative, checking
 ``plan.requires_confirmation`` here and deciding for ourselves, would be a
 second copy of the safety rule.
 
-**Run status is deliberately not followed.** ``Result.run_url`` is surfaced as
-text and nothing more: following a dispatched run (``gh run watch`` /
-``gh run view``) is presentation performed after ``execute()`` returns and is a
-separate concern from this flow.
+**A dispatched run is followed, unconditionally.** After ``execute()`` returns,
+``presentation.follow_run()`` follows ``Result.run`` and folds the run's own
+pass/fail in — the CI run is authoritative (Requirements 7.6, 10.6). It is the
+*same* helper the CLI calls, so the two front-ends cannot grow two notions of
+"did the run pass"; the only difference is that following needs no opt-in here,
+because this front-end has no ``--json`` contract for a blocking watch to break.
+Following happens outside the plan, on the ``GitHubExecutor`` the composition root
+exposes, so no preview reaches a tool.
 
 ``run_tui()`` returns an ``int`` from the same ``ExitCode`` vocabulary as the CLI
 (Requirement 10.7), so a caller cannot tell from the exit status which front-end
@@ -43,7 +47,7 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Checkbox, Footer, Header, Input, Label, Select, Static
 
-from bdo_deploy.core.assembly import build_dispatcher
+from bdo_deploy.core.assembly import ControlPlane, build_control_plane
 from bdo_deploy.core.dispatch import (
     ACTION_ARG,
     CONFIG_SET,
@@ -64,7 +68,7 @@ from bdo_deploy.core.models import (
     Result,
     Target,
 )
-from bdo_deploy.presentation import failed_result, plan_lines, result_lines
+from bdo_deploy.presentation import failed_result, follow_run, plan_lines, result_lines
 
 DEFAULT_STAGE: Final = "dev"
 
@@ -311,7 +315,8 @@ class _ResultScreen(Screen[None]):
         with VerticalScroll(id="form"):
             # No confirmation hint: `--yes` is the CLI's channel and would be
             # meaningless advice here. A dispatched run's URL is surfaced as text
-            # by the shared renderer; this front-end does not follow the run.
+            # by the shared renderer, and by the time this screen is reached the
+            # run has already been followed, so the outcome shown is the run's.
             yield Static("\n".join(result_lines(self._result)), id="result")
         with Horizontal(id="actions"):
             yield Button("New command", id="again", variant="primary")
@@ -360,26 +365,38 @@ class DeployApp(App[None]):
         Binding("q", "quit_app", "Quit"),
     ]
 
-    def __init__(self, *, dispatcher: Dispatcher | None = None) -> None:
-        """Build the app, optionally against an already-wired ``Dispatcher``.
+    def __init__(
+        self,
+        *,
+        dispatcher: Dispatcher | None = None,
+        plane: ControlPlane | None = None,
+    ) -> None:
+        """Build the app, optionally against already-wired collaborators.
 
-        ``dispatcher`` exists for tests, which drive the whole flow in-process
-        against faked executors. Left unset, the composition root is asked for
-        the real wiring — the same ``build_dispatcher()`` the CLI calls, so both
-        front-ends demonstrably route through one core (Requirement 1.4) — and it
-        is built lazily, on the first submission, so merely opening the app
-        reaches no tool.
+        Both overrides exist for tests, which drive the whole flow in-process
+        against fakes, and they are the same two ``cli.main()`` takes: ``plane``
+        substitutes the core *and* the ``GitHubExecutor`` a dispatched run is
+        followed with, ``dispatcher`` substitutes only the core. Left unset, the
+        composition root is asked for the real wiring — the same
+        ``build_control_plane()`` the CLI calls, so both front-ends demonstrably
+        route through one core (Requirement 1.4) — and it is built lazily, on the
+        first submission, so merely opening the app reaches no tool.
         """
         super().__init__()
         self._dispatcher = dispatcher
+        self._plane = plane
         self.exit_code: ExitCode = ExitCode.SUCCESS
         self.last_result: Result | None = None
 
+    def plane(self) -> ControlPlane:
+        """Return the shared wiring, building the real thing on demand."""
+        if self._plane is None:
+            self._plane = build_control_plane(dispatcher=self._dispatcher)
+        return self._plane
+
     def dispatcher(self) -> Dispatcher:
-        """Return the shared ``Dispatcher``, building the real wiring on demand."""
-        if self._dispatcher is None:
-            self._dispatcher = build_dispatcher()
-        return self._dispatcher
+        """Return the shared ``Dispatcher`` the whole flow routes through."""
+        return self.plane().dispatcher
 
     def on_mount(self) -> None:
         self.push_screen(_CapabilityScreen())
@@ -420,6 +437,17 @@ class DeployApp(App[None]):
             return
         except Exception as exc:  # noqa: BLE001 - the front-end is the traceback boundary
             result = failed_result(plan.capability, exc)
+        else:
+            try:
+                # A no-op unless the plan dispatched a run, so this needs no notion
+                # of which capabilities produce one. Following is unconditional
+                # here: there is no --json contract a blocking watch could break.
+                result = follow_run(self.plane().github, result)
+            except Exception as exc:  # noqa: BLE001 - the front-end is the traceback boundary
+                # A watch that itself fails is reported as a failure rather than as
+                # a silently unfollowed pass: the run's verdict is the outcome, so
+                # not having obtained it is not the same as success.
+                result = failed_result(plan.capability, exc)
         self._finish(result)
 
     def _finish(self, result: Result) -> None:
@@ -440,7 +468,11 @@ class DeployApp(App[None]):
         self.exit()
 
 
-def run_tui(*, dispatcher: Dispatcher | None = None) -> int:
+def run_tui(
+    *,
+    dispatcher: Dispatcher | None = None,
+    plane: ControlPlane | None = None,
+) -> int:
     """Launch the Textual application and return the process exit code.
 
     Returns rather than exits, for the same reason ``cli.main`` does: the
@@ -449,7 +481,7 @@ def run_tui(*, dispatcher: Dispatcher | None = None) -> int:
     rather than off Textual's own return value so an operator closing the
     terminal still reports what the session did.
     """
-    app = DeployApp(dispatcher=dispatcher)
+    app = DeployApp(dispatcher=dispatcher, plane=plane)
     app.run()
     return int(app.exit_code)
 

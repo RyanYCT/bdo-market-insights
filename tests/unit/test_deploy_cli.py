@@ -34,16 +34,20 @@ from bdo_deploy import presentation as presentation_module
 from bdo_deploy import tui as tui_module
 from bdo_deploy.cli import app, main
 from bdo_deploy.core import assembly as assembly_module
+from bdo_deploy.core.assembly import ControlPlane
 from bdo_deploy.core.dispatch import Dispatcher
 from bdo_deploy.core.errors import ConfirmationRequired, ExecutorFailed
 from bdo_deploy.core.exit_codes import ExitCode
 from bdo_deploy.core.models import (
     Capability,
     Command,
+    CommandResult,
     Op,
     Plan,
     PlanStep,
     Result,
+    RunRef,
+    RunStatus,
     Target,
 )
 
@@ -118,6 +122,90 @@ class FakeDispatcher(Dispatcher):
             exit_code=ExitCode.SUCCESS,
             summary=f"{plan.capability.value}: completed {len(plan.steps)} step(s)",
         )
+
+
+class FakeGitHub:
+    """A ``GitHubExecutor`` that records what a front-end followed, and answers.
+
+    Structurally satisfies the Protocol — the front-ends only ever call ``watch``
+    and ``view`` on it — so a run can be "followed" with no ``gh`` process, no
+    network and, crucially for a test suite, no blocking wait. ``conclusion`` is
+    GitHub's own verdict string, which is what ``follow_run`` folds into the
+    ``Result``.
+
+    Shared with the TUI and the presentation suites, so all three exercise one
+    fake and none of them can accidentally test a different GitHub.
+    """
+
+    def __init__(
+        self,
+        *,
+        conclusion: str | None = "success",
+        status: str | None = "completed",
+        view_ok: bool = True,
+        watch_ok: bool = True,
+        watch_error: Exception | None = None,
+    ) -> None:
+        self.watched: list[RunRef] = []
+        self.viewed: list[RunRef] = []
+        self._conclusion = conclusion
+        self._status = status
+        self._view_ok = view_ok
+        self._watch_ok = watch_ok
+        self._watch_error = watch_error
+
+    def watch(self, run: RunRef) -> CommandResult:
+        self.watched.append(run)
+        if self._watch_error is not None:
+            raise self._watch_error
+        return CommandResult(ok=self._watch_ok, output=f"watched {run.run_id}")
+
+    def view(self, run: RunRef) -> RunStatus:
+        self.viewed.append(run)
+        return RunStatus(
+            # A view reports the run's URL, as the real adapter reads it out of
+            # `gh run view --json url` — which is how a run whose URL the dispatch
+            # could not resolve acquires one.
+            run=RunRef(workflow=run.workflow, run_id=run.run_id, url=run.url or RUN_URL),
+            status=self._status,
+            conclusion=self._conclusion,
+            output=f"viewed {run.run_id}",
+            ok=self._view_ok,
+        )
+
+    def run_step(self, step: PlanStep) -> CommandResult:
+        raise AssertionError("no Op routes to this executor from a front-end")
+
+    def run_workflow(
+        self,
+        *,
+        stage: str,
+        version: str | None = None,
+        inputs: dict[str, str] | None = None,
+    ) -> CommandResult:
+        raise AssertionError("a front-end never dispatches; the Dispatcher does")
+
+    def set_environment(self, *, name: str, reviewers: list[str] | None = None) -> CommandResult:
+        raise AssertionError("a front-end never administers GitHub")
+
+    def set_environment_secret(self, *, environment: str, name: str, value: str) -> CommandResult:
+        raise AssertionError("a front-end never administers GitHub")
+
+
+def dispatched_result(
+    capability: Capability = Capability.RELEASE,
+    *,
+    run: RunRef | None = None,
+) -> Result:
+    """A successful ``Result`` for a command that dispatched a CI run."""
+    return Result(
+        capability=capability,
+        ok=True,
+        exit_code=ExitCode.SUCCESS,
+        summary=f"{capability.value}: completed 1 step(s)",
+        run_url=RUN_URL,
+        run=run if run is not None else RunRef(workflow="deploy.yml", run_id="42", url=RUN_URL),
+    )
 
 
 class FakeTerminal:
@@ -422,6 +510,104 @@ class TestJsonMode:
         assert params["value"] == "**********"
 
 
+# -- F2. run following (Requirements 7.6, 10.6) ------------------------------
+
+
+def _followed(
+    github: FakeGitHub,
+    *,
+    result: Result | None = None,
+) -> ControlPlane:
+    """A ``ControlPlane`` whose core is faked and whose GitHub records the follow."""
+    return ControlPlane(
+        dispatcher=FakeDispatcher(result=result if result is not None else dispatched_result()),
+        github=github,
+    )
+
+
+class TestRunFollowing:
+    """The CI run is authoritative, and ``--json`` has to ask before we wait."""
+
+    def test_human_output_follows_the_run_by_default(self) -> None:
+        github = FakeGitHub()
+        code = main(["release", "v1.4.0", "--yes"], plane=_followed(github))
+        assert code == ExitCode.SUCCESS
+        assert [run.run_id for run in github.watched] == ["42"]
+
+    def test_the_runs_verdict_overrides_a_green_dispatch(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A dispatch that succeeded but whose run failed is reported as a failure."""
+        github = FakeGitHub(conclusion="failure")
+        code = main(["release", "v1.4.0", "--yes"], plane=_followed(github))
+        assert code == ExitCode.EXECUTOR_FAILED
+        rendered = capsys.readouterr().out
+        assert "the run concluded failure" in rendered
+        assert RUN_URL in rendered, "the URL is surfaced whatever the verdict"
+
+    def test_json_alone_does_not_wait(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Requirement 1.2: a blocking watch cannot precede the sole Result."""
+        github = FakeGitHub()
+        code = main(["release", "v1.4.0", "--yes", "--json"], plane=_followed(github))
+        assert code == ExitCode.SUCCESS
+        assert github.watched == [] and github.viewed == []
+        payload = _json_result(capsys.readouterr().out)
+        assert payload["run_url"] == RUN_URL, "the run is still reachable without waiting"
+        assert payload["run"]["run_id"] == "42"
+
+    def test_json_with_watch_follows_the_run(self, capsys: pytest.CaptureFixture[str]) -> None:
+        github = FakeGitHub(conclusion="failure")
+        code = main(["release", "v1.4.0", "--yes", "--json", "--watch"], plane=_followed(github))
+        assert code == ExitCode.EXECUTOR_FAILED
+        payload = _json_result(capsys.readouterr().out)
+        assert payload["ok"] is False
+        assert [run.run_id for run in github.watched] == ["42"]
+
+    def test_deploy_follows_its_run_too(self) -> None:
+        """Following is wired once, for every capability that can dispatch a run."""
+        github = FakeGitHub()
+        result = dispatched_result(Capability.DEPLOY)
+        code = main(
+            ["deploy", "--stage", "prod", "--target", "ci", "--yes"],
+            plane=_followed(github, result=result),
+        )
+        assert code == ExitCode.SUCCESS
+        assert [run.run_id for run in github.watched] == ["42"]
+
+    def test_a_command_that_dispatched_nothing_is_never_followed(self) -> None:
+        """No run, no watch — so no capability needs to know whether it makes one."""
+        github = FakeGitHub()
+        local = Result(
+            capability=Capability.DEPLOY,
+            ok=True,
+            exit_code=ExitCode.SUCCESS,
+            summary="deploy: completed 2 step(s)",
+        )
+        assert main(["deploy", "--yes"], plane=_followed(github, result=local)) == ExitCode.SUCCESS
+        assert github.watched == []
+
+    def test_a_dry_run_follows_nothing(self) -> None:
+        github = FakeGitHub()
+        assert (
+            main(["release", "v1.4.0", "--dry-run"], plane=_followed(github)) == ExitCode.SUCCESS
+        )
+        assert github.watched == []
+
+    def test_watch_is_offered_only_where_a_run_can_be_dispatched(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The two capabilities that can trigger a CI run offer ``--watch``; none else.
+
+        A flag on ``config show`` would advertise a wait that nothing there can
+        produce.
+        """
+        for argv in (["deploy", "--help"], ["release", "--help"]):
+            assert main(argv) == ExitCode.SUCCESS
+            assert "--watch" in " ".join(capsys.readouterr().out.split())
+        assert main(["config", "show", "--help"]) == ExitCode.SUCCESS
+        assert "--watch" not in capsys.readouterr().out
+
+
 # -- G. the console entry point ----------------------------------------------
 
 
@@ -558,8 +744,25 @@ behaviour: both front-ends spelling ``args`` keys the same way is precisely how
 they avoid restating anything.
 """
 
-RENDERING: Final = frozenset({"failed_result", "plan_lines", "result_lines"})
-"""The shared rendering vocabulary, which lives in ``presentation`` only."""
+RENDERING: Final = frozenset({"failed_result", "follow_run", "plan_lines", "result_lines"})
+"""The shared rendering vocabulary, which lives in ``presentation`` only.
+
+``follow_run`` is part of it: following a dispatched run happens after
+``execute()`` has returned and produces nothing but a verdict to report, so it is
+presentation — and being *shared* is the point, since it is what stops the two
+front-ends from growing two notions of "did the run pass" (Requirements 7.6,
+10.6). Note what this allow-list therefore still forbids: a front-end that
+implemented its own following, or that reached ``GitHubExecutor.watch`` itself,
+would fail the ban below and the redefinition check here.
+"""
+
+WIRING: Final = frozenset({"ControlPlane", "build_control_plane"})
+"""What a front-end may take from the composition root.
+
+``build_control_plane`` is the one way to obtain a core, and ``ControlPlane`` is
+the type of what it returns — needed to annotate the injected override and to tell
+it apart from a bare ``Dispatcher``. Neither carries behaviour.
+"""
 
 
 def _source(module: ModuleType) -> ast.Module:
@@ -629,27 +832,39 @@ class TestOneSharedCore:
         """The name each front-end imported is the composition root's own function.
 
         Read out of the module namespaces rather than as attributes, because
-        ``build_dispatcher`` is an import into a front-end and not part of its
+        ``build_control_plane`` is an import into a front-end and not part of its
         public surface — which is the point being asserted.
         """
         for module in FRONT_ENDS:
-            assert vars(module)["build_dispatcher"] is assembly_module.build_dispatcher
+            assert vars(module)["build_control_plane"] is assembly_module.build_control_plane
+            imported = _imported_from(_source(module), "bdo_deploy.core.assembly")
+            assert imported <= WIRING, f"{module.__name__} takes more than its wiring"
 
-    def test_neither_assembles_a_dispatcher_of_its_own(self) -> None:
-        """Nothing but ``build_dispatcher`` (or an injected one) can produce a core.
+    def test_neither_assembles_a_core_of_its_own(self) -> None:
+        """Nothing but ``build_control_plane`` (or an injection) can produce a core.
 
         Together with the executor ban below, this is what makes "the same
         ``Dispatcher``" true by construction rather than by convention: a front-end
         that cannot name a concrete executor and does not call ``Dispatcher(...)``
-        has exactly one way to obtain a core.
+        has exactly one way to obtain a core — and now one way to obtain the
+        ``GitHubExecutor`` it follows a run with, which is the same object the core
+        dispatches through.
         """
         for module in FRONT_ENDS:
             called = _called_names(_source(module))
-            assert "build_dispatcher" in called, f"{module.__name__} must use the composition root"
+            assert "build_control_plane" in called, (
+                f"{module.__name__} must use the composition root"
+            )
             assert "Dispatcher" not in called, f"{module.__name__} assembles its own core"
+            assert "ControlPlane" not in called, f"{module.__name__} assembles its own wiring"
 
     def test_neither_can_reach_an_executor(self) -> None:
-        """No front-end names a concrete adapter, so none can reach a tool directly."""
+        """No front-end names a concrete adapter, so none can reach a tool directly.
+
+        Unchanged by run-following: the front-ends hand the ``GitHubExecutor`` the
+        composition root gave them to the shared ``follow_run()`` and never name an
+        adapter, or even the Protocol, themselves.
+        """
         for module in FRONT_ENDS:
             executors = {
                 imported

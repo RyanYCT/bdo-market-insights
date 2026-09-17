@@ -35,6 +35,17 @@ is given; without it a mutating command exits ``3`` with the refused ``Plan``
 rendered, which is the caller's cue to inspect the effects and re-invoke
 (Requirement 10.4).
 
+**It follows a dispatched run, and ``--json`` has to ask.** After ``execute()``
+returns, ``presentation.follow_run()`` follows ``Result.run`` to completion and
+folds the run's own pass/fail in, because the CI run — not the dispatch — is
+authoritative (Requirements 7.6, 10.6). That is default-on for human output and
+gated on ``--watch`` under ``--json``: a blocking watch cannot sit in front of
+"exactly one serialized ``Result`` is the sole content of stdout" without
+stalling a caller that was promised one object. The run's URL is in the
+``Result`` either way, so nothing is hidden from a caller that declines to wait.
+The helper is shared with the TUI, so the two modes cannot disagree about whether
+a run passed.
+
 **Streams.** With ``--json`` the sole content of stdout is one serialized
 ``Result`` and every human-readable line goes to stderr (Requirement 1.2), so a
 caller can pipe stdout straight into a parser. Without ``--json`` the same human
@@ -63,7 +74,7 @@ from typing import Annotated, Final
 
 import typer
 
-from bdo_deploy.core.assembly import build_dispatcher
+from bdo_deploy.core.assembly import ControlPlane, build_control_plane
 from bdo_deploy.core.dispatch import (
     ACTION_ARG,
     CONFIG_SET,
@@ -84,7 +95,7 @@ from bdo_deploy.core.models import (
     Result,
     Target,
 )
-from bdo_deploy.presentation import failed_result, plan_lines, result_lines
+from bdo_deploy.presentation import failed_result, follow_run, plan_lines, result_lines
 
 PROG_NAME: Final = "bdo-deploy"
 DEFAULT_STAGE: Final = "dev"
@@ -157,6 +168,18 @@ StageOption = Annotated[
     typer.Option("--stage", help="The samconfig.toml environment to act on."),
 ]
 
+WatchFlag = Annotated[
+    bool,
+    typer.Option(
+        "--watch",
+        help=(
+            "Follow a dispatched CI run to completion and report the run's own pass or fail. "
+            "Implied without --json; required with --json, where a blocking watch would "
+            "otherwise sit in front of the single Result on stdout."
+        ),
+    ),
+]
+
 
 # -- mode selection: the one place the front-end is chosen --------------------
 
@@ -222,7 +245,12 @@ def select_mode(
     # Textual — and an agent-only install that lacks it still works.
     from bdo_deploy.tui import run_tui
 
-    raise typer.Exit(run_tui(dispatcher=_injected_dispatcher(ctx)))
+    # Handed over as whichever of the two overrides was injected, so the TUI
+    # applies it exactly as CLI mode does — one injection point for the process.
+    injected = _injected(ctx)
+    if isinstance(injected, ControlPlane):
+        raise typer.Exit(run_tui(plane=injected))
+    raise typer.Exit(run_tui(dispatcher=injected))
 
 
 # -- subcommands, one per capability ------------------------------------------
@@ -346,6 +374,7 @@ def deploy(
     json_output: JsonFlag = False,
     yes: YesFlag = False,
     dry_run: DryRunFlag = False,
+    watch: WatchFlag = False,
 ) -> None:
     """Deploy a stage, locally via the SAM CLI or in CI via GitHub Actions.
 
@@ -361,6 +390,7 @@ def deploy(
             json_output=json_output,
             assume_yes=yes,
             dry_run=dry_run,
+            watch=watch,
         )
     )
 
@@ -380,6 +410,7 @@ def release(
     json_output: JsonFlag = False,
     yes: YesFlag = False,
     dry_run: DryRunFlag = False,
+    watch: WatchFlag = False,
 ) -> None:
     """Start a release: verify the preconditions, then tag and push (or dispatch).
 
@@ -396,6 +427,7 @@ def release(
             json_output=json_output,
             assume_yes=yes,
             dry_run=dry_run,
+            watch=watch,
         )
     )
 
@@ -414,14 +446,16 @@ def _run(
     target: Target = Target.LOCAL,
     version: str | None = None,
     args: dict[str, str | bool | list[str]] | None = None,
+    watch: bool = False,
 ) -> int:
     """Build the ``Command``, dispatch it, render the ``Result``, return the code.
 
     Every subcommand funnels through here, so the flag contract — the streams,
-    the confirmation gate, the error rendering, the exit code — is implemented
-    exactly once and cannot differ per capability.
+    the confirmation gate, the run following, the error rendering, the exit code —
+    is implemented exactly once and cannot differ per capability.
     """
     console = _Console(json_output=json_output)
+    plane = _plane(ctx)
     try:
         cmd = Command(
             capability=capability,
@@ -432,8 +466,7 @@ def _run(
             dry_run=dry_run,
             assume_yes=assume_yes,
         )
-        dispatcher = _dispatcher(ctx)
-        plan = dispatcher.plan(cmd)
+        plan = plane.dispatcher.plan(cmd)
         console.render_plan(plan)
         if dry_run:
             # Stop at planning: `execute()` is the only method that can reach an
@@ -448,7 +481,12 @@ def _run(
                 ),
             )
         else:
-            result = dispatcher.execute(plan, confirmed=assume_yes)
+            result = plane.dispatcher.execute(plan, confirmed=assume_yes)
+            if _follows_the_run(json_output=json_output, watch=watch):
+                # A no-op unless a run was dispatched, so no capability needs to
+                # know whether it produces one. The run's own verdict replaces the
+                # dispatch's (Requirements 7.6, 10.6).
+                result = follow_run(plane.github, result)
     except ConfirmationRequired as exc:
         # The core raises so a caller cannot silently ignore the gate; the CLI is
         # where that becomes the documented contract — exit 3 with the refused
@@ -470,28 +508,44 @@ def _run(
     return int(result.exit_code)
 
 
-def _injected_dispatcher(ctx: typer.Context) -> Dispatcher | None:
-    """Return the ``Dispatcher`` placed on the Click context, if any.
+def _follows_the_run(*, json_output: bool, watch: bool) -> bool:
+    """Whether a dispatched run is followed on this invocation.
 
-    ``main(argv, dispatcher=...)`` puts one there, which is how a test drives the
-    whole front-end in-process against faked executors. ``None`` means "no
-    override", and is passed straight through to the TUI so that it applies the
-    override the same way this module does — one injection point for both modes.
+    Default-on for human output: an operator who just triggered a deploy wants to
+    know how it went, and the run is the authoritative answer (Requirement 10.6).
+    Under ``--json`` it takes ``--watch``, because ``--json`` promises that exactly
+    one serialized ``Result`` is the sole content of stdout (Requirement 1.2) and a
+    blocking watch in front of that promise would stall a caller that was told to
+    expect one object and nothing else. Asking for it explicitly is asking for the
+    wait. The run's URL is in the ``Result`` either way.
     """
-    return ctx.obj if isinstance(ctx.obj, Dispatcher) else None
+    return watch or not json_output
 
 
-def _dispatcher(ctx: typer.Context) -> Dispatcher:
-    """Return the ``Dispatcher`` to route through, building the real one by default.
+def _injected(ctx: typer.Context) -> ControlPlane | Dispatcher | None:
+    """Return whatever ``main(argv, ...)`` placed on the Click context.
 
-    An injected ``Dispatcher`` wins; otherwise the composition root is asked for
-    the real wiring — the same ``build_dispatcher()`` the TUI calls, so both
-    front-ends demonstrably route through one core (Requirement 1.4).
+    A whole ``ControlPlane`` (a test that also fakes the ``GitHubExecutor`` a run
+    is followed with) or just a ``Dispatcher`` (a test that only fakes the core).
+    Passed straight through to the TUI, so both modes apply an override the same
+    way — one injection point for the process.
     """
-    injected = _injected_dispatcher(ctx)
-    if injected is not None:
+    return ctx.obj if isinstance(ctx.obj, ControlPlane | Dispatcher) else None
+
+
+def _plane(ctx: typer.Context) -> ControlPlane:
+    """Return the ``ControlPlane`` this invocation routes through.
+
+    An injected plane is used as given; otherwise the composition root is asked for
+    the wiring, applying an injected ``Dispatcher`` if there is one — the same
+    ``build_control_plane()`` the TUI calls, so both front-ends demonstrably share
+    one core and one ``GitHubExecutor`` (Requirement 1.4). Building reaches no
+    tool, so this is safe before a ``--dry-run`` is known about.
+    """
+    injected = _injected(ctx)
+    if isinstance(injected, ControlPlane):
         return injected
-    return build_dispatcher()
+    return build_control_plane(dispatcher=injected)
 
 
 # -- rendering ----------------------------------------------------------------
@@ -538,7 +592,12 @@ class _Console:
             self._log(line)
 
 
-def main(argv: list[str] | None = None, *, dispatcher: Dispatcher | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    dispatcher: Dispatcher | None = None,
+    plane: ControlPlane | None = None,
+) -> int:
     """Process entry point for the ``bdo-deploy`` console script — both modes.
 
     The single entry point for the whole tool: ``select_mode`` decides from the
@@ -553,12 +612,16 @@ def main(argv: list[str] | None = None, *, dispatcher: Dispatcher | None = None)
     returned ``int``. Click has already printed its own message by then, so no
     traceback reaches the operator either way.
 
-    ``dispatcher`` overrides the core the subcommands route through, for tests.
+    ``dispatcher`` overrides the core the subcommands route through, and ``plane``
+    overrides the core *and* the ``GitHubExecutor`` a dispatched run is followed
+    with — both for tests, which is how the whole front-end runs in-process against
+    fakes without a ``sam`` / ``gh`` / ``git`` call. ``plane`` wins when both are
+    given, since it is the more complete substitution.
     """
     args = sys.argv[1:] if argv is None else argv
     command = typer.main.get_command(app)
     try:
-        command(args=args, prog_name=PROG_NAME, obj=dispatcher)
+        command(args=args, prog_name=PROG_NAME, obj=plane if plane is not None else dispatcher)
     except SystemExit as exc:
         code = exc.code
         if code is None:

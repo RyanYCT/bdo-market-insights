@@ -991,6 +991,69 @@ class TestExecuteRunUrl:
         assert result.run_url == RUN_URL
         assert RUN_URL in result.summary
 
+    def test_the_structured_run_reference_propagates_too(self) -> None:
+        """``Result.run`` carries the executor's own ``RunRef``, unparsed.
+
+        This is what ``follow_run()`` needs: run identity travels from the
+        executor that dispatched it, so nothing has to re-derive an id from the
+        display URL.
+        """
+        recorder = Recorder()
+        github = FakeGitHubExecutor(
+            "github",
+            recorder,
+            results=[
+                CommandResult(
+                    ok=True,
+                    output="dispatched",
+                    run_url=RUN_URL,
+                    run=RunRef(workflow=DEPLOY_WORKFLOW, run_id="42", url=RUN_URL),
+                )
+            ],
+        )
+        dispatcher = _wired(recorder, github=github)
+        plan = dispatcher.plan(
+            Command(capability=Capability.DEPLOY, target=Target.CI, stage="prod", version="v1.4.0")
+        )
+        result = dispatcher.execute(plan, confirmed=True)
+        assert result.run == RunRef(workflow=DEPLOY_WORKFLOW, run_id="42", url=RUN_URL)
+
+    def test_a_run_dispatched_before_a_failure_is_still_reported(self) -> None:
+        """A failing later step must not lose the run that was already dispatched.
+
+        The operator has a run to look at either way, and the front-end can still
+        follow it — dropping the reference on failure would hide a deploy that is
+        already moving.
+        """
+        recorder = Recorder()
+        github = FakeGitHubExecutor(
+            "github",
+            recorder,
+            results=[
+                CommandResult(
+                    ok=False,
+                    output="gh: dispatched, then the step reported a failure",
+                    run_url=RUN_URL,
+                    run=RunRef(workflow=DEPLOY_WORKFLOW, run_id="42", url=RUN_URL),
+                )
+            ],
+        )
+        dispatcher = _wired(recorder, github=github)
+        plan = dispatcher.plan(
+            Command(capability=Capability.DEPLOY, target=Target.CI, stage="prod", version="v1.4.0")
+        )
+        result = dispatcher.execute(plan, confirmed=True)
+        assert result.ok is False
+        assert result.run is not None
+        assert result.run.run_id == "42"
+
+    def test_a_local_command_carries_no_run(self) -> None:
+        recorder = Recorder()
+        dispatcher = _wired(recorder, sam=FakeSamExecutor("sam", recorder))
+        plan = dispatcher.plan(Command(capability=Capability.DEPLOY, target=Target.LOCAL))
+        result = dispatcher.execute(plan, confirmed=True)
+        assert result.run is None and result.run_url is None
+
 
 # -- E. execute() per capability + target ------------------------------------
 

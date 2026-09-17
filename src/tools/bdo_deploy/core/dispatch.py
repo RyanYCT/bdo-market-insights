@@ -67,6 +67,7 @@ from bdo_deploy.core.models import (
     Plan,
     PlanStep,
     Result,
+    RunRef,
     Target,
     bootstrap_reviewers,
 )
@@ -304,6 +305,7 @@ class Dispatcher:
         changes: list[ConfigDiff] = []
         outputs: list[str] = []
         run_url: str | None = None
+        run: RunRef | None = None
 
         for position, (step, executor) in enumerate(wired, start=1):
             try:
@@ -318,11 +320,17 @@ class Dispatcher:
                     skipped=total - position,
                     changes=changes,
                     run_url=run_url,
+                    run=run,
                 )
             changes.extend(outcome.changes)
             outputs.append(outcome.output)
             if outcome.run_url is not None:
                 run_url = outcome.run_url
+            if outcome.run is not None:
+                # Carried through untouched, so the run the front-end follows is
+                # the one the executor dispatched — not one re-derived from the
+                # URL string above.
+                run = outcome.run
             if not outcome.ok:
                 return self._failure(
                     plan,
@@ -333,6 +341,7 @@ class Dispatcher:
                     skipped=total - position,
                     changes=changes,
                     run_url=run_url,
+                    run=run,
                 )
 
         summary = f"{plan.capability.value}: completed {total} step(s)"
@@ -345,6 +354,7 @@ class Dispatcher:
             summary=summary,
             changes=changes,
             run_url=run_url,
+            run=run,
             raw_output="\n".join(text for text in outputs if text) or None,
         )
 
@@ -380,6 +390,7 @@ class Dispatcher:
         skipped: int,
         changes: list[ConfigDiff] | None = None,
         run_url: str | None = None,
+        run: RunRef | None = None,
     ) -> Result:
         """Build the ``Result`` for a stopped run; ``exit_code_for`` maps the code."""
         summary = error.summary
@@ -392,6 +403,7 @@ class Dispatcher:
             summary=summary,
             changes=changes if changes is not None else [],
             run_url=run_url,
+            run=run,
             raw_output=error.output if isinstance(error, ExecutorFailed) else None,
         )
 

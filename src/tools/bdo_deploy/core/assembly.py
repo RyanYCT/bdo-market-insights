@@ -4,11 +4,16 @@
 them, which is what makes ``execute()`` testable — but it means *something* has
 to name the concrete adapters. That something is this module, and only this
 module: ``SamCli``, ``GitHubCli``, ``Git`` and ``SsmSamconfigStore`` appear
-together here and nowhere else, so the CLI front-end and the TUI front-end
-(Phase 5) both call ``build_dispatcher()`` instead of each assembling their own
-wiring and drifting from one another. Requirement 1.4 asks that both front-ends
-route through *the same* ``Dispatcher``; a single assembly function is how that
-stops being an aspiration.
+together here and nowhere else, so the CLI front-end and the TUI front-end both
+ask this module for their wiring instead of each assembling their own and
+drifting from one another. Requirement 1.4 asks that both front-ends route
+through *the same* ``Dispatcher``; a single assembly function is how that stops
+being an aspiration.
+
+Two entry points, one wiring: ``build_dispatcher()`` returns the core alone, and
+``build_control_plane()`` returns it together with the ``GitHubExecutor`` a
+front-end needs to follow a dispatched run (``ControlPlane``, below). The second
+is what the front-ends call.
 
 It is deliberately a **function, not a container**. There is no registry, no
 plugin lookup and no dependency-injection framework: there are exactly four
@@ -38,6 +43,8 @@ the rest.
 """
 
 from __future__ import annotations
+
+from typing import NamedTuple
 
 from bdo_deploy.core.dispatch import Dispatcher
 from bdo_deploy.core.executors.config import ConfigStore, SsmSamconfigStore
@@ -72,4 +79,62 @@ def build_dispatcher(
     )
 
 
-__all__ = ["build_dispatcher"]
+class ControlPlane(NamedTuple):
+    """What a front-end needs: the shared core, plus the one executor it may call.
+
+    ``github`` is exposed **for ``presentation.follow_run()`` only**, and it is
+    never routed to by a plan: no ``Op`` maps onto ``watch`` or ``view``, and that
+    is what keeps a preview from reaching a tool (design Property 5) and a plan
+    from describing a blocking wait (Property 1). Following a dispatched run
+    happens *after* ``execute()`` has returned, so it cannot be a planned step —
+    which leaves handing the executor to the front-end as the only way to do it at
+    all.
+
+    A ``NamedTuple`` rather than a class with behaviour: it holds two already-built
+    collaborators and decides nothing, so anything more would invite the front-end
+    to ask it for logic that belongs in the core.
+    """
+
+    dispatcher: Dispatcher
+    github: GitHubExecutor
+
+
+def build_control_plane(
+    *,
+    dispatcher: Dispatcher | None = None,
+    sam: SamExecutor | None = None,
+    github: GitHubExecutor | None = None,
+    git: GitExecutor | None = None,
+    config: ConfigStore | None = None,
+) -> ControlPlane:
+    """Return the ``Dispatcher`` **and** the ``GitHubExecutor`` behind it.
+
+    Sits beside ``build_dispatcher()``, which keeps working unchanged, and takes
+    the same executor overrides. The one ``GitHubCli`` it builds is the one the
+    dispatcher routes github steps to *and* the one the front-end follows a run
+    with, so a test that fakes ``github=`` fakes both — a dispatch and the watch
+    that follows it cannot end up talking to two different GitHubs.
+
+    ``dispatcher`` overrides the assembled core wholesale, which is how a
+    front-end applies an injected ``Dispatcher`` (a test driving the whole
+    front-end against a fake core) without assembling a ``ControlPlane`` of its
+    own. Combining the two here rather than in each front-end is the point: the
+    front-ends then have exactly one way to obtain their wiring, whether or not
+    something was injected.
+
+    Reaches no tool, for the same reasons ``build_dispatcher()`` does not (see the
+    module docstring), so a front-end can call it unconditionally at start-up
+    before it knows whether the command is a ``--dry-run``.
+    """
+    resolved_github = github if github is not None else GitHubCli()
+    return ControlPlane(
+        dispatcher=(
+            dispatcher
+            if dispatcher is not None
+            else build_dispatcher(sam=sam, github=resolved_github, git=git, config=config)
+        ),
+        github=resolved_github,
+    )
+
+
+__all__ = ["ControlPlane", "build_control_plane", "build_dispatcher"]

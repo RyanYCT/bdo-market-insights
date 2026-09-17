@@ -51,6 +51,7 @@ from bdo_deploy.core.executors.github import (
     DEFAULT_WORKFLOW,
     SECRET_ENV_PREFIX,
     GitHubCli,
+    RunRef,
 )
 from bdo_deploy.core.executors.sam import SamCli
 from bdo_deploy.core.models import CommandResult, ConfigDiff, Op, PlanStep
@@ -641,6 +642,12 @@ class TestGitHubDispatch:
         assert result.run_url == RUN_URL
         assert RUN_URL in result.output
 
+    def test_the_run_reference_comes_back_structured(self) -> None:
+        """The same query yields a ``RunRef``, so following needs no URL parsing."""
+        runner = FakeRunner(responses={RUN_LIST_ARGV: _run_list()})
+        result = GitHubCli(runner=runner).run_workflow(stage="dev")
+        assert result.run == RunRef(workflow=DEFAULT_WORKFLOW, run_id="42", url=RUN_URL)
+
     @pytest.mark.parametrize(
         "listed",
         [
@@ -657,6 +664,9 @@ class TestGitHubDispatch:
         assert result.ok is True
         assert result.run_url is None
         assert "its URL could not be resolved" in result.output
+        # Still a reference: `gh run watch` can follow the workflow's newest run,
+        # which is all that is left to look at.
+        assert result.run == RunRef(workflow=DEFAULT_WORKFLOW)
 
     def test_a_failed_dispatch_is_returned_verbatim_with_no_url(self) -> None:
         runner = FakeRunner(default=CommandResult(ok=False, output="gh: workflow not found\n"))
@@ -664,6 +674,7 @@ class TestGitHubDispatch:
         assert result.ok is False
         assert result.output == "gh: workflow not found\n"
         assert result.run_url is None
+        assert result.run is None, "nothing was dispatched, so there is no run to follow"
         assert len(runner.argvs) == 1
 
     def test_the_step_dispatches_the_same_inputs(self) -> None:
@@ -688,6 +699,66 @@ class TestGitHubDispatch:
             f"version={VERSION}",
         ]
         assert result.run_url == RUN_URL
+
+
+VIEW_ARGV: Final = (
+    "gh",
+    "run",
+    "view",
+    "42",
+    "--json",
+    "status,conclusion,url",
+)
+
+
+class TestGitHubRunStatus:
+    """``watch`` / ``view``: how a dispatched run's verdict is read back.
+
+    Reached only by ``presentation.follow_run()`` — no ``Op`` routes to either, so
+    a plan can never contain a blocking wait. Every call here goes through the
+    injected runner, so nothing blocks and no real ``gh`` is invoked.
+    """
+
+    def test_watch_selects_the_known_run(self) -> None:
+        runner = FakeRunner()
+        GitHubCli(runner=runner).watch(RunRef(workflow=DEFAULT_WORKFLOW, run_id="42"))
+        assert runner.argvs == [["gh", "run", "watch", "42"]]
+
+    def test_watch_without_an_id_follows_the_newest_run(self) -> None:
+        """The only thing left to follow when the dispatch's URL was unresolvable."""
+        runner = FakeRunner()
+        GitHubCli(runner=runner).watch(RunRef(workflow=DEFAULT_WORKFLOW))
+        assert runner.argvs == [["gh", "run", "watch"]]
+
+    def test_view_reports_githubs_own_status_and_conclusion(self) -> None:
+        runner = FakeRunner(
+            responses={
+                VIEW_ARGV: CommandResult(
+                    ok=True,
+                    output=json.dumps(
+                        {"status": "completed", "conclusion": "failure", "url": RUN_URL}
+                    ),
+                )
+            }
+        )
+        status = GitHubCli(runner=runner).view(RunRef(workflow=DEFAULT_WORKFLOW, run_id="42"))
+        assert status.ok is True
+        assert (status.status, status.conclusion) == ("completed", "failure")
+        assert status.run.url == RUN_URL
+
+    @pytest.mark.parametrize(
+        "viewed",
+        [
+            CommandResult(ok=False, output="gh: no run found\n"),
+            CommandResult(ok=True, output="not json at all"),
+        ],
+    )
+    def test_an_unreadable_status_is_not_a_passing_status(self, viewed: CommandResult) -> None:
+        runner = FakeRunner(responses={VIEW_ARGV: viewed})
+        status = GitHubCli(runner=runner).view(RunRef(workflow=DEFAULT_WORKFLOW, run_id="42"))
+        assert status.ok is False
+        assert status.conclusion is None
+        assert status.output == viewed.output
 
 
 class TestGitHubEnvironment:

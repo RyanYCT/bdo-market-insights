@@ -24,6 +24,13 @@ Two types carry the behaviour, mirroring ``executors/sam.py`` and
 ``step.params``; it never parses ``step.command``, which is the display rendering
 only.
 
+``RunRef`` and ``RunStatus`` are **defined in ``core.models``** and re-exported
+here. They are this adapter's vocabulary, but ``Result.run`` and
+``CommandResult.run`` carry a ``RunRef``, and a model defined here would make
+``core.models`` import the executor module that already imports it. The
+re-export keeps ``from ...executors.github import RunRef`` working, so nothing
+else had to learn where the type moved.
+
 Three things about this adapter are load-bearing and easy to undo by accident:
 
 **The dispatched inputs are exactly the workflow's typed inputs.** A dispatch
@@ -34,11 +41,15 @@ and the control plane dispatch the identical job with identical inputs
 (Requirement 8.3). Nothing here executes a deploy: it triggers the
 environment-protected run and stops (Requirements 5.3, 6.2).
 
-**The dispatched run is authoritative, so its URL must come back.**
-``gh workflow run`` prints no run URL, so the URL is resolved in a **second,
-read-only query** immediately afterwards — ``gh run list --workflow <wf> --limit
-1 --json url,databaseId`` — and put in ``CommandResult.run_url`` for the
-dispatcher to surface (Requirements 7.6, 10.6). That query reads the newest run
+**The dispatched run is authoritative, so its identity must come back.**
+``gh workflow run`` prints nothing identifying the run it started, so the run is
+resolved in a **second, read-only query** immediately afterwards — ``gh run list
+--workflow <wf> --limit 1 --json url,databaseId`` — and returned **twice over**:
+as ``CommandResult.run_url`` for the dispatcher to surface to a human, and as
+``CommandResult.run`` — the ``RunRef`` the front-end's ``follow_run()`` needs to
+call ``watch`` / ``view`` (Requirements 7.6, 10.6). Both come from the one query,
+so following a run never means parsing an id back out of a display URL. That
+query reads the newest run
 of the workflow, which is the run just dispatched unless something else
 dispatched the same workflow in the same instant; the window is small, it is not
 worth a polling loop, and the failure mode is a URL pointing at a neighbouring
@@ -64,8 +75,6 @@ import json
 import os
 from typing import TYPE_CHECKING, Final, Protocol, assert_never
 
-from pydantic import BaseModel
-
 from bdo_deploy.core.errors import UsageError
 from bdo_deploy.core.executors._process import CommandRunner, run_command
 from bdo_deploy.core.executors.base import (
@@ -73,7 +82,7 @@ from bdo_deploy.core.executors.base import (
     optional_str_param,
     str_param,
 )
-from bdo_deploy.core.models import CommandResult, Op, PlanStep
+from bdo_deploy.core.models import CommandResult, Op, PlanStep, RunRef, RunStatus
 
 GH: Final = "gh"
 """The sanctioned executable; every invocation below starts with it."""
@@ -106,36 +115,6 @@ _RUN_LIST_FIELDS: Final = "url,databaseId"
 """The two fields the run-URL query asks for; ``url`` is what ends up surfaced."""
 
 
-class RunRef(BaseModel):
-    """A reference to one dispatched workflow run.
-
-    ``url`` and ``run_id`` are optional because they are resolved *after* the
-    dispatch by a separate query (see the module docstring): a reference to a run
-    that was certainly dispatched but could not be located yet is still a useful
-    thing to return, and it is not a failure.
-    """
-
-    workflow: str
-    run_id: str | None = None
-    url: str | None = None
-
-
-class RunStatus(BaseModel):
-    """What ``gh run view`` reported about a run.
-
-    ``status`` / ``conclusion`` are GitHub's own strings, kept verbatim rather
-    than mapped onto a local vocabulary — the CI run is authoritative
-    (Requirement 10.6), so re-encoding its verdict would only create a second
-    one that can disagree.
-    """
-
-    run: RunRef
-    status: str | None = None
-    conclusion: str | None = None
-    output: str = ""
-    ok: bool = True
-
-
 class GitHubExecutor(StepExecutor, Protocol):
     """Protocol for the GitHub CLI adapter — the interface, not an invocation."""
 
@@ -149,11 +128,11 @@ class GitHubExecutor(StepExecutor, Protocol):
         """``gh workflow run deploy.yml -f stage=… -f version=…``.
 
         Targets the dedicated CD workflow (ADR-0038) and sends exactly the
-        workflow's typed inputs (Requirement 8.3). The design sketches a
-        ``RunRef`` return; the shipped signature returns ``CommandResult``
-        because that is what the dispatcher consumes and because a dispatch can
-        fail — the run reference travels in ``CommandResult.run_url``, which is
-        the field the dispatcher already surfaces (Requirement 10.6).
+        workflow's typed inputs (Requirement 8.3). Returns a ``CommandResult``
+        rather than a bare ``RunRef`` because that is the one value every
+        executor call returns and because a dispatch can fail — the run reference
+        travels inside it, in ``CommandResult.run``, alongside the display-only
+        ``run_url`` the dispatcher surfaces (Requirement 10.6).
         """
         ...
 
@@ -227,10 +206,14 @@ class GitHubCli:
         8.3). Only the run is triggered; the deploy itself is CI's (Requirements
         5.3, 6.2).
 
-        A failed dispatch is returned as-is with no URL. A successful one is
-        returned with ``run_url`` set, or — when the follow-up query could not
-        find it — still as a success, saying the URL was unavailable rather than
-        reporting a started deploy as a failure.
+        A failed dispatch is returned as-is with no run. A successful one carries
+        the ``RunRef`` in ``run`` and its URL in ``run_url``, or — when the
+        follow-up query could not find the run — still a success carrying a
+        ``RunRef`` that names only the workflow, saying the URL was unavailable
+        rather than reporting a started deploy as a failure. The reference is
+        returned even then, because ``gh run watch`` can still follow "the most
+        recent run of this workflow" (see ``_run_selector``), which is the whole
+        of what is left to look at.
         """
         argv = [GH, "workflow", "run", workflow, *_input_flags(stage, version, inputs)]
         dispatched = self._run(argv)
@@ -245,11 +228,13 @@ class GitHubCli:
                     f"the {workflow} run was dispatched, but its URL could not be resolved; "
                     f"find it with `gh run list --workflow {workflow}`"
                 ).lstrip(),
+                run=run,
             )
         return CommandResult(
             ok=True,
             output=f"{dispatched.output.rstrip()}\n{run.url}".lstrip(),
             run_url=run.url,
+            run=run,
         )
 
     # -- run status ---------------------------------------------------------

@@ -24,11 +24,17 @@ from typing import NamedTuple
 import pytest
 from textual.widgets import Checkbox, Input, Select, Static
 
+from bdo_deploy.core.assembly import ControlPlane
 from bdo_deploy.core.dispatch import Dispatcher
 from bdo_deploy.core.exit_codes import ExitCode
 from bdo_deploy.core.models import Capability, Command, Result, Target
 from bdo_deploy.tui import DeployApp, run_tui
-from tests.unit.test_deploy_cli import RUN_URL, FakeDispatcher
+from tests.unit.test_deploy_cli import (
+    RUN_URL,
+    FakeDispatcher,
+    FakeGitHub,
+    dispatched_result,
+)
 
 Step = str | Callable[[DeployApp], None]
 """One action in a driven flow: a selector to click, or a mutation of the form."""
@@ -52,15 +58,27 @@ class Driven(NamedTuple):
     """Every id on the reached screen, so a test can assert a widget's absence."""
 
 
-def drive(dispatcher: Dispatcher, *steps: Step) -> Driven:
+def drive(
+    dispatcher: Dispatcher,
+    *steps: Step,
+    github: FakeGitHub | None = None,
+) -> Driven:
     """Run ``steps`` against a fresh app and return it for inspection.
 
     Textual's pilot is async, so the loop lives here rather than in every test;
     the tests stay plain synchronous functions and the suite needs no async
     plugin. A pause after each step lets the app mount whatever the step pushed,
     which is what makes the *next* selector resolvable.
+
+    ``github`` substitutes the executor a dispatched run is followed with, which
+    the app receives the only way it can: as a whole ``ControlPlane``, exactly as
+    the composition root would have handed it one.
     """
-    app = DeployApp(dispatcher=dispatcher)
+    app = (
+        DeployApp(dispatcher=dispatcher)
+        if github is None
+        else DeployApp(plane=ControlPlane(dispatcher=dispatcher, github=github))
+    )
     snapshot = Driven(app=app, texts={}, ids=set())
 
     async def _run() -> None:
@@ -292,7 +310,7 @@ class TestExitCodes:
         assert "Traceback" not in shown
 
     def test_a_dispatched_run_url_is_surfaced_as_text(self) -> None:
-        """Requirement 10.6, as far as this task goes: the URL, not a followed run."""
+        """Requirement 10.6: the URL reaches the operator in this mode too."""
         dispatched = Result(
             capability=Capability.RELEASE,
             ok=True,
@@ -310,6 +328,62 @@ class TestExitCodes:
         assert RUN_URL in rendered(driven, "result")
 
 
+# -- C2. run following (Requirements 7.6, 10.6) ------------------------------
+
+
+def _release(dispatcher: FakeDispatcher, github: FakeGitHub) -> Driven:
+    """Drive a confirmed release through to its result screen."""
+    return drive(
+        dispatcher,
+        *choose(Capability.RELEASE),
+        set_input("version", "v1.4.0"),
+        "#review",
+        "#confirm",
+        github=github,
+    )
+
+
+class TestRunFollowing:
+    """Following is unconditional here, and it is the CLI's own helper doing it."""
+
+    def test_a_dispatched_run_is_followed_without_being_asked(self) -> None:
+        """No ``--json`` contract to protect, so there is no flag to gate it on."""
+        github = FakeGitHub()
+        driven = _release(FakeDispatcher(result=dispatched_result()), github)
+        assert [run.run_id for run in github.watched] == ["42"]
+        assert driven.app.exit_code == ExitCode.SUCCESS
+        assert "the run concluded success" in rendered(driven, "result")
+
+    def test_the_runs_verdict_is_the_sessions_outcome(self) -> None:
+        github = FakeGitHub(conclusion="failure")
+        driven = _release(FakeDispatcher(result=dispatched_result()), github)
+        assert driven.app.exit_code == ExitCode.EXECUTOR_FAILED
+        shown = rendered(driven, "result")
+        assert "the run concluded failure" in shown
+        assert RUN_URL in shown, "the URL is surfaced whatever the verdict"
+
+    def test_a_command_that_dispatched_nothing_is_never_followed(self) -> None:
+        github = FakeGitHub()
+        driven = drive(
+            FakeDispatcher(),
+            *choose(Capability.DEPLOY),
+            "#review",
+            "#confirm",
+            github=github,
+        )
+        assert github.watched == []
+        assert driven.app.exit_code == ExitCode.SUCCESS
+
+    def test_a_watch_that_fails_is_reported_rather_than_taken_as_a_pass(self) -> None:
+        """Not having obtained the run's verdict is not the same as success."""
+        github = FakeGitHub(watch_error=RuntimeError("gh: could not follow the run"))
+        driven = _release(FakeDispatcher(result=dispatched_result()), github)
+        shown = rendered(driven, "result")
+        assert driven.app.exit_code != ExitCode.SUCCESS
+        assert "could not follow the run" in shown
+        assert "Traceback" not in shown
+
+
 # -- D. one shared core, one entry point (Requirements 1.4, 10.7) ------------
 
 
@@ -321,6 +395,7 @@ class TestSharedCore:
         app = DeployApp()
         assert isinstance(app.dispatcher(), Dispatcher)
         assert app.dispatcher() is app.dispatcher(), "the wiring is built once"
+        assert app.plane().github is not None, "and it carries the executor to follow with"
 
     def test_run_tui_returns_the_sessions_exit_code(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``run_tui`` returns an int from the shared vocabulary; it never exits."""

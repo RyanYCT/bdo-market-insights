@@ -184,7 +184,7 @@ nothing ships half-built.
     same typed `Command` and route through the same `Dispatcher`
   - _Requirements: 1.4_
 
-- [ ] 5.4 Wire run-following into both front-ends
+- [x] 5.4 Wire run-following into both front-ends
   - Add `Result.run: RunRef | None` alongside the display-only `run_url`, so the
     dispatched run has one identity rather than one parsed back out of a URL
   - Add `ControlPlane` (`Dispatcher` + `GitHubExecutor`) and

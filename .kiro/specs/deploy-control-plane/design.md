@@ -312,10 +312,12 @@ broader than Actions, and because "Dispatcher" collided with the core
 class GitHubExecutor(Protocol):
     # --- workflow dispatch ---
     def run_workflow(self, *, stage: str, version: str | None,
-                     inputs: dict[str, str]) -> RunRef:
+                     inputs: dict[str, str]) -> CommandResult:
         """gh workflow run deploy.yml -f stage=... -f version=...
-        Targets the dedicated CD workflow (ADR-0038). Returns a
-        reference to the dispatched run."""
+        Targets the dedicated CD workflow (ADR-0038). Returns the uniform
+        executor value, carrying the dispatched run's reference in
+        `CommandResult.run` (a dispatch can fail, and the Dispatcher folds
+        one value type from every executor into the Result)."""
     # --- run status ---
     def watch(self, run: RunRef) -> CommandResult: ...    # gh run watch
     def view(self, run: RunRef) -> RunStatus: ...         # gh run view / gh api
@@ -482,6 +484,10 @@ class CommandResult(BaseModel):
     ok: bool
     output: str                     # the tool's own output, surfaced verbatim on failure
     run_url: str | None = None      # set when a dispatched CI run is created
+    run: RunRef | None = None
+    # The dispatched run's identity, set alongside run_url by the step that
+    # created it. This is how the run reaches Result.run without any string
+    # parsing: the Dispatcher carries it through execute() untouched.
     changes: list[ConfigDiff] = Field(default_factory=list)
 
 class ConfigDiff(BaseModel):
@@ -498,6 +504,13 @@ executor actually acts on. No executor ever parses `command`; a step's routing i
 decided once in `plan()` and read from `op`/`params` at execution. `CommandResult`
 is the value every executor call returns, and is folded into the front-end
 `Result`.
+
+**`RunRef` / `RunStatus` are defined here, with `core/models.py`.** They are the
+`GitHubExecutor`'s vocabulary, but `Result.run` and `CommandResult.run` carry a
+`RunRef`, so defining them in `core/executors/github.py` — which imports
+`core/models.py` — would be a circular import. They live with the shared models
+and `github.py` re-exports them, so `gh`-side code still reads as if it owned
+them.
 
 **Why `op` is an enum, not a `str`.** Executors **switch on `op`**. With a closed
 `StrEnum` the type checker can verify the switch is exhaustive, so adding an op

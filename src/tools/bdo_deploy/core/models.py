@@ -129,6 +129,42 @@ class Op(StrEnum):
     request, so it is not secret and stays rendered."""
 
 
+class RunRef(BaseModel):
+    """A reference to one dispatched workflow run.
+
+    Lives here, in the shared vocabulary, rather than in ``core.executors.github``
+    where the ``gh`` adapter that produces it lives: ``Result`` and
+    ``CommandResult`` carry a ``RunRef``, and a model in the executor module would
+    make ``core.models`` import an executor that already imports it. The adapter
+    re-exports the name, so ``gh``-side code still reads as if it owned it.
+
+    ``url`` and ``run_id`` are optional because they are resolved *after* the
+    dispatch by a separate read-only query: a reference to a run that was
+    certainly dispatched but could not be located yet is still a useful thing to
+    return, and it is not a failure.
+    """
+
+    workflow: str
+    run_id: str | None = None
+    url: str | None = None
+
+
+class RunStatus(BaseModel):
+    """What ``gh run view`` reported about a run.
+
+    ``status`` / ``conclusion`` are GitHub's own strings, kept verbatim rather
+    than mapped onto a local vocabulary — the CI run is authoritative
+    (Requirement 10.6), so re-encoding its verdict would only create a second one
+    that can disagree.
+    """
+
+    run: RunRef
+    status: str | None = None
+    conclusion: str | None = None
+    output: str = ""
+    ok: bool = True
+
+
 class ConfigDiff(BaseModel):
     """A single config change, in one of the two sanctioned locations.
 
@@ -392,6 +428,18 @@ class CommandResult(BaseModel):
     run_url: str | None = None
     """Set by a github/CI step that dispatched a run (Requirement 10.6)."""
 
+    run: RunRef | None = None
+    """The dispatched run's identity, set by the same step that sets ``run_url``.
+
+    The design's ``GitHubExecutor`` sketch has ``run_workflow`` return a bare
+    ``RunRef``; the shipped signature returns a ``CommandResult`` — a dispatch can
+    fail, and the dispatcher consumes one uniform value from every executor — so
+    the reference travels *inside* it. That is what lets the run reach
+    ``Result.run`` structurally: without this field the only route from executor to
+    front-end would be parsing the id back out of the URL string, which would give
+    run identity a second source of truth.
+    """
+
     changes: list[ConfigDiff] = Field(default_factory=list)
 
 
@@ -404,7 +452,23 @@ class Result(BaseModel):
     summary: str
     changes: list[ConfigDiff] = Field(default_factory=list)
     run_url: str | None = None
-    """CI run reference when ``target == CI``."""
+    """CI run reference when ``target == CI`` — display only.
+
+    What a human is shown and what an agent reads out of ``--json``; it is not
+    what the run is followed by. See ``run``.
+    """
+
+    run: RunRef | None = None
+    """The structured reference to the dispatched run, set alongside ``run_url``.
+
+    ``presentation.follow_run()`` needs a ``RunRef`` to call
+    ``GitHubExecutor.watch`` / ``view``, and it gets it from here rather than by
+    parsing one back out of ``run_url``: a dispatched run then has exactly one
+    identity, carried from the executor that created it, instead of a second one
+    re-derived from a display string whose shape ``gh`` is free to change.
+    ``None`` when no run was dispatched, which is what makes ``follow_run()`` a
+    no-op for every local command.
+    """
 
     raw_output: str | None = None
 
@@ -432,6 +496,8 @@ __all__ = [
     "PlanStep",
     "PrRef",
     "Result",
+    "RunRef",
+    "RunStatus",
     "Target",
     "bootstrap_reviewers",
 ]

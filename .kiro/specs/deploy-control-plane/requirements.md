@@ -47,9 +47,12 @@ CI/CD workflows).
   command line rendered for preview only), the human-readable effects, and
   whether confirmation is required.
 - **Result**: The typed outcome (`ok`, `exit_code`, `summary`, `changes`,
-  `run_url`, `raw_output`, `plan`) returned after execution. `plan` is set when a
-  mutating plan was refused for want of confirmation, so the caller can inspect
-  the effects and re-invoke with `--yes`.
+  `run_url`, `run`, `raw_output`, `plan`) returned after execution. `run_url` is the
+  display-only URL of a dispatched CI run; `run` is that run's structured
+  reference, which the front-end follows (see criterion 7.6) rather than parsing an
+  identity back out of the URL. `plan` is set when a mutating plan was refused for
+  want of confirmation, so the caller can inspect the effects and re-invoke with
+  `--yes`.
 - **Executor**: An adapter over one sanctioned tool. The wizard shells out to
   executors; it never performs deploy work directly.
 - **SamExecutor**: The executor over the SAM CLI (`sam validate/build/deploy/
