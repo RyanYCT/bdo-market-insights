@@ -126,7 +126,7 @@ The one check that genuinely protects a deploy — `scripts/validate_regions.py`
 which validates `samconfig.toml`'s `BdoRegions` (`sam build` already covers
 template validity) — runs inside `deploy.yml` itself, scoped to the target stage.
 It is a second *call site* of one authoritative script, not duplicated logic
-(ADR-0038). Rationale in full: ADR (task 7.2).
+(ADR-0038). Rationale in full: ADR-0040.
 
 GitHub
 **Environments** `dev` and
@@ -683,8 +683,10 @@ Rationale is captured as ADRs rather than expanded inline (per AGENTS.md):
 - **(a)** **ADR-0039 (accepted)** — wizard as a thin control plane over the SAM
   CLI + GitHub Actions + `git`, packaged as a console entry point in
   `pyproject.toml` (no `scripts/` ops folder — respects the repo anti-pattern).
-- **(b)** Prod gating via GitHub Environments (required reviewers) + OIDC keyless
-  deploy, enforced by the platform rather than application code.
+- **(b)** **ADR-0040 (accepted)** — prod gating via GitHub Environments (required
+  reviewers) + OIDC keyless deploy, enforced by the platform rather than
+  application code; the deploy is deliberately not gated on the full validation
+  suite.
 - **(c)** **ADR-0038 (accepted)** — purpose-scoped GitHub Actions workflows.
   The former "one-workflow deviation" (extend `ci.yml` rather than add
   `deploy.yml`) is now **DECIDED against**: workflows are split by trigger /
