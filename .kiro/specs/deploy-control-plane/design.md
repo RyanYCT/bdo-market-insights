@@ -14,11 +14,11 @@ The tool ships **two thin front-ends over one shared command core**:
 
 - **CLI mode** (agents / automation / CI): a modern Python CLI with `--json`
   machine output, `--yes`, `--dry-run`, fully non-interactive, deterministic
-  exit codes. Recommended framework **Typer**; stdlib `argparse` is the
-  lighter zero-dependency alternative (flagged for an ADR).
-- **TUI mode** (humans): a full-screen terminal UI. Recommended framework
-  **Textual**; `questionary + rich` is the lighter prompt-driven alternative
-  (flagged for an ADR). This layer is deliberately kept thin — GitHub's own
+  exit codes. Framework **Typer**; stdlib `argparse` was the lighter
+  zero-dependency alternative (ADR-0041).
+- **TUI mode** (humans): a full-screen terminal UI. Framework
+  **Textual**; `questionary + rich` was the lighter prompt-driven alternative
+  (ADR-0041). This layer is deliberately kept thin — GitHub's own
   `workflow_dispatch` form and the Actions run dashboard are the *canonical*
   human trigger/observe surface, so the TUI is a convenience skin, not the
   system of record.
@@ -693,8 +693,10 @@ Rationale is captured as ADRs rather than expanded inline (per AGENTS.md):
   permission scope, with shared setup factored into a reusable composite action
   so they cannot drift. Workflow set: `ci.yml` (validation gate) and `deploy.yml`
   (CD — tag / `workflow_dispatch`, OIDC).
-- **(d)** CLI framework (Typer vs stdlib argparse) and TUI framework (Textual vs
-  questionary + rich) choices.
+- **(d)** **ADR-0041 (accepted)** — **Typer** for the CLI front-end and
+  **Textual** for the TUI front-end, over stdlib `argparse` and
+  `questionary + rich` respectively; both dev/ops-group dependencies only, kept
+  out of the Lambda layer by the placement recorded in ADR-0039.
 
 ## Constraints and Conventions
 

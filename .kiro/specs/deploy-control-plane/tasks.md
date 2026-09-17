@@ -243,7 +243,7 @@ nothing ships half-built.
 - [x] 7.2 ADR: prod gating via GitHub Environments (required reviewers) + OIDC keyless deploy
   - _Requirements: 6.3_
 
-- [ ] 7.3 ADR: CLI framework (Typer) and TUI framework (Textual) choices
+- [x] 7.3 ADR: CLI framework (Typer) and TUI framework (Textual) choices
   - _Requirements: 1.1, 1.3_
 
 ### Phase 8 — Property-based testing
