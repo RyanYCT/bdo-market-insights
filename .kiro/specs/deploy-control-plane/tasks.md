@@ -131,7 +131,7 @@ nothing ships half-built.
 
 ### Phase 4 — Capabilities wired end-to-end
 
-- [ ] 4.1 Wire the **config** capability
+- [x] 4.1 Wire the **config** capability
   - `config show` renders the masked merged view; `config set` opens a PR for
     tracked files or writes SSM with audit
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.6_

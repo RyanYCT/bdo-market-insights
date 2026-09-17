@@ -276,6 +276,12 @@ class SsmSamconfigStore:
         and the prior *type* is reused so an existing ``SecureString`` is not
         silently downgraded to a plain ``String`` by a write.
 
+        The returned diff masks its values under the same two conditions a merged
+        read does — a ``SecureString`` parameter, or a secret-shaped key name
+        (Requirement 3.2) — because ``ConfigDiff`` fields are plain ``str`` and
+        travel into ``Result``: an unmasked one would print under ``--json`` even
+        though the plan that produced it carried the value as a ``SecretStr``.
+
         The audit record is the parameter's ``Description``: who wrote it, when,
         and with what — visible to anyone reading the parameter, alongside (not
         instead of) the CloudTrail entry AWS records for the API call itself.
@@ -286,7 +292,13 @@ class SsmSamconfigStore:
         """
         validate_ssm_path(path)
         before, parameter_type = self._read_prior(path)
-        secure = parameter_type == SECURE_STRING
+        # Masked by type *or* by name, exactly as a merged read is: a first write
+        # to a secret-shaped path has no prior parameter to be a ``SecureString``
+        # yet, so type alone would let the plaintext of a brand-new
+        # ``.../db/password`` back out through the returned diff — and from there
+        # into ``Result.model_dump_json()``, which is the one place Requirement
+        # 3.2's mask has to survive to be worth anything.
+        secure = parameter_type == SECURE_STRING or _is_secret_name(path)
         try:
             self.client.put_parameter(
                 Name=path,

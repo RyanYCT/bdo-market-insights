@@ -69,7 +69,7 @@ from bdo_deploy.core.models import (
     Result,
     Target,
 )
-from bdo_deploy.core.validation import PROD_STAGE, validate_ssm_path
+from bdo_deploy.core.validation import PROD_STAGE, SSM_ROOT_SEGMENT, validate_ssm_path
 
 DEPLOY_WORKFLOW: Final = "deploy.yml"
 """The dedicated CD workflow every CI deploy is dispatched against (ADR-0038)."""
@@ -129,6 +129,16 @@ def _plan_for(
         effects=effects,
         requires_confirmation=confirm,
     )
+
+
+def _ssm_stage_prefix(stage: str) -> str:
+    """The repo-scoped SSM prefix a ``config show`` reads, built from one root.
+
+    ``SSM_ROOT_SEGMENT`` is the same constant ``core.validation`` enforces writes
+    against and ``ConfigStore`` reads under, so the previewed ``aws ssm`` line
+    cannot name a prefix the executor would not actually read.
+    """
+    return f"/{SSM_ROOT_SEGMENT}/{stage}/"
 
 
 def _str_arg(cmd: Command, name: str) -> str:
@@ -377,13 +387,13 @@ class Dispatcher:
                     ),
                     command=(
                         "aws ssm get-parameters-by-path "
-                        f"--path /bdo-market-insights/{cmd.stage}/ --recursive"
+                        f"--path {_ssm_stage_prefix(cmd.stage)} --recursive"
                     ),
                     executor="config",
                     op=Op.CONFIG_SHOW,
                     params={
                         "stage": cmd.stage,
-                        "ssm_path": f"/bdo-market-insights/{cmd.stage}/",
+                        "ssm_path": _ssm_stage_prefix(cmd.stage),
                     },
                 )
             ],
