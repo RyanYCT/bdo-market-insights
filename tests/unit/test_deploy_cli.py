@@ -22,12 +22,14 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Final
 
 import pytest
+from typer import rich_utils
 
 from bdo_deploy import cli as cli_module
 from bdo_deploy import presentation as presentation_module
@@ -240,6 +242,65 @@ def _json_result(out: str) -> dict[str, Any]:
     return parsed
 
 
+# -- reading help text back ---------------------------------------------------
+#
+# Typer renders help through Rich, so the bytes on stdout are a *rendering* of
+# the declared help and not the help itself. Two artefacts of that rendering will
+# break a naive `phrase in out`, and both did:
+#
+#   * ANSI escape sequences. Typer forces a terminal (and therefore colour) when
+#     GITHUB_ACTIONS / FORCE_COLOR / PY_COLORS is set -- see
+#     `typer.rich_utils.FORCE_TERMINAL` -- which is always true on a GitHub
+#     runner and normally false on a developer's machine under pytest capture.
+#     The codes land *inside* the phrases: an option switch is emitted as
+#     `ESC[1;36m-ESC[0mESC[1;36m-watch`, so even `--watch` is not a substring.
+#   * hard wrapping at the console width, with the paragraph's dim style
+#     re-opened on every wrapped line -- so `ESC[0m ESC[2m` lands wherever the
+#     wrap happens to fall, which depends on the terminal width.
+#
+# `plain()` undoes exactly those two and nothing else: it removes the escape
+# sequences and collapses the wrap back into single-spaced text. What is left is
+# the operator-visible words, so the assertions still fail if the help text is
+# weakened or deleted.
+
+_ANSI_ESCAPE: Final = re.compile(r"\x1b\[[0-9;:?]*[ -/]*[@-~]")
+
+HELP_WIDTHS: Final = (40, 200)
+"""Two widths either side of any plausible terminal, asserted to be equivalent.
+
+A single width would only prove the tests pass *there*. Rendering the same claim
+narrow and wide is what makes a future change of runner width -- or of Rich's
+wrapping -- unable to resurrect this failure.
+"""
+
+
+def plain(rendered: str) -> str:
+    """Rendered help as the operator reads it: no ANSI, no wrapping artefacts."""
+    return " ".join(_ANSI_ESCAPE.sub("", rendered).split())
+
+
+@pytest.fixture(params=HELP_WIDTHS, ids=lambda width: f"cols{width}")
+def help_width(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> int:
+    """Render help at a pinned width with colour forced *on*.
+
+    Pinning the width makes the rendering deterministic instead of inheriting
+    whatever terminal the test happens to run under, and parametrising it proves
+    the assertions do not depend on the value. Forcing colour on reproduces the
+    CI environment unconditionally, so a rendering-sensitive assertion fails for
+    everyone rather than only on the runner.
+
+    Both are patched on ``typer.rich_utils``, whose module globals
+    ``_get_rich_console()`` reads at render time; ``FORCE_TERMINAL`` is decided
+    from the environment at *import*, so setting an env var here would be too
+    late.
+    """
+    width: int = request.param
+    monkeypatch.setenv("COLUMNS", str(width))
+    monkeypatch.setattr(rich_utils, "MAX_WIDTH", width)
+    monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", True)
+    return width
+
+
 # -- A. the subcommand surface (Requirement 1.1) ------------------------------
 
 
@@ -257,10 +318,17 @@ class TestSubcommands:
         assert nested is not None
         assert {command.name for command in nested.registered_commands} == {"show", "set"}
 
-    def test_help_labels_bootstrap_as_one_time(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Requirement 4.2: help output says bootstrap is a one-time step."""
+    def test_help_labels_bootstrap_as_one_time(
+        self, capsys: pytest.CaptureFixture[str], help_width: int
+    ) -> None:
+        """Requirement 4.2: help output says bootstrap is a one-time step.
+
+        Asserted at both ends of ``HELP_WIDTHS``: the labelling has to reach the
+        operator whatever terminal they are on, so the rendering must not be able
+        to hide it.
+        """
         assert main(["bootstrap", "--help"]) == ExitCode.SUCCESS
-        rendered = " ".join(capsys.readouterr().out.split())
+        rendered = plain(capsys.readouterr().out)
         assert "ONE-TIME, out-of-band step" in rendered
         assert "NOT part of the routine deploy path" in rendered
 
@@ -594,18 +662,23 @@ class TestRunFollowing:
         assert github.watched == []
 
     def test_watch_is_offered_only_where_a_run_can_be_dispatched(
-        self, capsys: pytest.CaptureFixture[str]
+        self, capsys: pytest.CaptureFixture[str], help_width: int
     ) -> None:
         """The two capabilities that can trigger a CI run offer ``--watch``; none else.
 
         A flag on ``config show`` would advertise a wait that nothing there can
         produce.
+
+        The absence half is why the ANSI stripping matters twice over: Rich splits
+        a switch as ``-`` + ``-watch``, so a raw-text ``not in`` would hold even
+        where the flag *is* offered, and the assertion would pass for the wrong
+        reason.
         """
         for argv in (["deploy", "--help"], ["release", "--help"]):
             assert main(argv) == ExitCode.SUCCESS
-            assert "--watch" in " ".join(capsys.readouterr().out.split())
+            assert "--watch" in plain(capsys.readouterr().out)
         assert main(["config", "show", "--help"]) == ExitCode.SUCCESS
-        assert "--watch" not in capsys.readouterr().out
+        assert "--watch" not in plain(capsys.readouterr().out)
 
 
 # -- G. the console entry point ----------------------------------------------
@@ -619,7 +692,7 @@ class TestEntryPoint:
     ) -> None:
         """No capability named is a usage error (exit ``2``), with help shown."""
         assert main([]) == ExitCode.USAGE_ERROR
-        assert "Usage:" in capsys.readouterr().out
+        assert "Usage: bdo-deploy" in plain(capsys.readouterr().out)
 
     def test_argv_is_read_when_no_arguments_are_passed(
         self, monkeypatch: pytest.MonkeyPatch
@@ -698,7 +771,7 @@ class TestModeSelection:
         assert main([]) == ExitCode.USAGE_ERROR
         assert launched_tui == []
         if not stdout:
-            assert "Usage:" in capsys.readouterr().out
+            assert "Usage: bdo-deploy" in plain(capsys.readouterr().out)
 
     def test_the_tui_flag_without_a_terminal_is_a_usage_error(
         self, monkeypatch: pytest.MonkeyPatch, launched_tui: list[Dispatcher | None]
