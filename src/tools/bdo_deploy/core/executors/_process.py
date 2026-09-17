@@ -24,6 +24,10 @@ Guarantees this module makes, so no caller has to restate them:
   the only place an argument appears in returned text is the timeout/missing-tool
   message, so a secret value must never be passed as an argument — the executors
   pass secrets to ``gh`` on stdin or via the API instead.
+- ``stdin`` is the sanctioned channel for a value that must not appear in argv.
+  It is written to the child's standard input and is **never** included in any
+  returned message — not in the timeout report, not in the missing-tool report —
+  so a secret passed there cannot leak back out through ``CommandResult``.
 """
 
 from __future__ import annotations
@@ -47,16 +51,21 @@ class CommandRunner(Protocol):
     against the exact argument list it would have run, without a real ``sam`` /
     ``git`` / ``gh`` on the machine (design: "the SAM / gh / git executors are
     tested against recorded command invocations, not live clouds").
+
+    ``stdin`` is keyword-only and optional, so the callers that never need it
+    (every ``sam`` and ``git`` invocation) keep calling with an argument list
+    alone; only ``GitHubExecutor``'s secret write supplies it.
     """
 
-    def __call__(self, argv: Sequence[str]) -> CommandResult:
-        """Run ``argv`` and report the tool's own output."""
+    def __call__(self, argv: Sequence[str], *, stdin: str | None = None) -> CommandResult:
+        """Run ``argv``, optionally writing ``stdin`` to it, and report its output."""
         ...
 
 
 def run_command(
     argv: Sequence[str],
     *,
+    stdin: str | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> CommandResult:
     """Run ``argv`` from the repository root and report what the tool said.
@@ -65,6 +74,13 @@ def run_command(
     untouched. Returns ``ok=False`` with the tool's verbatim combined output on a
     non-zero exit, and a named failure (never a traceback) when the executable is
     missing or the command times out.
+
+    ``stdin``, when given, is written to the child process's standard input and
+    the stream is then closed. That is the only way to hand a tool a value
+    without putting it in argv, which is what makes a secret write possible here
+    at all: argv is visible to every other process on the machine and is quoted
+    back in the timeout / missing-tool messages, whereas ``stdin`` is written to
+    the child and appears in no message this module produces.
     """
     if not argv:
         raise ValueError("run_command needs at least an executable")
@@ -72,6 +88,7 @@ def run_command(
         completed = subprocess.run(  # noqa: S603  # nosec B603 - fixed argv from a closed op vocabulary, shell=False
             list(argv),
             cwd=REPO_ROOT,
+            input=stdin,
             capture_output=True,
             text=True,
             timeout=timeout,

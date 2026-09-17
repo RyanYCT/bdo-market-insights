@@ -23,6 +23,7 @@ from bdo_deploy.core.dispatch import (
     Dispatcher,
 )
 from bdo_deploy.core.errors import ConfirmationRequired, UsageError, exit_code_for
+from bdo_deploy.core.executors.github import RunRef, RunStatus
 from bdo_deploy.core.exit_codes import ExitCode
 from bdo_deploy.core.models import (
     Capability,
@@ -103,12 +104,27 @@ class FakeSamExecutor(FakeExecutor):
 
 
 class FakeGitHubExecutor(FakeExecutor):
-    """A ``FakeExecutor`` that also satisfies ``GitHubExecutor``'s admin methods.
+    """A ``FakeExecutor`` that also satisfies ``GitHubExecutor``'s domain methods.
 
-    Only ``run_step`` is ever called through the dispatcher's seam; these two
-    exist so the fake structurally matches the Protocol the ``github=`` keyword
-    is typed against.
+    Only ``run_step`` is ever called through the dispatcher's seam; these exist
+    so the fake structurally matches the Protocol the ``github=`` keyword is
+    typed against — and they touch no real ``gh``, repository or environment.
     """
+
+    def run_workflow(
+        self,
+        *,
+        stage: str,
+        version: str | None = None,
+        inputs: dict[str, str] | None = None,
+    ) -> CommandResult:
+        return CommandResult(ok=True, output=f"{self.name}: dispatch {stage}", run_url=RUN_URL)
+
+    def watch(self, run: RunRef) -> CommandResult:
+        return CommandResult(ok=True, output=f"{self.name}: watch {run.workflow}")
+
+    def view(self, run: RunRef) -> RunStatus:
+        return RunStatus(run=run, status="completed", conclusion="success")
 
     def set_environment(
         self,

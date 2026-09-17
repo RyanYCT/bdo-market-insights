@@ -80,7 +80,7 @@ nothing ships half-built.
     `config_env == "prod"`
   - _Requirements: 2.2, 5.1, 6.1_
 
-- [ ] 3.2 Implement `GitHubExecutor` (`core/executors/github.py`)
+- [x] 3.2 Implement `GitHubExecutor` (`core/executors/github.py`)
   - The single adapter over the GitHub CLI, covering three groups:
   - **Workflow dispatch** — `run_workflow` → `gh workflow run deploy.yml
     -f stage=… -f version=…`; returns the dispatched run ref
