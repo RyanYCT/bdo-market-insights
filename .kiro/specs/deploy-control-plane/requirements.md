@@ -131,6 +131,7 @@ CI/CD workflows).
 2. THE Wizard SHALL label the bootstrap capability in help output and menus as a one-time, out-of-band step so that it is not used on the routine deploy path.
 3. IF a step of the bootstrap helper fails, THEN THE Wizard SHALL stop at the first failing step, report which steps completed and which step failed, and preserve the effects of any completed step without rolling them back.
 4. WHEN the bootstrap helper plans a GitHub Environment secret, THE Wizard SHALL render only the secret's name and SHALL NOT include the secret value in the `Plan`, in `--json` output, or in any tracked file.
+5. IF `bootstrap` targets `prod` without at least one required reviewer, THEN THE Wizard SHALL reject the request with exit code `2` before any executor call, create no GitHub Environment, and name the missing input, so that production cannot be bootstrapped into an unprotected state.
 
 ### Requirement 5: Deploy capability
 
@@ -152,6 +153,7 @@ CI/CD workflows).
 1. THE Wizard SHALL have no code path that runs `sam deploy --config-env prod`; for all commands it can construct, no `Plan` SHALL execute a production `sam deploy` locally.
 2. THE Wizard SHALL reach production only by dispatching an environment-protected GitHub Actions job through the GitHubExecutor.
 3. THE production GitHub Actions job SHALL run inside a GitHub Environment configured with required reviewers and OIDC keyless deploy (no static AWS credentials).
+4. WHEN the bootstrap helper creates or updates the production GitHub Environment, THE Wizard SHALL configure its required reviewers as part of that step.
 
 ### Requirement 7: Release capability
 
@@ -164,7 +166,7 @@ CI/CD workflows).
 3. IF a release precondition is violated, THEN THE Wizard SHALL report which specific precondition failed, SHALL NOT create or push a tag, and SHALL leave the git working tree, current branch, and existing tags unchanged.
 4. WHEN the release preconditions pass and the action is confirmed, THE GitExecutor SHALL create the `vX.Y.Z` tag and push it to the origin so the tag-triggered pipeline runs.
 5. THE Wizard SHALL confine initiation of a production deploy to the sanctioned pipeline triggers — a pushed Release_Tag, or an authorised `workflow_dispatch` of `deploy.yml` (dispatched either by the Wizard or from the GitHub Actions UI) — and SHALL keep every LOCAL path free of any production deploy execution, so that no `Plan` runs a production deploy on the operator's machine even when the sanctioned trigger (a tag push or a `workflow_dispatch`) is issued locally.
-6. WHEN `release` dispatches a CI run, THE Wizard SHALL surface the dispatched run's URL and status (via `gh run watch` / `gh run view`).
+6. WHEN `release` dispatches a CI run, THE Wizard SHALL surface the dispatched run's URL, and the front-end SHALL follow the run's status from that URL (via `gh run watch` / `gh run view`) after execution has returned.
 
 ### Requirement 8: Purpose-scoped CI/CD workflows
 
@@ -200,7 +202,7 @@ CI/CD workflows).
 3. IF a `Command` fails validation (unknown stage, malformed version, non-repo-scoped SSM path, or a LOCAL prod deploy), THEN THE Wizard SHALL exit with code `2` before any executor call, return a `Result` naming the offending field, and make no mutation to any external system so that all target state is preserved unchanged.
 4. IF a mutating `Command` is invoked in CLI_Mode without `--yes`, THEN THE Wizard SHALL exit with code `3`, return a `Result` containing the `Plan` so the caller can inspect the effects and re-invoke with `--yes`, and make no mutation to any external system.
 5. WHEN `--dry-run` is supplied in CLI_Mode or preview is chosen in TUI_Mode, THE Wizard SHALL render the `Plan` and perform no file write, PR, AWS API mutation, SSM write, git mutation, `sam deploy`, or workflow dispatch, leaving all state unchanged.
-6. WHEN a `Command` has `target=CI`, THE Wizard SHALL report the dispatched CI run URL and treat the CI run itself as the authoritative pass or fail.
+6. WHEN a `Command` has `target=CI`, THE Wizard SHALL report the dispatched CI run URL, the front-end SHALL follow the run's status from that URL after execution has returned, and THE Wizard SHALL treat the CI run itself as the authoritative pass or fail.
 7. THE Wizard SHALL map every terminating outcome to exactly one exit code from the set {`0` = success, `1` = executor or action failed, `2` = usage/validation error before any executor call, `3` = confirmation required}.
 
 ## Out of Scope

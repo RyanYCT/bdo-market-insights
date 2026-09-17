@@ -287,6 +287,13 @@ class GitHubExecutor(Protocol):
         in any tracked file."""
 ```
 
+**`watch` / `view` are deliberately not reachable from any `Op`.** A dispatch
+plans only the trigger; following the run afterwards is presentation, performed
+by the front-end on `Result.run_url` once `execute()` has returned. Keeping it
+out of the plan is what preserves dry-run purity (Property 5) — a preview must
+reach no tool — and plan equivalence (Property 1), since a blocking watch is not
+part of what a plan describes.
+
 **Secret values never reach a plan.** For `secret_set` steps only the secret's
 **name** is rendered into `PlanStep.command` / `Plan.effects`. The role ARN value
 is account-identifying, so it is supplied at execution and never appears in a
@@ -328,7 +335,7 @@ class ConfigStore(Protocol):
 | Capability | Executor(s) | Behaviour |
 |---|---|---|
 | **config** | ConfigStore | `config show` renders the merged view (samconfig + SSM). `config set` opens a PR (tracked files) or writes SSM with audit. Also covers deploy-time configuration/parameters (e.g. `BdoRegions`) → changed in `samconfig.toml` via PR. |
-| **bootstrap** | SamExecutor + GitHubExecutor | One-time, clearly labelled: `SamExecutor` wraps `sam pipeline bootstrap` (standard AWS CI/CD bootstrap — OIDC deploy role + artifact bucket); `GitHubExecutor` creates/updates the GitHub Environments (`github.environment_set`) and sets the Environment secrets (`github.secret_set`). GitHub administration is **not** a `ConfigStore` concern — `ConfigStore` stays strictly config-as-data over `samconfig.toml` + SSM. |
+| **bootstrap** | SamExecutor + GitHubExecutor | One-time, clearly labelled: `SamExecutor` wraps `sam pipeline bootstrap` (standard AWS CI/CD bootstrap — OIDC deploy role + artifact bucket); `GitHubExecutor` creates/updates the GitHub Environments (`github.environment_set`) **together with their required reviewers** and sets the Environment secrets (`github.secret_set`). A `prod` bootstrap carrying no required reviewer is refused, so prod cannot be bootstrapped into an unprotected state. GitHub administration is **not** a `ConfigStore` concern — `ConfigStore` stays strictly config-as-data over `samconfig.toml` + SSM. |
 | **deploy** | SamExecutor (LOCAL) / GitHubExecutor (CI) | dev/personal → `sam deploy --config-env dev` or `sam sync`. shared/prod → trigger the CI job. A fresh environment reaches target state via a single declarative deploy — the stack self-bootstraps (auto-migrate custom resource, ADR-0025; bootstrap orchestrator auto-run, ADR-0028). No imperative multi-step orchestration. |
 | **release** | GitExecutor / GitHubExecutor | `git tag` push (`deploy.yml` `push: tags: v*`) or `gh workflow run deploy.yml` (manual `workflow_dispatch`, a `run`/`dispatch` alias). Production is initiated **only by the sanctioned pipeline triggers** — a pushed release tag, or an authorised `workflow_dispatch` of `deploy.yml` (whether dispatched by the control plane or from the GitHub Actions UI). No LOCAL path initiates a production deploy. |
 | **flag** *(planned — deferred, not built in this spec)* | ConfigStore + DynamoDB (planned) | Flip a runtime feature flag without a redeploy. Flag values are stored in a DynamoDB table and read in Lambdas via the Powertools feature-flags provider (a custom `StoreProvider`), or the Powertools parameters `DynamoDBProvider` for plain booleans. Reachable from in-VPC Lambdas through the existing free DynamoDB Gateway endpoint. |
@@ -383,6 +390,9 @@ class Op(StrEnum):
     SAM_PIPELINE_BOOTSTRAP = "sam.pipeline_bootstrap"
     GITHUB_RUN_WORKFLOW = "github.run_workflow"
     GITHUB_ENVIRONMENT_SET = "github.environment_set"
+    """params: `environment`, and an optional `reviewers` — the list of required
+    reviewers to configure on that Environment. Carried in `params` so the
+    reviewer list appears in the plan preview."""
     GITHUB_SECRET_SET = "github.secret_set"
     GIT_TAG = "git.tag"
     GIT_PUSH = "git.push"
@@ -471,6 +481,10 @@ rule holds for every diff — planned, previewed, or returned — not only at th
   `samconfig.toml` (ADR-0036).
 - A `release` `Command` is normalised to `target = CI` during planning; `config`
   and `bootstrap` plans ignore `target` entirely (see *Deploy targeting*).
+- A `bootstrap` `Command` whose `stage` is `prod` must carry **at least one
+  required reviewer**; otherwise it is rejected at validation (exit `2`) before
+  any executor call, so no unprotected prod Environment can be created. Non-prod
+  stages may bootstrap without reviewers.
 - **Plan previews never render operational values.** `PlanStep.command` and
   `Plan.effects` mask secret-shaped and operational values — SecureString-backed
   values, keys whose name contains `secret`/`password`/`token`/`key`
@@ -503,8 +517,10 @@ rule holds for every diff — planned, previewed, or returned — not only at th
   injected into the `Dispatcher`, the plan fails **by executor name before any
   step runs**, and returns exit `1`. Failing up-front rather than mid-plan means a
   misconfigured wiring can never leave a plan half-applied.
-- For `target == CI` deploys, the wizard reports the dispatched run URL; the
-  authoritative pass/fail is the CI run itself (surfaced via `gh run watch`).
+- For `target == CI` deploys, the wizard reports the dispatched run URL and the
+  front-end follows the run's status from it (via `gh run watch` / `gh run view`)
+  after `execute()` has returned; the CI run itself remains the authoritative
+  pass/fail.
 
 ## Testing Strategy
 
