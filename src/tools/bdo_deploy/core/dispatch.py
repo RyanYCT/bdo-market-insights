@@ -721,6 +721,18 @@ class Dispatcher:
                 hint="pass a release tag in the format vX.Y.Z",
             )
         if _bool_arg(cmd, DISPATCH_ARG):
+            dispatch_effects = [
+                f"dispatches the {DEPLOY_WORKFLOW} run that deploys {version} to {cmd.stage}",
+                "creates no tag; the dispatched run's URL and status are surfaced",
+            ]
+            if cmd.stage == PROD_STAGE:
+                # Worded as in ``_plan_ci_deploy``: the same environment gate
+                # guards the same dispatched run, so it reads the same way.
+                dispatch_effects.insert(
+                    1,
+                    f"deploys nothing until the {PROD_STAGE} GitHub Environment's "
+                    "required reviewers approve the run",
+                )
             return _plan_for(
                 cmd,
                 [
@@ -734,10 +746,7 @@ class Dispatcher:
                         params=self._workflow_run_params(cmd),
                     )
                 ],
-                [
-                    f"dispatches the {DEPLOY_WORKFLOW} run that deploys {version} to {cmd.stage}",
-                    "creates no tag; the dispatched run's URL and status are surfaced",
-                ],
+                dispatch_effects,
                 confirm=True,
             )
         return _plan_for(
@@ -751,7 +760,15 @@ class Dispatcher:
                     command=f"git tag {version}",
                     executor="git",
                     op=Op.GIT_TAG,
-                    params={"version": version, "base_branch": RELEASE_BASE_BRANCH},
+                    params={
+                        "version": version,
+                        "base_branch": RELEASE_BASE_BRANCH,
+                        # The same remote the push step targets: ``Git.tag`` runs the
+                        # "tag absent on the origin" precondition itself, and checking
+                        # one remote while publishing to another would pass a
+                        # precondition about a remote nobody is releasing to.
+                        "remote": GIT_REMOTE,
+                    },
                 ),
                 PlanStep(
                     description=f"push {version} so the tag-triggered pipeline runs",
@@ -763,7 +780,14 @@ class Dispatcher:
             ],
             [
                 f"creates the {version} tag and pushes it to {GIT_REMOTE}",
-                f"the pushed tag triggers the {DEPLOY_WORKFLOW} run; {version} becomes ApiVersion",
+                f"the pushed tag triggers the {DEPLOY_WORKFLOW} run, and {version} is the "
+                "source of ApiVersion for what it deploys (ADR-0037)",
+                # ``stage`` is a real argument the operator may have passed, and on
+                # this path it changes nothing: the tag is the trigger and
+                # ``deploy.yml`` decides what a tag run deploys. Saying so beats
+                # leaving a supplied stage looking as though it had an effect.
+                f"ignores the requested stage ({cmd.stage}): a tag run's scope is "
+                f"{DEPLOY_WORKFLOW}'s to decide, not this plan's",
                 f"the {PROD_STAGE} deploy still waits on that environment's required reviewers",
             ],
             confirm=True,

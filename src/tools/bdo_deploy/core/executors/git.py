@@ -196,9 +196,14 @@ class Git:
         """
         match step.op:
             case Op.GIT_TAG:
+                # ``remote`` is passed through as well as ``base_branch``: ``tag()``
+                # runs the "tag absent on the origin" precondition, so it has to
+                # ask about the *same* remote the planned ``git.push`` step
+                # publishes to rather than falling back to this module's default.
                 return self.tag(
                     str_param(step, VERSION_PARAM),
                     base_branch=str_param(step, BASE_BRANCH_PARAM),
+                    remote=str_param(step, REMOTE_PARAM),
                 )
             case Op.GIT_PUSH:
                 return self.push(

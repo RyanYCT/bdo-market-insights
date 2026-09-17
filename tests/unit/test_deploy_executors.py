@@ -562,7 +562,9 @@ class TestGitRunStep:
 
     def test_tag_step(self) -> None:
         runner = FakeRunner(responses={BRANCH_ARGV: ON_MAIN})
-        Git(runner=runner).run_step(_step(Op.GIT_TAG, "git", version=VERSION, base_branch="main"))
+        Git(runner=runner).run_step(
+            _step(Op.GIT_TAG, "git", version=VERSION, base_branch="main", remote="origin")
+        )
         assert runner.argvs[-1] == TAG_ARGV
 
     def test_push_step(self) -> None:

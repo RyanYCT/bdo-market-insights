@@ -106,7 +106,13 @@ class Op(StrEnum):
     """
 
     GIT_TAG = "git.tag"
-    """Create a release tag. Params: ``version``, ``base_branch``."""
+    """Create a release tag. Params: ``version``, ``base_branch``, ``remote``.
+
+    ``remote`` is carried even though creating a tag is purely local: the
+    executor verifies the release preconditions before it creates anything, and
+    one of them asks whether the tag already exists on the remote the matching
+    ``git.push`` step will publish to.
+    """
 
     GIT_PUSH = "git.push"
     """Push a release tag. Params: ``version``, ``remote``."""

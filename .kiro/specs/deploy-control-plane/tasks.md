@@ -151,7 +151,7 @@ nothing ships half-built.
     fresh env reaches target state via a single declarative deploy
   - _Requirements: 5.1, 5.2, 5.3, 5.4_
 
-- [ ] 4.4 Wire the **release** capability
+- [x] 4.4 Wire the **release** capability
   - Verify preconditions, then tag + push (`push: tags: v*`) or `gh workflow run`
     dispatch; surface the dispatched run URL/status
   - Production is initiated only by the sanctioned pipeline triggers (a pushed

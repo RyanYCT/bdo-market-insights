@@ -516,7 +516,7 @@ class TestPlanRelease:
                 command="git tag v1.4.0",
                 executor="git",
                 op=Op.GIT_TAG,
-                params={"version": "v1.4.0", "base_branch": "main"},
+                params={"version": "v1.4.0", "base_branch": "main", "remote": "origin"},
             ),
             PlanStep(
                 description="push v1.4.0 so the tag-triggered pipeline runs",
@@ -528,7 +528,10 @@ class TestPlanRelease:
         ]
         assert plan.effects == [
             "creates the v1.4.0 tag and pushes it to origin",
-            f"the pushed tag triggers the {DEPLOY_WORKFLOW} run; v1.4.0 becomes ApiVersion",
+            f"the pushed tag triggers the {DEPLOY_WORKFLOW} run, and v1.4.0 is the source "
+            "of ApiVersion for what it deploys (ADR-0037)",
+            "ignores the requested stage (dev): a tag run's scope is "
+            f"{DEPLOY_WORKFLOW}'s to decide, not this plan's",
             "the prod deploy still waits on that environment's required reviewers",
         ]
         assert plan.requires_confirmation is True
