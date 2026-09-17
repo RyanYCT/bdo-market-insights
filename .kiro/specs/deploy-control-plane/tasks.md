@@ -24,14 +24,18 @@ nothing ships half-built.
 - [x] 1.1 Scaffold the control-plane package
   - Add a console entry point in `pyproject.toml` (wizard = front-end `main`)
   - Create the module layout: `cli.py`, `tui.py`, `core/dispatch.py`,
-    `core/models.py`, `core/executors/{sam,actions,git,config}.py`
+    `core/models.py`, `core/executors/{sam,github,git,config}.py`
   - Add dev/ops-only deps (Typer, Textual) in a dev/ops group only — kept out of
     the Lambda layer and `bdo_common`
   - _Requirements: 1.1, 2.3, 9.4_
 
 - [x] 1.2 Define the Pydantic v2 command-core models
-  - `Capability`, `Target`, `Command`, `PlanStep`, `Plan`, `Result`, `ConfigDiff`
-    per the design's Data Models (JSON-serializable for `--json`)
+  - `Capability`, `Target`, `Command`, `Op`, `PlanStep`, `Plan`, `Result`,
+    `ConfigDiff` per the design's Data Models (JSON-serializable for `--json`)
+  - `PlanStep.executor` is `Literal["sam", "github", "git", "config"]` and
+    `PlanStep.op` is the typed `Op` StrEnum (closed vocabulary, GitHub members
+    `github.run_workflow` / `github.environment_set` / `github.secret_set`), so
+    executors switching on `op` get exhaustiveness checking at type-check time
   - _Requirements: 1.4, 10.6, 10.7_
 
 - [x] 1.3 Implement model validation and the exit-code contract
@@ -76,10 +80,22 @@ nothing ships half-built.
     `config_env == "prod"`
   - _Requirements: 2.2, 5.1, 6.1_
 
-- [ ] 3.2 Implement `ActionsDispatcher`
-  - `run_workflow` → `gh workflow run deploy.yml -f stage=… -f version=…`;
-    `watch` → `gh run watch`; `view` → `gh run view`; return the dispatched run ref
-  - _Requirements: 5.3, 6.2, 7.6, 8.3, 10.6_
+- [ ] 3.2 Implement `GitHubExecutor` (`core/executors/github.py`)
+  - The single adapter over the GitHub CLI, covering three groups:
+  - **Workflow dispatch** — `run_workflow` → `gh workflow run deploy.yml
+    -f stage=… -f version=…`; returns the dispatched run ref
+  - **Run status** — `watch` → `gh run watch`; `view` → `gh run view`
+  - **Repository / environment administration** (used only by `bootstrap`) —
+    `set_environment` creates or updates a GitHub Environment (e.g. `prod` with
+    required reviewers); `set_environment_secret` sets an Environment secret,
+    rendering only the secret's **name** in a plan — never its value, since the
+    deploy role ARN is account-identifying
+  - Steps arrive as typed `op`s from the `Op` StrEnum (`github.run_workflow`,
+    `github.environment_set`, `github.secret_set`), so the executor's switch gets
+    exhaustiveness checking; it never parses `PlanStep.command`
+  - Covers the administration methods themselves; the `bootstrap` wiring that
+    calls them stays in 4.2
+  - _Requirements: 4.1, 4.4, 5.3, 6.2, 7.6, 8.3, 10.6_
 
 - [ ] 3.3 Implement `GitExecutor`
   - `release_preconditions` (clean tree, on `main`, tag absent locally + on origin);
@@ -92,7 +108,12 @@ nothing ships half-built.
   - `open_config_pr` via `gh` for tracked files — including `BdoRegions`, the
     single active-region toggle in `samconfig.toml` (ADR-0036)
   - `put_ssm` with repo-scoped-path enforcement + audit record; a failed write
-    leaves the prior value at the targeted path unchanged
+    leaves the prior value at the targeted path unchanged. The repo-scoped check
+    now also requires the `<stage>` segment to be an environment defined in
+    `samconfig.toml` — not merely any non-empty string
+  - Strictly config-as-data over `samconfig.toml` + SSM: **no** GitHub
+    Environment or Environment-secret work here — that moved to the
+    `GitHubExecutor` (3.2)
   - Two sanctioned locations only (`samconfig.toml` via PR, SSM); no runtime
     flag store is introduced here
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 9.1, 9.2, 9.3_
@@ -116,9 +137,12 @@ nothing ships half-built.
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.6_
 
 - [ ] 4.2 Wire the **bootstrap** capability
-  - One-time, clearly-labelled helper wrapping `sam pipeline bootstrap` (OIDC
-    deploy role + artifact bucket) and configuring GitHub Environments/secrets;
-    stop at the first failing step and preserve completed effects
+  - One-time, clearly-labelled helper: the `SamExecutor` wraps `sam pipeline
+    bootstrap` (OIDC deploy role + artifact bucket) while the `GitHubExecutor`
+    creates/updates the GitHub Environments (`github.environment_set`) and sets
+    the Environment secrets (`github.secret_set`)
+  - Stop at the first failing step and preserve completed effects; plan only the
+    secret's name, never its value
   - _Requirements: 4.1, 4.2, 4.3, 6.3_
 
 - [ ] 4.3 Wire the **deploy** capability
@@ -145,7 +169,10 @@ nothing ships half-built.
 - [ ] 5.1 Implement the Typer CLI front-end
   - One subcommand per capability; `--json` (sole `Result` on stdout, logs to
     stderr), `--yes`, `--dry-run`; never prompts; deterministic exit codes
-  - _Requirements: 1.1, 1.2, 10.1, 10.2, 10.7_
+  - Catch `ConfirmationRequired` from the core and render a `Result` carrying the
+    refused `Plan` (`Result.plan`), exiting `3` — this is how Requirement 10.4 is
+    satisfied at the CLI_Mode boundary it describes
+  - _Requirements: 1.1, 1.2, 10.1, 10.2, 10.4, 10.7_
 
 - [ ] 5.2 Implement the Textual TUI front-end
   - Guided flows that render the `Plan` at an explicit confirmation step before any
@@ -276,5 +303,5 @@ completeness — AGENTS.md). Each cites the requirement(s) it defends.
   ops folder is added.
 - Waves respect phase order and the checkpoints: no wave schedules work from a
   later phase before that phase's predecessor checkpoint, tests follow the code
-  they exercise, and the Phase 6 workflow tasks follow the `ActionsDispatcher`
+  they exercise, and the Phase 6 workflow tasks follow the `GitHubExecutor`
   (3.2) whose dispatch contract they encode.

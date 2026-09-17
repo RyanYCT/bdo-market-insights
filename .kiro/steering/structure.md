@@ -17,7 +17,11 @@ bdo-market-insights/
 ├── samconfig.toml                     # dev + prod envs
 ├── template.yaml                      # SAM root, nests infra/*.yaml
 ├── log.md                             # session log (append-only)
-├── .github/workflows/ci.yml           # the only CI workflow
+├── .github/
+│   ├── actions/setup/                 # shared composite action (ADR-0038)
+│   └── workflows/                     # purpose-scoped workflows (ADR-0038)
+│       ├── ci.yml                     # validation gate (branch protection)
+│       └── deploy.yml                 # CD: tags + workflow_dispatch, OIDC
 ├── .kiro/
 │   ├── specs/
 │   │   ├── v3/                        # shipped baseline spec
@@ -73,6 +77,13 @@ bdo-market-insights/
 │   │   ├── insights_compute/ insights_summarize/ insights_store/ insights_discord/  # LLM insights
 │   │   ├── seed_tracked/                                            # tracked-items seed
 │   │   └── bootstrap_trigger/ migrator/                             # bootstrap + DB migration
+│   ├── tools/bdo_deploy/              # deploy control plane (console entry point)
+│   │   ├── cli.py                     # non-interactive CLI front-end
+│   │   ├── tui.py                     # interactive TUI front-end
+│   │   └── core/                      # shared command core
+│   │       ├── models.py              # Command, Plan, PlanStep, Op, Result
+│   │       ├── dispatch.py            # Dispatcher: Command -> Plan -> Executor
+│   │       └── executors/             # base, sam, github, git, config
 │   └── layer/python/bdo_common/       # shared layer (ADR-0003)
 │       ├── arsha_client.py
 │       ├── db.py
@@ -100,6 +111,12 @@ bdo-market-insights/
   single `app.py` entry point. Handlers import from `bdo_common`.
 - **Shared code lives in the Lambda Layer**; never duplicated across
   functions.
+- **Dev/ops-only tooling lives under `src/tools/`**, deliberately outside
+  `src/layer/python/`. The deploy control plane (`src/tools/bdo_deploy/`) is
+  packaged as a console entry point in `pyproject.toml`, so its ops-only
+  dependencies (CLI/TUI frameworks) can never be packaged into the
+  `bdo-common` Lambda layer. Placement is the enforcement: the layer build
+  only globs `src/layer/python/`.
 - **Infra split by concern** (`network`, `data`, `etl`, `api`,
   `observability`). No 1000-line monolithic CFN. (`break-glass.yaml` is
   on-demand only and not nested in the root template.)

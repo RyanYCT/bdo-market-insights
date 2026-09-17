@@ -34,6 +34,13 @@ folder of scripts (respecting the repo anti-pattern). All dev/ops-only
 dependencies (Typer/Textual/etc.) stay out of the Lambda layer and `bdo_common`.
 This feature adds no new AWS infrastructure.
 
+**Package placement.** The control plane lives at **`src/tools/bdo_deploy/`**,
+deliberately **outside `src/layer/python/`**, so its dev/ops-only dependencies
+(Typer, Textual, …) can never be packaged into the `bdo-common` Lambda layer.
+Placement is the enforcement mechanism for Requirement 9.4: the layer build
+globs `src/layer/python/`, so a package sitting elsewhere in the tree cannot be
+picked up by it.
+
 ## Architecture
 
 The wizard is a **control plane**: front-ends produce a `Command`, the
@@ -56,7 +63,7 @@ graph TD
 
     subgraph EX["Executors (adapters over sanctioned tools)"]
         SAM["SamExecutor<br/>sam validate/build/deploy/sync"]
-        ACT["ActionsDispatcher<br/>gh workflow run deploy.yml / gh run watch"]
+        ACT["GitHubExecutor<br/>gh workflow run deploy.yml / gh run watch / gh environment+secret admin"]
         GIT["GitExecutor<br/>git tag + push"]
         CS["ConfigStore<br/>samconfig.toml (PR) · SSM"]
     end
@@ -76,12 +83,31 @@ graph TD
     GHA -->|"OIDC keyless, env-protected"| PROD[("prod stack")]
 ```
 
-**Deploy targeting.** A `Command` carries a `Target`:
+**Deploy targeting.** A `Command` carries a `Target`. `Target` selects **where the
+deploy executes** — not which executor the command happens to shell out to — and
+it is **only meaningful for the `deploy` capability**:
 
-- `LOCAL` → **SamExecutor**, permitted for **dev / personal** stacks only
-  (`sam deploy --config-env dev`, or `sam sync` for the dev fast-loop).
-- `CI` → **ActionsDispatcher**, the path for **shared-env and prod** deploys:
-  CI executes them, the wizard only triggers.
+- `LOCAL` → the deploy runs on the operator's machine via **SamExecutor**,
+  permitted for **dev / personal** stacks only (`sam deploy --config-env dev`, or
+  `sam sync` for the dev fast-loop).
+- `CI` → the deploy runs **in GitHub Actions**; the wizard only triggers it via
+  **GitHubExecutor**. This is the path for **shared-env and prod** deploys.
+
+For the other capabilities `Target` is not a routing choice:
+
+- **`release`** always results in the deploy running in CI — whether it gets
+  there by a pushed release tag or by a `workflow_dispatch` — so a release
+  `Plan` records `target = CI` regardless of how the command was invoked. A
+  `release` invoked with the default `target=LOCAL` is *normalised* to
+  `target=CI` during planning; it does not plan a local prod deploy.
+- **`config`** and **`bootstrap`** do not vary by target at all; their planned
+  steps are identical whichever `Target` the `Command` carried.
+
+This is why Property 2 and Requirement 7.5 are satisfied even though a `release`
+is *initiated* from a laptop: the invariant is that **no command executes a
+production deploy locally**. Pushing a release tag, or dispatching the
+environment-protected `deploy.yml`, is the sanctioned production path — the
+`git push` / `gh workflow run` happens locally, the **deploy** does not.
 
 **CI is the deploy executor and the platform-enforced gate.** Following the
 purpose-scoped-workflow convention (ADR-0038), the CD path lives in a **dedicated
@@ -110,7 +136,7 @@ sequenceDiagram
     participant F as Front-end
     participant D as Dispatcher
     participant S as SamExecutor
-    participant A as ActionsDispatcher
+    participant A as GitHubExecutor
     participant G as GitHub Actions
 
     U->>F: deploy stage=dev
@@ -157,9 +183,25 @@ class Dispatcher:
         there is no plan that runs `sam deploy --config-env prod` locally."""
 
     def execute(self, plan: Plan, *, confirmed: bool) -> Result:
-        """Run the plan through its executor. Raises ConfirmationRequired when
-        the plan mutates and `confirmed` is False."""
+        """Run the plan through its executor. Raises ConfirmationRequired
+        (carrying the plan) when the plan mutates and `confirmed` is False.
+        Raises ExecutorUnavailable when the plan needs an executor that was
+        not injected — before any step runs."""
 ```
+
+**Confirmation: raised in the core, returned at the CLI boundary.**
+`Dispatcher.execute()` **raises** `ConfirmationRequired`, carrying the `Plan`.
+The core raises rather than returning a "refused" `Result` because a raise
+**cannot be silently ignored by a caller** — for a safety gate that matters: a
+caller that forgets to inspect a returned status would proceed as though the
+mutation had been approved, whereas an unhandled exception fails loudly.
+
+The **CLI front-end** is where that becomes the documented contract: it catches
+`ConfirmationRequired`, renders a `Result` carrying the refused `Plan`
+(`Result.plan`), and exits `3`. Requirement 10.4 describes **CLI_Mode**
+behaviour, and it is satisfied at that boundary. TUI_Mode catches the same
+exception and turns it into its explicit confirmation step (Requirement 1.3)
+rather than an exit code.
 
 ### Execution seam: `StepExecutor` (`core/executors/base.py`)
 
@@ -174,7 +216,7 @@ Every executor below implements `StepExecutor`. `run_step` switches on
 `step.op` and reads `step.params`; it **never parses `step.command`**, which
 exists only as the display rendering. Each `op` maps onto the executor's own
 typed domain method — the ones documented below for `SamExecutor`,
-`ActionsDispatcher`, `GitExecutor` and `ConfigStore` — so those Protocols remain
+`GitHubExecutor`, `GitExecutor` and `ConfigStore` — so those Protocols remain
 each executor's real API. This seam sits in front of them; it does not replace
 them.
 
@@ -204,22 +246,51 @@ class SamExecutor(Protocol):
         ...
 ```
 
-### ActionsDispatcher (`core/executors/actions.py`)
+### GitHubExecutor (`core/executors/github.py`)
 
-Adapter over the GitHub CLI. **Triggers** a CI run (which does the deploy) and
-**surfaces** its status back to the operator/agent. This is the shared-env and
-prod deploy path.
+The single adapter over the **GitHub CLI**. Its remit is everything the wizard
+does through `gh`, in three groups:
+
+1. **Workflow dispatch** — trigger the CD run that does the deploy
+   (`gh workflow run deploy.yml`). This is the shared-env and prod deploy path.
+2. **Run status** — surface the dispatched run back to the operator/agent
+   (`gh run watch` / `gh run view`).
+3. **Repository / environment administration** — create or update a GitHub
+   Environment, and set an Environment secret. Used only by the one-time
+   `bootstrap` capability.
+
+Named `GitHubExecutor` rather than `ActionsDispatcher` because its remit is
+broader than Actions, and because "Dispatcher" collided with the core
+`Dispatcher` that *routes to* it.
 
 ```python
-class ActionsDispatcher(Protocol):
+class GitHubExecutor(Protocol):
+    # --- workflow dispatch ---
     def run_workflow(self, *, stage: str, version: str | None,
                      inputs: dict[str, str]) -> RunRef:
         """gh workflow run deploy.yml -f stage=... -f version=...
         Targets the dedicated CD workflow (ADR-0038). Returns a
         reference to the dispatched run."""
-    def watch(self, run: RunRef) -> CommandResult:        # gh run watch
+    # --- run status ---
+    def watch(self, run: RunRef) -> CommandResult: ...    # gh run watch
     def view(self, run: RunRef) -> RunStatus: ...         # gh run view / gh api
+    # --- repository / environment administration (bootstrap only) ---
+    def set_environment(self, *, name: str,
+                        reviewers: list[str] | None = None) -> CommandResult:
+        """Create or update a GitHub Environment (e.g. `prod` with required
+        reviewers). gh api repos/{owner}/{repo}/environments/{name}."""
+    def set_environment_secret(self, *, environment: str, name: str,
+                               value: str) -> CommandResult:
+        """Set an Environment secret (e.g. AWS_DEPLOY_ROLE_ARN).
+        Only `name` is ever rendered in a Plan; `value` is passed at
+        execution time and never appears in a plan, in --json output, or
+        in any tracked file."""
 ```
+
+**Secret values never reach a plan.** For `secret_set` steps only the secret's
+**name** is rendered into `PlanStep.command` / `Plan.effects`. The role ARN value
+is account-identifying, so it is supplied at execution and never appears in a
+plan, in `--json` output, or in any tracked file.
 
 ### GitExecutor (`core/executors/git.py`)
 
@@ -257,9 +328,9 @@ class ConfigStore(Protocol):
 | Capability | Executor(s) | Behaviour |
 |---|---|---|
 | **config** | ConfigStore | `config show` renders the merged view (samconfig + SSM). `config set` opens a PR (tracked files) or writes SSM with audit. Also covers deploy-time configuration/parameters (e.g. `BdoRegions`) → changed in `samconfig.toml` via PR. |
-| **bootstrap** | SamExecutor + ConfigStore | One-time, clearly labelled: wrap `sam pipeline bootstrap` (standard AWS CI/CD bootstrap — OIDC deploy role + artifact bucket) and configure the GitHub Environments / secrets. |
-| **deploy** | SamExecutor (LOCAL) / ActionsDispatcher (CI) | dev/personal → `sam deploy --config-env dev` or `sam sync`. shared/prod → trigger the CI job. A fresh environment reaches target state via a single declarative deploy — the stack self-bootstraps (auto-migrate custom resource, ADR-0025; bootstrap orchestrator auto-run, ADR-0028). No imperative multi-step orchestration. |
-| **release** | GitExecutor / ActionsDispatcher | `git tag` push (`deploy.yml` `push: tags: v*`) or `gh workflow run deploy.yml` (manual `workflow_dispatch`, a `run`/`dispatch` alias). Production is initiated **only by the sanctioned pipeline triggers** — a pushed release tag, or an authorised `workflow_dispatch` of `deploy.yml` (whether dispatched by the control plane or from the GitHub Actions UI). No LOCAL path initiates a production deploy. |
+| **bootstrap** | SamExecutor + GitHubExecutor | One-time, clearly labelled: `SamExecutor` wraps `sam pipeline bootstrap` (standard AWS CI/CD bootstrap — OIDC deploy role + artifact bucket); `GitHubExecutor` creates/updates the GitHub Environments (`github.environment_set`) and sets the Environment secrets (`github.secret_set`). GitHub administration is **not** a `ConfigStore` concern — `ConfigStore` stays strictly config-as-data over `samconfig.toml` + SSM. |
+| **deploy** | SamExecutor (LOCAL) / GitHubExecutor (CI) | dev/personal → `sam deploy --config-env dev` or `sam sync`. shared/prod → trigger the CI job. A fresh environment reaches target state via a single declarative deploy — the stack self-bootstraps (auto-migrate custom resource, ADR-0025; bootstrap orchestrator auto-run, ADR-0028). No imperative multi-step orchestration. |
+| **release** | GitExecutor / GitHubExecutor | `git tag` push (`deploy.yml` `push: tags: v*`) or `gh workflow run deploy.yml` (manual `workflow_dispatch`, a `run`/`dispatch` alias). Production is initiated **only by the sanctioned pipeline triggers** — a pushed release tag, or an authorised `workflow_dispatch` of `deploy.yml` (whether dispatched by the control plane or from the GitHub Actions UI). No LOCAL path initiates a production deploy. |
 | **flag** *(planned — deferred, not built in this spec)* | ConfigStore + DynamoDB (planned) | Flip a runtime feature flag without a redeploy. Flag values are stored in a DynamoDB table and read in Lambdas via the Powertools feature-flags provider (a custom `StoreProvider`), or the Powertools parameters `DynamoDBProvider` for plain booleans. Reachable from in-VPC Lambdas through the existing free DynamoDB Gateway endpoint. |
 
 **Deferred: runtime feature flags.** Runtime feature flags are out of scope here;
@@ -289,8 +360,11 @@ class Capability(StrEnum):
     DEPLOY = "deploy"; RELEASE = "release"
 
 class Target(StrEnum):
-    LOCAL = "local"   # -> SamExecutor (dev/personal only)
-    CI = "ci"         # -> ActionsDispatcher (shared-env + prod)
+    """WHERE a deploy executes. Only meaningful for capability == DEPLOY.
+    A `release` plan always records CI (the deploy runs in Actions however it
+    was triggered); `config` and `bootstrap` do not vary by target."""
+    LOCAL = "local"   # deploy runs on this machine -> SamExecutor (dev/personal only)
+    CI = "ci"         # deploy runs in GitHub Actions -> GitHubExecutor (shared-env + prod)
 
 class Command(BaseModel):
     capability: Capability
@@ -301,11 +375,26 @@ class Command(BaseModel):
     dry_run: bool = False
     assume_yes: bool = False
 
+class Op(StrEnum):
+    """The closed vocabulary of planned operations. Executors switch on this."""
+    SAM_BUILD = "sam.build"
+    SAM_DEPLOY = "sam.deploy"
+    SAM_SYNC = "sam.sync"
+    SAM_PIPELINE_BOOTSTRAP = "sam.pipeline_bootstrap"
+    GITHUB_RUN_WORKFLOW = "github.run_workflow"
+    GITHUB_ENVIRONMENT_SET = "github.environment_set"
+    GITHUB_SECRET_SET = "github.secret_set"
+    GIT_TAG = "git.tag"
+    GIT_PUSH = "git.push"
+    CONFIG_SHOW = "config.show"
+    SSM_PUT = "ssm.put"
+    SAMCONFIG_PR = "samconfig.pr"
+
 class PlanStep(BaseModel):
     description: str
     command: str                    # faithful display rendering (dry-run / TUI preview)
-    executor: Literal["sam", "actions", "git", "config"]
-    op: str                         # structured intent, e.g. "sam.deploy", "ssm.put", "git.tag"
+    executor: Literal["sam", "github", "git", "config"]
+    op: Op                          # structured intent, from the closed vocabulary above
     params: dict[str, str | bool | list[str]] = Field(default_factory=dict)
 
 class Plan(BaseModel):
@@ -323,6 +412,9 @@ class Result(BaseModel):
     changes: list[ConfigDiff] = []
     run_url: str | None = None                 # CI run reference when target == CI
     raw_output: str | None = None
+    plan: Plan | None = None
+    # Set when a mutating plan was refused for want of confirmation, so the
+    # caller can inspect the effects and re-invoke with --yes (exit 3).
 
 class CommandResult(BaseModel):
     ok: bool
@@ -345,6 +437,19 @@ decided once in `plan()` and read from `op`/`params` at execution. `CommandResul
 is the value every executor call returns, and is folded into the front-end
 `Result`.
 
+**Why `op` is an enum, not a `str`.** Executors **switch on `op`**. With a closed
+`StrEnum` the type checker can verify the switch is exhaustive, so adding an op
+without handling it is a **type error at check time**; with a bare `str` the same
+omission is a silent fallthrough discovered at execution, mid-deploy. The `gh.*`
+names are spelled `github.*` to match the renamed `GitHubExecutor`.
+
+**`ConfigDiff` note.** `ConfigDiff.key` carries a field validator: when
+`source == "ssm"` the key must be a repo-scoped
+`/bdo-market-insights/<stage>/<category>/<key>` path whose `<stage>` segment is an
+environment defined in `samconfig.toml`. The validator sits on the model so the
+rule holds for every diff — planned, previewed, or returned — not only at the
+`put_ssm()` call site.
+
 **Exit-code contract:** `0` success · `1` failed · `2` usage/validation error
 (before any executor call) · `3` confirmation required.
 
@@ -357,10 +462,28 @@ is the value every executor call returns, and is folded into the front-end
   `ApiVersion`, ADR-0037).
 - Any SSM name written must be a repo-scoped
   `/bdo-market-insights/<stage>/<category>/<key>` path; a bare `/bdo/...` path is
-  rejected. Only SSM key **paths** — never secret values — are passed to
+  rejected. The `<stage>` segment must be **one of the environments defined in
+  `samconfig.toml`** (`dev`, `prod`) — not merely any non-empty string, which
+  would let a typo (`/bdo-market-insights/prd/...`) create a parameter nothing
+  ever reads. Only SSM key **paths** — never secret values — are passed to
   CloudFormation, which resolves them at deploy (ADR-0024).
 - `BdoRegions` is the single active-region toggle and lives only in
   `samconfig.toml` (ADR-0036).
+- A `release` `Command` is normalised to `target = CI` during planning; `config`
+  and `bootstrap` plans ignore `target` entirely (see *Deploy targeting*).
+- **Plan previews never render operational values.** `PlanStep.command` and
+  `Plan.effects` mask secret-shaped and operational values — SecureString-backed
+  values, keys whose name contains `secret`/`password`/`token`/`key`
+  (case-insensitive), and the Environment-secret values of
+  `github.secret_set`. Only names, paths, and stage/version identifiers are
+  rendered. Consequently `--dry-run` and `--json` **cannot** print such a value:
+  it is absent from the model they serialize, not merely omitted by the
+  renderer.
+- **"Planning is pure" is precise, not absolute.** `plan()`'s only I/O is the
+  **cached read of `samconfig.toml`** performed when a `Command` is validated (to
+  resolve the set of defined environments). It performs no network call, no AWS
+  API call, no subprocess, and no write of any kind. The read is cached per
+  process, so repeated planning is deterministic and byte-identical (Property 1).
 
 ## Error Handling
 
@@ -369,8 +492,17 @@ is the value every executor call returns, and is folded into the front-end
   call and return exit `2` with the offending field named.
 - Executor failures surface the underlying `sam` / `gh` / `git` output verbatim
   and return exit `1`; no Python traceback is emitted.
-- A mutating plan invoked without confirmation returns exit `3` and includes the
-  `Plan` so the caller can inspect effects and re-invoke with `--yes`.
+- **`ConfirmationRequired`** — `Dispatcher.execute()` **raises** it, carrying the
+  `Plan`; a raise cannot be silently ignored by a caller, which is what a safety
+  gate needs. The **CLI front-end** catches it, renders a `Result` whose `plan`
+  field carries that `Plan` (so the caller can inspect the effects and re-invoke
+  with `--yes`), and exits `3` — satisfying Requirement 10.4 at the CLI_Mode
+  boundary it describes. No mutation has occurred. TUI_Mode catches the same
+  exception and renders its confirmation step instead.
+- **`ExecutorUnavailable`** — if a `Plan` contains a step whose `executor` was not
+  injected into the `Dispatcher`, the plan fails **by executor name before any
+  step runs**, and returns exit `1`. Failing up-front rather than mid-plan means a
+  misconfigured wiring can never leave a plan half-applied.
 - For `target == CI` deploys, the wizard reports the dispatched run URL; the
   authoritative pass/fail is the CI run itself (surfaced via `gh run watch`).
 
@@ -393,7 +525,12 @@ is the value every executor call returns, and is folded into the front-end
   deploy code path.
 - No account-specific hosts are committed: SSM key paths, not values, flow to
   CloudFormation (ADR-0024). Secret-typed / secret-named SSM values are masked
-  on `config show`.
+  on `config show`, and plan previews mask secret-shaped and operational values
+  so `--dry-run` / `--json` cannot print them.
+- The OIDC deploy role ARN set as an Environment secret during `bootstrap` is
+  account-identifying: only the secret's **name** is ever rendered in a plan; the
+  value is passed at execution and never appears in a plan, in `--json` output,
+  or in any tracked file.
 - No NAT (ADR-0006) remains in force; this feature adds no new AWS
   infrastructure. IAM database authentication is unchanged and never bypassed.
 
@@ -414,8 +551,11 @@ For any operator/agent intent, the `Plan` produced through CLI mode and the
 For all commands the wizard can construct, none produces a `Plan` that executes
 `sam deploy --config-env prod` locally; a prod deploy is reachable only by
 dispatching the environment-protected CI job (structurally enforced by `Target`).
+Issuing a sanctioned trigger locally — pushing a release tag, or dispatching
+`deploy.yml` — does not violate this: the trigger runs locally, the deploy does
+not.
 
-**Validates: Requirements 6.1, 6.2**
+**Validates: Requirements 6.1, 6.2, 7.5**
 
 ### Property 3: Config-as-data
 
@@ -476,4 +616,6 @@ Rationale is captured as ADRs rather than expanded inline (per AGENTS.md):
   `ApiVersion` derives from the release tag (ADR-0037).
 - No NAT (ADR-0006); IAM database authentication for Lambdas, never bypassed.
 - Dev/ops-only dependencies (Typer/Textual/etc.) stay out of the Lambda layer and
-  `bdo_common`.
+  `bdo_common`. Enforced by placement: the package lives at
+  **`src/tools/bdo_deploy/`**, outside `src/layer/python/`, so the layer build
+  cannot pick it up.
