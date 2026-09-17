@@ -2262,3 +2262,43 @@ records (the sessions did not log at the time); dates are the merge dates._
 - Optional cleanup: rename `ActionsDispatcher` → `ActionsExecutor` (it currently
   collides conceptually with the core `Dispatcher`).
 
+---
+
+## 2026-09-14 — Deploy control plane: command core and dispatcher (Phases 1-2)
+
+**Agent:** Kiro
+**Mode:** Spec
+**Branch:** `feat/deploy-control-plane-impl`
+**Phase:** Phases 1-2 of `.kiro/specs/deploy-control-plane/tasks.md`
+**Commits:** `a7c67b7`.. — PR #125
+
+### Done
+- Scaffolded `src/tools/bdo_deploy/` as the `bdo-deploy` console entry point,
+  deliberately outside `src/layer/python/` so its ops-only dependencies cannot
+  reach the `bdo-common` layer. Recorded the placement in the design and in
+  `steering/structure.md`.
+- Typed command core: `Capability`, `Target`, `Command`, `Op`, `PlanStep`,
+  `Plan`, `Result`, `ConfigDiff`, `CommandResult`, with validation in the core so
+  both front-ends inherit it. Stage membership is read from `samconfig.toml`; a
+  LOCAL production deploy is unconstructable.
+- `Dispatcher.plan()` (pure, deterministic) and `execute()` (confirmation gate,
+  stop-at-first-failure, verbatim tool output). 112 unit tests.
+- Two-axis review of the branch, then the review response: `Result.plan`, the
+  `Op` enum for exhaustiveness, `ActionsDispatcher` renamed `GitHubExecutor`
+  with GitHub administration moved off the `ConfigStore` seam, stage-validated
+  SSM paths, release target normalised to CI, `SecretStr`-masked plan previews,
+  and the plan-construction dedupe.
+
+### Decisions
+- Plan steps carry structured intent (`op` + `params`) alongside the preview
+  rendering, so routing is decided once and the preview cannot drift from what
+  runs → planned ADR (a) in the spec
+- Confirmation raises in the core and is rendered as a `Result` at the CLI
+  boundary → recorded in the design, Requirement 10.4 unchanged
+
+### Deferred / open questions
+- Executors (Phase 3) are still Protocol shells; the tool is not yet runnable
+  end-to-end, so PR #125 is a draft.
+- Two defects the tests caught: the release-tag regex accepted a trailing
+  newline, and plan previews rendered operational values.
+

@@ -13,22 +13,13 @@ is ever made:
 from __future__ import annotations
 
 import pytest
+from pydantic import SecretStr
 
 from bdo_deploy.core.dispatch import (
     DEPLOY_ROLE_SECRET,
     DEPLOY_WORKFLOW,
-    OP_ACTIONS_RUN_WORKFLOW,
-    OP_CONFIG_SHOW,
-    OP_GH_ENVIRONMENT_SET,
-    OP_GH_SECRET_SET,
-    OP_GIT_PUSH,
-    OP_GIT_TAG,
-    OP_SAM_BUILD,
-    OP_SAM_DEPLOY,
-    OP_SAM_PIPELINE_BOOTSTRAP,
-    OP_SAM_SYNC,
-    OP_SAMCONFIG_PR,
-    OP_SSM_PUT,
+    MASK,
+    MASK_EFFECT,
     Dispatcher,
 )
 from bdo_deploy.core.errors import ConfirmationRequired, UsageError, exit_code_for
@@ -38,6 +29,7 @@ from bdo_deploy.core.models import (
     Command,
     CommandResult,
     ConfigDiff,
+    Op,
     Plan,
     PlanStep,
     Target,
@@ -57,7 +49,7 @@ class Recorder:
         self.calls: list[tuple[str, PlanStep]] = []
 
     @property
-    def ops(self) -> list[str]:
+    def ops(self) -> list[Op]:
         return [step.op for _, step in self.calls]
 
     @property
@@ -86,18 +78,44 @@ class FakeExecutor:
         return CommandResult(ok=True, output=f"{self.name}: ok")
 
 
+class FakeGitHubExecutor(FakeExecutor):
+    """A ``FakeExecutor`` that also satisfies ``GitHubExecutor``'s admin methods.
+
+    Only ``run_step`` is ever called through the dispatcher's seam; these two
+    exist so the fake structurally matches the Protocol the ``github=`` keyword
+    is typed against.
+    """
+
+    def set_environment(
+        self,
+        *,
+        name: str,
+        reviewers: list[str] | None = None,
+    ) -> CommandResult:
+        return CommandResult(ok=True, output=f"{self.name}: environment {name}")
+
+    def set_environment_secret(
+        self,
+        *,
+        environment: str,
+        name: str,
+        value: str,
+    ) -> CommandResult:
+        return CommandResult(ok=True, output=f"{self.name}: secret {name} on {environment}")
+
+
 def _wired(
     recorder: Recorder,
     *,
     sam: FakeExecutor | None = None,
-    actions: FakeExecutor | None = None,
+    github: FakeGitHubExecutor | None = None,
     git: FakeExecutor | None = None,
     config: FakeExecutor | None = None,
 ) -> Dispatcher:
     """A ``Dispatcher`` with all four executors faked unless one is overridden."""
     return Dispatcher(
         sam=sam if sam is not None else FakeExecutor("sam", recorder),
-        actions=actions if actions is not None else FakeExecutor("actions", recorder),
+        github=github if github is not None else FakeGitHubExecutor("github", recorder),
         git=git if git is not None else FakeExecutor("git", recorder),
         config=config if config is not None else FakeExecutor("config", recorder),
     )
@@ -148,7 +166,7 @@ class TestPlanConfigShow:
                     "aws ssm get-parameters-by-path --path /bdo-market-insights/dev/ --recursive"
                 ),
                 executor="config",
-                op=OP_CONFIG_SHOW,
+                op=Op.CONFIG_SHOW,
                 params={"stage": "dev", "ssm_path": "/bdo-market-insights/dev/"},
             )
         ]
@@ -181,19 +199,32 @@ class TestPlanConfigSet:
         assert plan.steps == [
             PlanStep(
                 description=f"write the operational value at {SSM_KEY} (audited)",
-                command=(
-                    f"aws ssm put-parameter --name {SSM_KEY} --value api.example.test --overwrite"
-                ),
+                command=f"aws ssm put-parameter --name {SSM_KEY} --value {MASK} --overwrite",
                 executor="config",
-                op=OP_SSM_PUT,
-                params={"path": SSM_KEY, "value": "api.example.test", "overwrite": True},
+                op=Op.SSM_PUT,
+                params={
+                    "path": SSM_KEY,
+                    "value": SecretStr("api.example.test"),
+                    "overwrite": True,
+                },
             )
         ]
         assert plan.effects == [
-            f"sets {SSM_KEY} in SSM Parameter Store to 'api.example.test'",
+            f"sets {SSM_KEY} in SSM Parameter Store to {MASK_EFFECT}",
             "records an audit entry for the write",
         ]
         assert plan.requires_confirmation is True
+
+    def test_the_executor_still_gets_the_real_operational_value(self) -> None:
+        plan = _plan(
+            Command(
+                capability=Capability.CONFIG,
+                args={"action": "set", "key": SSM_KEY, "value": "api.example.test"},
+            )
+        )
+        value = plan.steps[0].params["value"]
+        assert isinstance(value, SecretStr)
+        assert value.get_secret_value() == "api.example.test"
 
     def test_deploy_time_config_becomes_a_pull_request(self) -> None:
         plan = _plan(
@@ -213,7 +244,7 @@ class TestPlanConfigSet:
                     '--title "config(dev): set BdoRegions=NA,EU"'
                 ),
                 executor="config",
-                op=OP_SAMCONFIG_PR,
+                op=Op.SAMCONFIG_PR,
                 params={
                     "stage": "dev",
                     "key": "BdoRegions",
@@ -241,14 +272,14 @@ class TestPlanBootstrap:
                 description="provision the dev OIDC deploy role and artifact bucket (one-time)",
                 command="sam pipeline bootstrap --stage dev",
                 executor="sam",
-                op=OP_SAM_PIPELINE_BOOTSTRAP,
+                op=Op.SAM_PIPELINE_BOOTSTRAP,
                 params={"stage": "dev"},
             ),
             PlanStep(
                 description="create or update the dev GitHub Environment",
                 command="gh api --method PUT repos/{owner}/{repo}/environments/dev",
-                executor="config",
-                op=OP_GH_ENVIRONMENT_SET,
+                executor="github",
+                op=Op.GITHUB_ENVIRONMENT_SET,
                 params={"environment": "dev"},
             ),
             PlanStep(
@@ -257,8 +288,8 @@ class TestPlanBootstrap:
                     f"{DEPLOY_ROLE_SECRET} secret"
                 ),
                 command=f"gh secret set {DEPLOY_ROLE_SECRET} --env dev",
-                executor="config",
-                op=OP_GH_SECRET_SET,
+                executor="github",
+                op=Op.GITHUB_SECRET_SET,
                 params={"environment": "dev", "name": DEPLOY_ROLE_SECRET},
             ),
         ]
@@ -280,14 +311,14 @@ class TestPlanDeployLocal:
                 description="build the deployment artifacts",
                 command="sam build",
                 executor="sam",
-                op=OP_SAM_BUILD,
+                op=Op.SAM_BUILD,
                 params={},
             ),
             PlanStep(
                 description="deploy the dev stack",
                 command="sam deploy --config-env dev",
                 executor="sam",
-                op=OP_SAM_DEPLOY,
+                op=Op.SAM_DEPLOY,
                 params={"config_env": "dev"},
             ),
         ]
@@ -306,7 +337,7 @@ class TestPlanDeployLocal:
                 description="sync code changes into the dev stack (fast-loop)",
                 command="sam sync --config-env dev",
                 executor="sam",
-                op=OP_SAM_SYNC,
+                op=Op.SAM_SYNC,
                 params={"config_env": "dev"},
             )
         ]
@@ -341,8 +372,8 @@ class TestPlanDeployCi:
             PlanStep(
                 description="trigger the protected dev deploy job",
                 command=f"gh workflow run {DEPLOY_WORKFLOW} -f stage=dev",
-                executor="actions",
-                op=OP_ACTIONS_RUN_WORKFLOW,
+                executor="github",
+                op=Op.GITHUB_RUN_WORKFLOW,
                 params={"workflow": DEPLOY_WORKFLOW, "stage": "dev"},
             )
         ]
@@ -365,8 +396,8 @@ class TestPlanDeployCi:
             PlanStep(
                 description="trigger the protected prod deploy job",
                 command=f"gh workflow run {DEPLOY_WORKFLOW} -f stage=prod -f version=v1.4.0",
-                executor="actions",
-                op=OP_ACTIONS_RUN_WORKFLOW,
+                executor="github",
+                op=Op.GITHUB_RUN_WORKFLOW,
                 params={
                     "workflow": DEPLOY_WORKFLOW,
                     "stage": "prod",
@@ -393,14 +424,14 @@ class TestPlanRelease:
                 description="create the v1.4.0 release tag (clean tree, on main, tag absent)",
                 command="git tag v1.4.0",
                 executor="git",
-                op=OP_GIT_TAG,
+                op=Op.GIT_TAG,
                 params={"version": "v1.4.0", "base_branch": "main"},
             ),
             PlanStep(
                 description="push v1.4.0 so the tag-triggered pipeline runs",
                 command="git push origin v1.4.0",
                 executor="git",
-                op=OP_GIT_PUSH,
+                op=Op.GIT_PUSH,
                 params={"version": "v1.4.0", "remote": "origin"},
             ),
         ]
@@ -419,8 +450,8 @@ class TestPlanRelease:
             PlanStep(
                 description=f"dispatch the {DEPLOY_WORKFLOW} run for v1.4.0 to dev",
                 command=f"gh workflow run {DEPLOY_WORKFLOW} -f stage=dev -f version=v1.4.0",
-                executor="actions",
-                op=OP_ACTIONS_RUN_WORKFLOW,
+                executor="github",
+                op=Op.GITHUB_RUN_WORKFLOW,
                 params={"workflow": DEPLOY_WORKFLOW, "stage": "dev", "version": "v1.4.0"},
             )
         ]
@@ -438,6 +469,118 @@ class TestPlanRelease:
         assert tag != dispatch
 
 
+class TestReleaseTargetNormalisation:
+    """Requirement 7.5: a release deploys in CI however it was invoked."""
+
+    @pytest.mark.parametrize("args", [{}, {"dispatch": True}])
+    def test_a_release_plan_records_target_ci(self, args: dict[str, bool]) -> None:
+        for target in (Target.LOCAL, Target.CI):
+            plan = _plan(
+                Command(
+                    capability=Capability.RELEASE,
+                    target=target,
+                    version="v1.4.0",
+                    args=dict(args),
+                )
+            )
+            assert plan.target is Target.CI
+
+    def test_a_local_release_is_normalised_not_rejected(self) -> None:
+        # The tag push and the workflow dispatch happen locally; the deploy does
+        # not — so a default target=LOCAL release is normalised, not refused.
+        local = _plan(
+            Command(capability=Capability.RELEASE, target=Target.LOCAL, version="v1.4.0")
+        )
+        explicit = _plan(
+            Command(capability=Capability.RELEASE, target=Target.CI, version="v1.4.0")
+        )
+        assert local == explicit
+
+    @pytest.mark.parametrize(
+        "cmd_args",
+        [
+            {"capability": Capability.CONFIG},
+            {
+                "capability": Capability.CONFIG,
+                "args": {"action": "set", "key": "BdoRegions", "value": "NA"},
+            },
+            {"capability": Capability.BOOTSTRAP},
+        ],
+    )
+    def test_config_and_bootstrap_plan_the_same_steps_for_either_target(
+        self, cmd_args: dict[str, object]
+    ) -> None:
+        local = _plan(Command(target=Target.LOCAL, **cmd_args))
+        ci = _plan(Command(target=Target.CI, **cmd_args))
+        assert local.steps == ci.steps
+        assert local.effects == ci.effects
+        assert local.requires_confirmation == ci.requires_confirmation
+
+    def test_deploy_is_the_one_capability_whose_target_routes(self) -> None:
+        local = _plan(Command(capability=Capability.DEPLOY, target=Target.LOCAL))
+        ci = _plan(Command(capability=Capability.DEPLOY, target=Target.CI))
+        assert local.target is Target.LOCAL
+        assert ci.target is Target.CI
+        assert local.steps != ci.steps
+
+
+class TestPlanMasking:
+    """Requirements 3.7 / 4.4: an operational value is not recoverable from a plan."""
+
+    SECRET = "sup3r-s3cret-value"
+
+    def _ssm_set_plan(self) -> Plan:
+        return _plan(
+            Command(
+                capability=Capability.CONFIG,
+                args={"action": "set", "key": SSM_KEY, "value": self.SECRET},
+            )
+        )
+
+    def test_the_rendered_command_and_effects_are_masked(self) -> None:
+        plan = self._ssm_set_plan()
+        assert MASK in plan.steps[0].command
+        assert self.SECRET not in plan.steps[0].command
+        assert MASK_EFFECT in plan.effects[0]
+        assert all(self.SECRET not in effect for effect in plan.effects)
+
+    def test_a_serialized_plan_does_not_leak_the_value(self) -> None:
+        # The sanity check Requirement 3.7 asks for: --dry-run and --json
+        # serialize this model, so the value must be absent from it — not merely
+        # omitted by a renderer.
+        dumped = self._ssm_set_plan().model_dump_json()
+        assert self.SECRET not in dumped
+        assert "s3cret" not in dumped
+        assert "**********" in dumped
+
+    def test_deploy_time_config_is_not_masked(self) -> None:
+        # A samconfig.toml value is bound for a public pull request, so masking
+        # it would only make the plan a worse preview of the diff it opens.
+        plan = _plan(
+            Command(
+                capability=Capability.CONFIG,
+                args={"action": "set", "key": "BdoRegions", "value": "NA,EU"},
+            )
+        )
+        assert "NA,EU" in plan.steps[0].command
+        assert "NA,EU" in plan.model_dump_json()
+
+    def test_no_plan_renders_a_secret_value(self) -> None:
+        for cmd in _all_commands():
+            plan = _plan(cmd)
+            for step in plan.steps:
+                assert MASK not in step.description
+                if step.op is Op.SSM_PUT:
+                    assert isinstance(step.params["value"], SecretStr)
+
+    def test_the_bootstrap_secret_plan_renders_only_the_secret_name(self) -> None:
+        plan = _plan(Command(capability=Capability.BOOTSTRAP))
+        secret_step = next(step for step in plan.steps if step.op is Op.GITHUB_SECRET_SET)
+        assert secret_step.params == {"environment": "dev", "name": DEPLOY_ROLE_SECRET}
+        assert "value" not in secret_step.params
+        assert secret_step.command == f"gh secret set {DEPLOY_ROLE_SECRET} --env dev"
+
+
 class TestSingleExecutorRouting:
     """Requirement 2.1: a plan routes to one executor — bootstrap's documented pair aside."""
 
@@ -450,10 +593,10 @@ class TestSingleExecutorRouting:
             (3, "sam"),  # bootstrap
             (4, "sam"),  # deploy LOCAL
             (5, "sam"),  # deploy LOCAL --sync
-            (6, "actions"),  # deploy CI
-            (7, "actions"),  # deploy CI prod
+            (6, "github"),  # deploy CI
+            (7, "github"),  # deploy CI prod
             (8, "git"),  # release via tag push
-            (9, "actions"),  # release via dispatch
+            (9, "github"),  # release via dispatch
         ],
     )
     def test_primary_executor(self, index: int, primary: str) -> None:
@@ -461,8 +604,8 @@ class TestSingleExecutorRouting:
         assert plan.steps[0].executor == primary
 
     def test_only_bootstrap_spans_two_executors(self) -> None:
-        # The design's capability mapping pairs SamExecutor with ConfigStore for
-        # the one-time bootstrap; every other capability is single-executor.
+        # The design's capability mapping pairs SamExecutor with GitHubExecutor
+        # for the one-time bootstrap; every other capability is single-executor.
         spans = {
             cmd.capability
             for cmd in _all_commands()
@@ -473,13 +616,13 @@ class TestSingleExecutorRouting:
             step.executor for step in _plan(Command(capability=Capability.BOOTSTRAP)).steps
         } == {
             "sam",
-            "config",
+            "github",
         }
 
     def test_every_step_names_a_known_executor(self) -> None:
         for cmd in _all_commands():
             for step in _plan(cmd).steps:
-                assert step.executor in {"sam", "actions", "git", "config"}
+                assert step.executor in {"sam", "github", "git", "config"}
                 assert step.op
                 assert step.command
 
@@ -574,6 +717,18 @@ class TestPlanUsageErrors:
         )
         assert error.value == "/bdo/dev/domain/api"
 
+    def test_config_set_to_an_ssm_path_with_an_undefined_stage(self) -> None:
+        error = self._rejects(
+            Command(
+                capability=Capability.CONFIG,
+                args={"action": "set", "key": "/bdo-market-insights/prd/domain/x", "value": "x"},
+            ),
+            "ssm_path",
+        )
+        assert error.value == "/bdo-market-insights/prd/domain/x"
+        assert "'prd'" in str(error)
+        assert "prod" in str(error)
+
     def test_non_boolean_sync(self) -> None:
         error = self._rejects(
             Command(capability=Capability.DEPLOY, target=Target.LOCAL, args={"sync": "yes"}),
@@ -620,7 +775,7 @@ class TestExecuteConfirmationGate:
         result = dispatcher.execute(plan, confirmed=False)
         assert result.ok is True
         assert result.exit_code is ExitCode.SUCCESS
-        assert recorder.ops == [OP_CONFIG_SHOW]
+        assert recorder.ops == [Op.CONFIG_SHOW]
 
 
 class TestExecuteStepOrdering:
@@ -632,11 +787,11 @@ class TestExecuteStepOrdering:
         plan = dispatcher.plan(Command(capability=Capability.BOOTSTRAP))
         result = dispatcher.execute(plan, confirmed=True)
         assert recorder.ops == [
-            OP_SAM_PIPELINE_BOOTSTRAP,
-            OP_GH_ENVIRONMENT_SET,
-            OP_GH_SECRET_SET,
+            Op.SAM_PIPELINE_BOOTSTRAP,
+            Op.GITHUB_ENVIRONMENT_SET,
+            Op.GITHUB_SECRET_SET,
         ]
-        assert recorder.executors == ["sam", "config", "config"]
+        assert recorder.executors == ["sam", "github", "github"]
         assert [step for _, step in recorder.calls] == plan.steps
         assert result.ok is True
         assert result.exit_code is ExitCode.SUCCESS
@@ -667,19 +822,19 @@ class TestExecuteFailure:
 
     def test_failure_at_step_two_of_three_skips_the_remainder(self) -> None:
         recorder = Recorder()
-        config = FakeExecutor(
-            "config",
+        github = FakeGitHubExecutor(
+            "github",
             recorder,
             results=[CommandResult(ok=False, output="gh: HTTP 403 forbidden")],
         )
-        dispatcher = _wired(recorder, config=config)
+        dispatcher = _wired(recorder, github=github)
         plan = dispatcher.plan(Command(capability=Capability.BOOTSTRAP))
         result = dispatcher.execute(plan, confirmed=True)
-        assert recorder.ops == [OP_SAM_PIPELINE_BOOTSTRAP, OP_GH_ENVIRONMENT_SET]
+        assert recorder.ops == [Op.SAM_PIPELINE_BOOTSTRAP, Op.GITHUB_ENVIRONMENT_SET]
         assert result.ok is False
         assert result.exit_code is ExitCode.EXECUTOR_FAILED
         assert result.raw_output == "gh: HTTP 403 forbidden"
-        assert "step 2/3 failed (config)" in result.summary
+        assert "step 2/3 failed (github)" in result.summary
         assert "1 remaining step(s) skipped" in result.summary
 
     def test_a_raising_executor_surfaces_its_message_not_a_traceback(self) -> None:
@@ -693,7 +848,7 @@ class TestExecuteFailure:
         dispatcher = _wired(recorder, sam=Raising("sam", recorder))
         plan = dispatcher.plan(Command(capability=Capability.DEPLOY, target=Target.LOCAL))
         result = dispatcher.execute(plan, confirmed=True)
-        assert recorder.ops == [OP_SAM_BUILD]
+        assert recorder.ops == [Op.SAM_BUILD]
         assert result.ok is False
         assert result.exit_code is ExitCode.EXECUTOR_FAILED
         assert result.raw_output == "sam: build failed"
@@ -716,14 +871,14 @@ class TestExecuteFailure:
 class TestExecuteRunUrl:
     """Requirement 10.6: the dispatched run is the authoritative reference."""
 
-    def test_run_url_propagates_from_an_actions_step(self) -> None:
+    def test_run_url_propagates_from_a_github_step(self) -> None:
         recorder = Recorder()
-        actions = FakeExecutor(
-            "actions",
+        github = FakeGitHubExecutor(
+            "github",
             recorder,
             results=[CommandResult(ok=True, output="dispatched", run_url=RUN_URL)],
         )
-        dispatcher = _wired(recorder, actions=actions)
+        dispatcher = _wired(recorder, github=github)
         plan = dispatcher.plan(
             Command(capability=Capability.DEPLOY, target=Target.CI, stage="prod", version="v1.4.0")
         )

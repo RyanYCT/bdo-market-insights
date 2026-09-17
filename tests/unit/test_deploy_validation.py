@@ -110,6 +110,8 @@ class TestRepoScopedSsmPath:
             "/bdo-market-insights/dev/domain",  # too few segments
             "/bdo-market-insights/dev/domain/api/extra",  # too many segments
             "bdo-market-insights/dev/domain/api-domain-name",  # not absolute
+            "/bdo-market-insights/prd/domain/api-domain-name",  # mistyped stage
+            "/bdo-market-insights/staging/domain/api-domain-name",  # undefined stage
             "",
         ],
     )
@@ -121,6 +123,20 @@ class TestRepoScopedSsmPath:
         assert error.value == path
         assert error.exit_code is ExitCode.USAGE_ERROR
         assert "/bdo-market-insights/<stage>/<category>/<key>" in str(error)
+
+    def test_stage_segment_must_be_a_samconfig_environment(self) -> None:
+        """Requirement 9.1: a typo'd stage would create a parameter nothing reads."""
+        with pytest.raises(UsageError) as excinfo:
+            validate_ssm_path("/bdo-market-insights/prd/domain/api-domain-name")
+        message = str(excinfo.value)
+        assert "'prd'" in message
+        for stage in samconfig_stages():
+            assert stage in message
+
+    def test_every_samconfig_stage_is_accepted_as_the_stage_segment(self) -> None:
+        for stage in samconfig_stages():
+            path = f"/bdo-market-insights/{stage}/domain/api-domain-name"
+            assert validate_ssm_path(path) == path
 
 
 class TestExitCodeMapping:

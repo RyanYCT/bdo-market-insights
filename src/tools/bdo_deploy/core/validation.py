@@ -15,8 +15,10 @@ Rules:
 - ``version`` must match the release-tag format ``^v\\d+\\.\\d+\\.\\d+$``; it
   becomes ``ApiVersion`` (ADR-0037).
 - An SSM name that is written must be a repo-scoped
-  ``/bdo-market-insights/<stage>/<category>/<key>`` path; a bare ``/bdo/...``
-  path is rejected (Requirement 9.1).
+  ``/bdo-market-insights/<stage>/<category>/<key>`` path whose ``<stage>`` is one
+  of the environments defined in ``samconfig.toml``; a bare ``/bdo/...`` path and
+  a mistyped stage (``/bdo-market-insights/prd/...``) are both rejected
+  (Requirement 9.1).
 """
 
 from __future__ import annotations
@@ -111,8 +113,14 @@ def validate_ssm_path(name: str) -> str:
     """Return ``name`` if it is a repo-scoped SSM path (Requirement 9.1).
 
     Accepts exactly ``/bdo-market-insights/<stage>/<category>/<key>``: four
-    non-empty segments under that one root. A bare ``/bdo/...`` path, a path with
-    an empty segment, and a path with the wrong depth are all rejected.
+    non-empty segments under that one root, whose ``<stage>`` segment is an
+    environment defined in ``samconfig.toml``. A bare ``/bdo/...`` path, a path
+    with an empty segment, and a path with the wrong depth are all rejected.
+
+    The ``<stage>`` segment is checked against the real environment set rather
+    than merely being required non-empty, because a typo
+    (``/bdo-market-insights/prd/...``) would otherwise create a parameter nothing
+    ever reads — a silent misconfiguration instead of an exit ``2``.
     """
     problem: str | None = None
     if not name.startswith("/"):
@@ -125,6 +133,11 @@ def validate_ssm_path(name: str) -> str:
             problem = f"{name!r} has an empty path segment"
         elif segments[0] != SSM_ROOT_SEGMENT:
             problem = f"{name!r} is not scoped to /{SSM_ROOT_SEGMENT}"
+        elif segments[1] not in (stages := samconfig_stages()):
+            problem = (
+                f"stage segment {segments[1]!r} of {name!r} is not an environment "
+                f"defined in samconfig.toml (expected one of: {', '.join(sorted(stages))})"
+            )
     if problem is not None:
         raise UsageError(
             field="ssm_path",

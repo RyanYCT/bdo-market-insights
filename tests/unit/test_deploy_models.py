@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic import SecretStr
 
 from bdo_deploy.core.errors import UsageError
 from bdo_deploy.core.exit_codes import ExitCode
@@ -17,6 +18,7 @@ from bdo_deploy.core.models import (
     Capability,
     Command,
     ConfigDiff,
+    Op,
     Plan,
     PlanStep,
     Result,
@@ -54,7 +56,7 @@ def _plan() -> Plan:
                 description="deploy the dev stack",
                 command="sam deploy --config-env dev",
                 executor="sam",
-                op="sam.deploy",
+                op=Op.SAM_DEPLOY,
                 params={"config_env": "dev"},
             )
         ],
@@ -104,6 +106,124 @@ class TestJsonRoundTrip:
         payload = json.loads(_command().model_dump_json())
         assert payload["capability"] == "deploy"
         assert payload["target"] == "ci"
+
+
+class TestOpVocabulary:
+    """``Op`` is the closed operation vocabulary executors switch on."""
+
+    def test_members_are_exactly_the_designed_vocabulary(self) -> None:
+        assert {op.value for op in Op} == {
+            "sam.build",
+            "sam.deploy",
+            "sam.sync",
+            "sam.pipeline_bootstrap",
+            "github.run_workflow",
+            "github.environment_set",
+            "github.secret_set",
+            "git.tag",
+            "git.push",
+            "config.show",
+            "ssm.put",
+            "samconfig.pr",
+        }
+
+    def test_github_ops_are_not_spelled_gh_or_actions(self) -> None:
+        # They name the renamed GitHubExecutor, not the old ActionsDispatcher.
+        assert {op.value for op in Op if op.value.startswith("github.")}
+        assert not [op for op in Op if op.value.startswith(("gh.", "actions."))]
+
+    def test_op_serializes_as_its_string_value(self) -> None:
+        payload = json.loads(_plan().model_dump_json())
+        assert payload["steps"][0]["op"] == "sam.deploy"
+
+    def test_an_unknown_op_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="sam.destroy"):
+            PlanStep(
+                description="destroy the stack",
+                command="sam destroy",
+                executor="sam",
+                op="sam.destroy",
+            )
+
+
+class TestPlanStepExecutors:
+    """``PlanStep.executor`` names one of the four injected adapters."""
+
+    @pytest.mark.parametrize("executor", ["sam", "github", "git", "config"])
+    def test_accepts_every_known_executor(self, executor: str) -> None:
+        step = PlanStep(
+            description="do the thing",
+            command="gh --version",
+            executor=executor,
+            op=Op.CONFIG_SHOW,
+        )
+        assert step.executor == executor
+
+    def test_rejects_the_former_actions_executor(self) -> None:
+        with pytest.raises(ValueError, match="actions"):
+            PlanStep(
+                description="dispatch the run",
+                command="gh workflow run deploy.yml",
+                executor="actions",
+                op=Op.GITHUB_RUN_WORKFLOW,
+            )
+
+
+class TestPlanStepSecretParams:
+    """Requirements 3.7 / 4.4: a secret param is absent from the serialized model."""
+
+    def _step(self) -> PlanStep:
+        return PlanStep(
+            description="write the operational value",
+            command="aws ssm put-parameter --name /bdo-market-insights/dev/domain/x --value ***",
+            executor="config",
+            op=Op.SSM_PUT,
+            params={"path": "/bdo-market-insights/dev/domain/x", "value": SecretStr("s3cret")},
+        )
+
+    def test_a_secret_str_param_survives_as_a_secret_str(self) -> None:
+        value = self._step().params["value"]
+        assert isinstance(value, SecretStr)
+        assert value.get_secret_value() == "s3cret"
+
+    def test_the_secret_is_not_in_the_serialized_step(self) -> None:
+        dumped = self._step().model_dump_json()
+        assert "s3cret" not in dumped
+        assert "**********" in dumped
+
+    def test_plain_string_params_are_untouched(self) -> None:
+        assert self._step().params["path"] == "/bdo-market-insights/dev/domain/x"
+
+
+class TestResultPlan:
+    """``Result.plan`` carries the plan a confirmation gate refused (Req 10.4)."""
+
+    def test_defaults_to_none(self) -> None:
+        assert _result().plan is None
+
+    def test_carries_the_refused_plan_and_round_trips(self) -> None:
+        plan = _plan()
+        result = Result(
+            capability=Capability.DEPLOY,
+            ok=False,
+            exit_code=ExitCode.CONFIRMATION_REQUIRED,
+            summary="deploy: confirmation required, nothing has run",
+            plan=plan,
+        )
+        assert result.plan == plan
+        assert Result.model_validate_json(result.model_dump_json()) == result
+
+    def test_the_refused_plan_is_serialized_with_its_effects(self) -> None:
+        result = Result(
+            capability=Capability.DEPLOY,
+            ok=False,
+            exit_code=ExitCode.CONFIRMATION_REQUIRED,
+            summary="deploy: confirmation required, nothing has run",
+            plan=_plan(),
+        )
+        payload = json.loads(result.model_dump_json())
+        assert payload["plan"]["effects"] == ["updates the dev CloudFormation stack"]
+        assert payload["plan"]["requires_confirmation"] is True
 
 
 class TestCapabilityMembers:

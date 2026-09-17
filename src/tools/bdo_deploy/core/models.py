@@ -17,7 +17,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from bdo_deploy.core.errors import UsageError
 from bdo_deploy.core.exit_codes import ExitCode
@@ -44,13 +44,76 @@ class Capability(StrEnum):
 
 
 class Target(StrEnum):
-    """Where a command executes; selects the executor."""
+    """Where a *deploy* executes; only meaningful for ``capability == DEPLOY``.
+
+    A ``release`` plan always records ``CI`` — the deploy runs in Actions however
+    it was triggered, so a ``release`` command is normalised during planning —
+    and ``config`` / ``bootstrap`` plan the same steps whichever target they
+    carried.
+    """
 
     LOCAL = "local"
     """SamExecutor — dev/personal stacks only."""
 
     CI = "ci"
-    """ActionsDispatcher — shared-env and prod."""
+    """GitHubExecutor — shared-env and prod."""
+
+
+class Op(StrEnum):
+    """The closed vocabulary of planned operations; executors switch on it.
+
+    Closed rather than a bare ``str`` because every executor's ``run_step``
+    switches on it: with a ``StrEnum`` the type checker can verify the switch is
+    exhaustive, so adding an op without handling it is a type error at check
+    time instead of a silent fallthrough discovered mid-deploy.
+
+    The ``params`` each op expects are documented on the member. Keys are stable
+    names in the executor's own vocabulary (``config_env``, ``version``,
+    ``path``, …), so an executor reads a typed value rather than re-deriving one
+    by parsing ``PlanStep.command``.
+    """
+
+    SAM_BUILD = "sam.build"
+    """Build the deployment artifacts. No params."""
+
+    SAM_DEPLOY = "sam.deploy"
+    """Deploy a stack. Params: ``config_env`` (the ``samconfig.toml`` environment)."""
+
+    SAM_SYNC = "sam.sync"
+    """Dev fast-loop sync. Params: ``config_env``."""
+
+    SAM_PIPELINE_BOOTSTRAP = "sam.pipeline_bootstrap"
+    """One-time OIDC role + artifact bucket. Params: ``stage``."""
+
+    GITHUB_RUN_WORKFLOW = "github.run_workflow"
+    """Dispatch a workflow run. Params: ``workflow``, ``stage``, ``version`` (when set)."""
+
+    GITHUB_ENVIRONMENT_SET = "github.environment_set"
+    """Create/update a GitHub Environment. Params: ``environment``."""
+
+    GITHUB_SECRET_SET = "github.secret_set"
+    """Set an environment secret. Params: ``environment``, ``name``.
+
+    Only the secret's name is ever planned; the value is supplied at execution
+    and, when one is carried at all, it is carried as a ``SecretStr``.
+    """
+
+    GIT_TAG = "git.tag"
+    """Create a release tag. Params: ``version``, ``base_branch``."""
+
+    GIT_PUSH = "git.push"
+    """Push a release tag. Params: ``version``, ``remote``."""
+
+    CONFIG_SHOW = "config.show"
+    """Merged samconfig + SSM read. Params: ``stage``, ``ssm_path`` (the path prefix)."""
+
+    SSM_PUT = "ssm.put"
+    """Audited ``PutParameter``. Params: ``path``, ``value`` (a ``SecretStr``), ``overwrite``."""
+
+    SAMCONFIG_PR = "samconfig.pr"
+    """Open a samconfig.toml PR. Params: ``stage``, ``key``, ``value``, ``branch``,
+    ``base``, ``title``. The value is deploy-time config bound for a public pull
+    request, so it is not secret and stays rendered."""
 
 
 class ConfigDiff(BaseModel):
@@ -150,15 +213,19 @@ class PlanStep(BaseModel):
     """The display rendering only — the line shown by ``--dry-run`` and the TUI
     preview, e.g. ``sam deploy --config-env dev``. Never parsed by an executor."""
 
-    executor: Literal["sam", "actions", "git", "config"]
-    op: str
-    """The structured intent, e.g. ``sam.deploy``, ``ssm.put``, ``git.tag``.
+    executor: Literal["sam", "github", "git", "config"]
+    op: Op
+    """The structured intent, from the closed ``Op`` vocabulary."""
 
-    The vocabulary is defined once, as module constants in ``core.dispatch``.
+    params: dict[str, str | bool | list[str] | SecretStr] = Field(default_factory=dict)
+    """The typed values the executor needs, so it never has to parse ``command``.
+
+    A secret-shaped or operational value is carried as a ``SecretStr``: the
+    executor recovers it with ``.get_secret_value()``, while ``model_dump_json()``
+    renders it as ``'**********'``. The value is therefore *absent from the
+    serialized model*, not merely omitted by a renderer — which is what
+    Requirements 3.7 and 4.4 require of ``--dry-run`` and ``--json``.
     """
-
-    params: dict[str, str | bool | list[str]] = Field(default_factory=dict)
-    """The typed values the executor needs, so it never has to parse ``command``."""
 
 
 class Plan(BaseModel):
@@ -183,7 +250,7 @@ class CommandResult(BaseModel):
     ok: bool
     output: str
     run_url: str | None = None
-    """Set by an actions/CI step that dispatched a run (Requirement 10.6)."""
+    """Set by a github/CI step that dispatched a run (Requirement 10.6)."""
 
     changes: list[ConfigDiff] = Field(default_factory=list)
 
@@ -201,6 +268,16 @@ class Result(BaseModel):
 
     raw_output: str | None = None
 
+    plan: Plan | None = None
+    """Set when a mutating plan was refused for want of confirmation.
+
+    ``Dispatcher.execute()`` *raises* ``ConfirmationRequired`` — a raise cannot
+    be silently ignored, which is what a safety gate needs. The CLI front-end
+    catches it and renders a ``Result`` carrying that refused ``Plan`` here, so
+    the caller can inspect the effects and re-invoke with ``--yes`` (exit ``3``,
+    Requirement 10.4). It is ``None`` for every other outcome.
+    """
+
 
 __all__ = [
     "Capability",
@@ -208,6 +285,7 @@ __all__ = [
     "CommandResult",
     "ConfigDiff",
     "ExitCode",
+    "Op",
     "Plan",
     "PlanStep",
     "Result",
