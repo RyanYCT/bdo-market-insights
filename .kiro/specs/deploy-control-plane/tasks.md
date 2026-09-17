@@ -237,7 +237,7 @@ nothing ships half-built.
 
 ### Phase 7 — ADRs
 
-- [ ] 7.1 ADR: wizard as a thin control plane, console entry point (no `scripts/` folder)
+- [x] 7.1 ADR: wizard as a thin control plane, console entry point (no `scripts/` folder)
   - _Requirements: 2.3_
 
 - [ ] 7.2 ADR: prod gating via GitHub Environments (required reviewers) + OIDC keyless deploy

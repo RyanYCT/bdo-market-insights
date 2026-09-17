@@ -680,9 +680,9 @@ For any command run with `--dry-run` (or TUI preview), the wizard renders the
 
 Rationale is captured as ADRs rather than expanded inline (per AGENTS.md):
 
-- **(a)** Wizard as a thin control plane over the SAM CLI + GitHub Actions +
-  `git`, packaged as a console entry point in `pyproject.toml` (no `scripts/`
-  ops folder — respects the repo anti-pattern).
+- **(a)** **ADR-0039 (accepted)** — wizard as a thin control plane over the SAM
+  CLI + GitHub Actions + `git`, packaged as a console entry point in
+  `pyproject.toml` (no `scripts/` ops folder — respects the repo anti-pattern).
 - **(b)** Prod gating via GitHub Environments (required reviewers) + OIDC keyless
   deploy, enforced by the platform rather than application code.
 - **(c)** **ADR-0038 (accepted)** — purpose-scoped GitHub Actions workflows.
