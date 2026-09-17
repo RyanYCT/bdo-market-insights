@@ -179,7 +179,7 @@ nothing ships half-built.
     mutating execution (convenience skin, not system of record)
   - _Requirements: 1.3_
 
-- [ ] 5.3 Wire both front-ends to the shared `Dispatcher`
+- [x] 5.3 Wire both front-ends to the shared `Dispatcher`
   - Each front-end only collects intent and renders the `Result`; both build the
     same typed `Command` and route through the same `Dispatcher`
   - _Requirements: 1.4_

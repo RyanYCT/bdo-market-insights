@@ -170,6 +170,13 @@ def main(argv: list[str] | None = None) -> int:
     tty) launches Textual. Returns the process exit code."""
 ```
 
+**Mode selection cannot hijack a non-interactive invocation.** "On a tty" means
+**both** stdin and stdout are terminals, so a pipe, an agent or a CI job never
+reaches the TUI. A subcommand-less invocation that is *not* on a tty renders help
+and exits `2` (no capability was named); `--tui` off a tty, and `--tui` alongside a
+subcommand, are both usage errors (exit `2`) rather than a silently preferred
+mode.
+
 **Run-following: one shared helper (`presentation.py`).** Following a dispatched
 CI run is presentation, so it lives beside the rest of the shared front-end
 rendering vocabulary:

@@ -7,6 +7,27 @@ routing, no validation and no capability logic — those live in the core, so th
 TUI front-end inherits exactly the same behaviour instead of a second copy that
 could drift.
 
+**One process entry point, two modes.** ``main()`` is the only entry point the
+console script exposes, and it is where the mode is chosen: a subcommand runs CLI
+mode, while ``--tui`` (or no subcommand *on a terminal*) launches the Textual
+front-end. Both modes then route through the one ``Dispatcher`` the composition
+root builds, so "two front-ends over one shared core" is a property of the
+process, not of how a caller happened to import the package.
+
+**Mode selection must not hijack a pipeline.** "No subcommand on a tty" is
+deliberately conditioned on **both** stdin and stdout being a terminal. An agent,
+a CI job or a pipe has neither, and a full-screen app there would hang a build
+waiting for keystrokes nobody can send. So:
+
+- no subcommand, on a terminal → TUI mode;
+- no subcommand, not on a terminal → the pre-existing behaviour, unchanged:
+  render help and exit ``2``, because no capability was named;
+- ``--tui`` not on a terminal → exit ``2`` naming the problem, rather than
+  starting an app that has no terminal to draw on. Explicit intent still cannot
+  make a pipe interactive, and an early usage error beats a garbled hang;
+- ``--tui`` together with a subcommand → exit ``2``: the two select opposite
+  modes, and silently preferring one would make the other's flags quietly inert.
+
 **It never prompts.** Not for a stage, not for a confirmation, not for anything:
 agents, automation and CI have no terminal to answer with, and a front-end that
 prompted "only sometimes" would hang a pipeline. ``--yes`` *is* how confirmation
@@ -75,12 +96,16 @@ EXIT_CODE_HELP: Final = (
 
 app = typer.Typer(
     name=PROG_NAME,
-    no_args_is_help=True,
+    # Deliberately NOT `no_args_is_help`: a bare invocation has to reach the
+    # callback below, which is where the tty decides between the TUI and the help
+    # text. The non-tty branch reproduces exactly what `no_args_is_help` did.
+    no_args_is_help=False,
     add_completion=False,
     help=(
         "Deploy control plane: translate intent into a typed command and dispatch it to "
-        "the SAM CLI, GitHub Actions or git. Never interactive — pass --yes to confirm a "
-        f"mutating command. {EXIT_CODE_HELP}"
+        "the SAM CLI, GitHub Actions or git. A subcommand runs non-interactive CLI mode, "
+        "which never prompts — pass --yes to confirm a mutating command; --tui (or no "
+        f"subcommand on a terminal) launches the interactive TUI. {EXIT_CODE_HELP}"
     ),
 )
 
@@ -131,6 +156,73 @@ StageOption = Annotated[
     str,
     typer.Option("--stage", help="The samconfig.toml environment to act on."),
 ]
+
+
+# -- mode selection: the one place the front-end is chosen --------------------
+
+
+def _on_a_terminal() -> bool:
+    """Report whether this process is attached to an interactive terminal.
+
+    Both streams are required: the TUI reads keys from stdin and draws on stdout,
+    so a redirected either way is not a terminal it can run in. A stream that
+    cannot answer ``isatty()`` at all — a replaced stdin in a test harness, a
+    closed descriptor — counts as *not* a terminal, because the safe default when
+    interactivity is unknown is the non-interactive mode.
+    """
+    for stream in (sys.stdin, sys.stdout):
+        try:
+            if not stream.isatty():
+                return False
+        except (AttributeError, ValueError):  # pragma: no cover - defensive
+            return False
+    return True
+
+
+@app.callback(invoke_without_command=True)
+def select_mode(
+    ctx: typer.Context,
+    tui: Annotated[
+        bool,
+        typer.Option(
+            "--tui",
+            help=(
+                "Launch the interactive TUI instead of running a subcommand. Implied when "
+                "no subcommand is given and the process is attached to a terminal."
+            ),
+        ),
+    ] = False,
+) -> None:
+    """Choose the front-end for this invocation; see the module docstring.
+
+    Runs before any subcommand, and returns immediately when one was named — CLI
+    mode is the whole of the rest of this module. Only a *subcommand-less*
+    invocation can reach the TUI, so the two modes cannot both run in one process.
+    """
+    if ctx.invoked_subcommand is not None:
+        if tui:
+            raise typer.BadParameter(
+                "--tui launches the interactive front-end and cannot be combined with a "
+                f"subcommand; run `{PROG_NAME} --tui` on its own, or drop --tui.",
+                param_hint="--tui",
+            )
+        return
+    if not _on_a_terminal():
+        if tui:
+            raise typer.BadParameter(
+                "--tui needs an interactive terminal on both stdin and stdout; in a "
+                f"pipeline or CI run a subcommand instead (`{PROG_NAME} --help`).",
+                param_hint="--tui",
+            )
+        # Nothing named and nobody to ask: the pipeline-safe outcome, and the same
+        # one this front-end has always given a bare non-interactive invocation.
+        print(ctx.get_help(), file=sys.stdout)
+        raise typer.Exit(int(ExitCode.USAGE_ERROR))
+    # Imported here, not at module scope, so CLI mode never pays for importing
+    # Textual — and an agent-only install that lacks it still works.
+    from bdo_deploy.tui import run_tui
+
+    raise typer.Exit(run_tui(dispatcher=_injected_dispatcher(ctx)))
 
 
 # -- subcommands, one per capability ------------------------------------------
@@ -378,17 +470,27 @@ def _run(
     return int(result.exit_code)
 
 
+def _injected_dispatcher(ctx: typer.Context) -> Dispatcher | None:
+    """Return the ``Dispatcher`` placed on the Click context, if any.
+
+    ``main(argv, dispatcher=...)`` puts one there, which is how a test drives the
+    whole front-end in-process against faked executors. ``None`` means "no
+    override", and is passed straight through to the TUI so that it applies the
+    override the same way this module does — one injection point for both modes.
+    """
+    return ctx.obj if isinstance(ctx.obj, Dispatcher) else None
+
+
 def _dispatcher(ctx: typer.Context) -> Dispatcher:
     """Return the ``Dispatcher`` to route through, building the real one by default.
 
-    A ``Dispatcher`` placed on the Click context (``main(argv, dispatcher=...)``)
-    wins, which is how a test drives the whole front-end in-process against faked
-    executors. Otherwise the composition root is asked for the real wiring — the
-    same ``build_dispatcher()`` the TUI calls, so both front-ends demonstrably
-    route through one core (Requirement 1.4).
+    An injected ``Dispatcher`` wins; otherwise the composition root is asked for
+    the real wiring — the same ``build_dispatcher()`` the TUI calls, so both
+    front-ends demonstrably route through one core (Requirement 1.4).
     """
-    if isinstance(ctx.obj, Dispatcher):
-        return ctx.obj
+    injected = _injected_dispatcher(ctx)
+    if injected is not None:
+        return injected
     return build_dispatcher()
 
 
@@ -437,7 +539,12 @@ class _Console:
 
 
 def main(argv: list[str] | None = None, *, dispatcher: Dispatcher | None = None) -> int:
-    """Process entry point for the ``bdo-deploy`` console script.
+    """Process entry point for the ``bdo-deploy`` console script — both modes.
+
+    The single entry point for the whole tool: ``select_mode`` decides from the
+    arguments and the terminal whether this invocation runs CLI mode or launches
+    the TUI, so ``run_tui()`` is reachable by an operator and not only
+    programmatically.
 
     Returns the exit code instead of exiting, so the whole front-end is testable
     in-process without spawning a subprocess. Typer/Click signal their own

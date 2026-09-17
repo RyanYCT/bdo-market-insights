@@ -10,17 +10,30 @@ What is asserted is the front-end's contract, not the core's behaviour: the
 subcommand set, intent collection into a ``Command``, the ``--json`` / ``--yes``
 / ``--dry-run`` flags, that nothing is ever prompted for, and the exit codes
 (Requirements 1.1, 1.2, 10.1, 10.2, 10.4, 10.7).
+
+The last two sections widen from CLI mode to the process: ``main`` is the single
+entry point that chooses between the two front-ends, and both front-ends route
+through one ``Dispatcher`` from one composition root while restating no routing,
+validation or rendering (Requirement 1.4). That second claim is structural, so it
+is asserted against the front-ends' own source rather than by exercising cases.
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import sys
-from typing import Any
+from pathlib import Path
+from types import ModuleType
+from typing import Any, Final
 
 import pytest
 
+from bdo_deploy import cli as cli_module
+from bdo_deploy import presentation as presentation_module
+from bdo_deploy import tui as tui_module
 from bdo_deploy.cli import app, main
+from bdo_deploy.core import assembly as assembly_module
 from bdo_deploy.core.dispatch import Dispatcher
 from bdo_deploy.core.errors import ConfirmationRequired, ExecutorFailed
 from bdo_deploy.core.exit_codes import ExitCode
@@ -105,6 +118,30 @@ class FakeDispatcher(Dispatcher):
             exit_code=ExitCode.SUCCESS,
             summary=f"{plan.capability.value}: completed {len(plan.steps)} step(s)",
         )
+
+
+class FakeTerminal:
+    """A stream that claims to be a terminal without being one.
+
+    Mode selection asks the streams themselves whether this is an interactive
+    session, so a fake stream is enough to exercise both branches — no pty, and
+    no real terminal, is needed. ``write``/``flush`` exist because whatever Click
+    happens to emit has to go somewhere.
+    """
+
+    def __init__(self, *, tty: bool = True) -> None:
+        self.tty = tty
+        self.written: list[str] = []
+
+    def isatty(self) -> bool:
+        return self.tty
+
+    def write(self, text: str) -> int:
+        self.written.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        return None
 
 
 def _json_result(out: str) -> dict[str, Any]:
@@ -405,3 +442,258 @@ class TestEntryPoint:
         monkeypatch.setattr(sys, "argv", ["bdo-deploy", "deploy", "--dry-run"])
         assert main(dispatcher=dispatcher) == ExitCode.SUCCESS
         assert [cmd.capability for cmd in dispatcher.planned] == [Capability.DEPLOY]
+
+
+# -- H. mode selection: one entry point, two front-ends (Requirement 1.4) ----
+
+
+@pytest.fixture
+def launched_tui(monkeypatch: pytest.MonkeyPatch) -> list[Dispatcher | None]:
+    """Record every ``run_tui`` launch instead of starting a real Textual app.
+
+    Patched on ``bdo_deploy.tui`` — the module the CLI imports it from at call
+    time — so what is recorded is the launch the real entry point performed, with
+    the dispatcher it chose to hand over.
+    """
+    launched: list[Dispatcher | None] = []
+
+    def fake_run_tui(*, dispatcher: Dispatcher | None = None) -> int:
+        launched.append(dispatcher)
+        return int(ExitCode.SUCCESS)
+
+    monkeypatch.setattr(tui_module, "run_tui", fake_run_tui)
+    return launched
+
+
+def _terminal(monkeypatch: pytest.MonkeyPatch, *, stdin: bool, stdout: bool) -> None:
+    """Present streams that claim (or deny) being a terminal."""
+    monkeypatch.setattr(sys, "stdin", FakeTerminal(tty=stdin))
+    if stdout:
+        # Left alone when it must be a pipe: pytest's captured stdout already is
+        # one, and keeping it is what lets a test read the help text back.
+        monkeypatch.setattr(sys, "stdout", FakeTerminal(tty=True))
+
+
+class TestModeSelection:
+    """``main`` is the only entry point, and it chooses the front-end."""
+
+    def test_a_terminal_with_no_subcommand_launches_the_tui(
+        self, monkeypatch: pytest.MonkeyPatch, launched_tui: list[Dispatcher | None]
+    ) -> None:
+        """The TUI is reachable by an operator, not only programmatically."""
+        dispatcher = FakeDispatcher()
+        _terminal(monkeypatch, stdin=True, stdout=True)
+        assert main([], dispatcher=dispatcher) == ExitCode.SUCCESS
+        assert launched_tui == [dispatcher], "the injected core is handed to the TUI too"
+
+    def test_the_tui_flag_launches_the_tui(
+        self, monkeypatch: pytest.MonkeyPatch, launched_tui: list[Dispatcher | None]
+    ) -> None:
+        _terminal(monkeypatch, stdin=True, stdout=True)
+        assert main(["--tui"]) == ExitCode.SUCCESS
+        assert launched_tui == [None], "no override: the TUI asks the composition root"
+
+    @pytest.mark.parametrize(
+        ("stdin", "stdout"),
+        [(False, False), (True, False), (False, True)],
+        ids=["neither", "stdin-only", "stdout-only"],
+    )
+    def test_without_both_streams_on_a_terminal_nothing_interactive_starts(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        launched_tui: list[Dispatcher | None],
+        capsys: pytest.CaptureFixture[str],
+        *,
+        stdin: bool,
+        stdout: bool,
+    ) -> None:
+        """A pipeline cannot be hijacked into a full-screen app it cannot answer."""
+        _terminal(monkeypatch, stdin=stdin, stdout=stdout)
+        assert main([]) == ExitCode.USAGE_ERROR
+        assert launched_tui == []
+        if not stdout:
+            assert "Usage:" in capsys.readouterr().out
+
+    def test_the_tui_flag_without_a_terminal_is_a_usage_error(
+        self, monkeypatch: pytest.MonkeyPatch, launched_tui: list[Dispatcher | None]
+    ) -> None:
+        """Explicit intent still cannot make a pipe interactive."""
+        _terminal(monkeypatch, stdin=False, stdout=False)
+        assert main(["--tui"]) == ExitCode.USAGE_ERROR
+        assert launched_tui == []
+
+    def test_the_tui_flag_cannot_be_combined_with_a_subcommand(
+        self, monkeypatch: pytest.MonkeyPatch, launched_tui: list[Dispatcher | None]
+    ) -> None:
+        """The two select opposite modes, so asking for both is a usage error."""
+        dispatcher = FakeDispatcher()
+        _terminal(monkeypatch, stdin=True, stdout=True)
+        assert main(["--tui", "deploy", "--yes"], dispatcher=dispatcher) == ExitCode.USAGE_ERROR
+        assert launched_tui == []
+        assert dispatcher.planned == [], "neither mode ran"
+
+    def test_a_subcommand_on_a_terminal_still_runs_cli_mode(
+        self, monkeypatch: pytest.MonkeyPatch, launched_tui: list[Dispatcher | None]
+    ) -> None:
+        """A named capability is unambiguous: a tty must not divert it to the TUI."""
+        dispatcher = FakeDispatcher()
+        _terminal(monkeypatch, stdin=True, stdout=True)
+        assert main(["deploy", "--yes"], dispatcher=dispatcher) == ExitCode.SUCCESS
+        assert launched_tui == []
+        assert [cmd.capability for cmd in dispatcher.planned] == [Capability.DEPLOY]
+
+
+# -- I. the shared-core property, asserted (Requirement 1.4) -----------------
+
+FRONT_ENDS: Final = (cli_module, tui_module)
+"""The two front-end modules. Every test below holds for both, or fails."""
+
+CORE_VOCABULARY: Final = frozenset({"Dispatcher"})
+"""The only non-constant name a front-end may import from ``core.dispatch``.
+
+The type, so a front-end can be annotated against the core it routes through —
+and nothing else. Everything else it may import from that module is an
+UPPER_CASE argument-name constant, which is shared *vocabulary* rather than
+behaviour: both front-ends spelling ``args`` keys the same way is precisely how
+they avoid restating anything.
+"""
+
+RENDERING: Final = frozenset({"failed_result", "plan_lines", "result_lines"})
+"""The shared rendering vocabulary, which lives in ``presentation`` only."""
+
+
+def _source(module: ModuleType) -> ast.Module:
+    """Parse a module's own source, so the assertions are about what is written."""
+    assert module.__file__ is not None
+    return ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+
+
+def _imported_modules(tree: ast.Module) -> set[str]:
+    """Every module the source imports, however it imports it."""
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module is not None:
+            imported.add(node.module)
+        elif isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+    return imported
+
+
+def _imported_from(tree: ast.Module, module: str) -> set[str]:
+    """The names the source imports from one module."""
+    return {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == module
+        for alias in node.names
+    }
+
+
+def _called_names(tree: ast.Module) -> set[str]:
+    """Every name the source calls, whether bare or through an attribute."""
+    called: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            called.add(node.func.id)
+        elif isinstance(node.func, ast.Attribute):
+            called.add(node.func.attr)
+    return called
+
+
+def _defined_names(tree: ast.Module) -> set[str]:
+    """Every function or class the source defines, at any nesting depth."""
+    return {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+    }
+
+
+class TestOneSharedCore:
+    """Both front-ends route through one ``Dispatcher`` from one composition root.
+
+    Requirement 1.4 is a structural claim — each front-end is *limited to*
+    collecting intent and rendering the ``Result`` — so it is asserted
+    structurally, against the front-ends' own source. A behavioural test can show
+    that the two agree on the cases it thought to try; these show that a
+    disagreement has nowhere to come from, because neither module contains any
+    routing, validation or rendering to disagree with.
+
+    (That the two produce *identical* plans for the same intent is Requirement
+    1.5, and is asserted separately.)
+    """
+
+    def test_both_take_their_wiring_from_the_one_composition_root(self) -> None:
+        """The name each front-end imported is the composition root's own function.
+
+        Read out of the module namespaces rather than as attributes, because
+        ``build_dispatcher`` is an import into a front-end and not part of its
+        public surface — which is the point being asserted.
+        """
+        for module in FRONT_ENDS:
+            assert vars(module)["build_dispatcher"] is assembly_module.build_dispatcher
+
+    def test_neither_assembles_a_dispatcher_of_its_own(self) -> None:
+        """Nothing but ``build_dispatcher`` (or an injected one) can produce a core.
+
+        Together with the executor ban below, this is what makes "the same
+        ``Dispatcher``" true by construction rather than by convention: a front-end
+        that cannot name a concrete executor and does not call ``Dispatcher(...)``
+        has exactly one way to obtain a core.
+        """
+        for module in FRONT_ENDS:
+            called = _called_names(_source(module))
+            assert "build_dispatcher" in called, f"{module.__name__} must use the composition root"
+            assert "Dispatcher" not in called, f"{module.__name__} assembles its own core"
+
+    def test_neither_can_reach_an_executor(self) -> None:
+        """No front-end names a concrete adapter, so none can reach a tool directly."""
+        for module in FRONT_ENDS:
+            executors = {
+                imported
+                for imported in _imported_modules(_source(module))
+                if imported.startswith("bdo_deploy.core.executors")
+            }
+            assert executors == set(), f"{module.__name__} imports {executors}"
+
+    def test_neither_restates_routing_or_validation(self) -> None:
+        """Routing lives in ``core.dispatch``, validation in ``core.validation``.
+
+        A front-end imports the ``Dispatcher`` type and the shared argument-name
+        constants from the former and nothing at all from the latter, so neither
+        module can hold a second opinion about which executor an intent reaches or
+        whether an intent is usable.
+        """
+        for module in FRONT_ENDS:
+            tree = _source(module)
+            assert "bdo_deploy.core.validation" not in _imported_modules(tree)
+            behaviour = {
+                name
+                for name in _imported_from(tree, "bdo_deploy.core.dispatch")
+                if name not in CORE_VOCABULARY and not name.isupper()
+            }
+            assert behaviour == set(), f"{module.__name__} imports core behaviour: {behaviour}"
+
+    def test_neither_restates_rendering(self) -> None:
+        """One vocabulary describes a plan and a result, and it lives elsewhere."""
+        assert set(presentation_module.__all__) >= RENDERING
+        for module in FRONT_ENDS:
+            tree = _source(module)
+            imported = _imported_from(tree, "bdo_deploy.presentation")
+            assert imported, f"{module.__name__} renders without the shared vocabulary"
+            assert imported <= RENDERING
+            redefined = RENDERING & _defined_names(tree)
+            assert redefined == set(), f"{module.__name__} redefines {redefined}"
+
+    def test_one_entry_point_reaches_both_front_ends(
+        self, monkeypatch: pytest.MonkeyPatch, launched_tui: list[Dispatcher | None]
+    ) -> None:
+        """One process, one injected core, either front-end — the operator's view."""
+        dispatcher = FakeDispatcher()
+        _terminal(monkeypatch, stdin=True, stdout=True)
+        assert main(["deploy", "--yes"], dispatcher=dispatcher) == ExitCode.SUCCESS
+        assert main([], dispatcher=dispatcher) == ExitCode.SUCCESS
+        assert [cmd.capability for cmd in dispatcher.planned] == [Capability.DEPLOY]
+        assert launched_tui == [dispatcher]
