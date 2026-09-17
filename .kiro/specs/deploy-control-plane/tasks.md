@@ -166,7 +166,7 @@ nothing ships half-built.
 
 ### Phase 5 — Front-ends over one shared core
 
-- [ ] 5.1 Implement the Typer CLI front-end
+- [x] 5.1 Implement the Typer CLI front-end
   - One subcommand per capability; `--json` (sole `Result` on stdout, logs to
     stderr), `--yes`, `--dry-run`; never prompts; deterministic exit codes
   - Catch `ConfirmationRequired` from the core and render a `Result` carrying the
