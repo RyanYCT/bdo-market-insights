@@ -229,7 +229,7 @@ nothing ships half-built.
     shared setup steps are swapped for the composite action (ADR-0038)
   - _Requirements: 8.2, 8.4, 8.5_
 
-- [ ] 6.4 Checkpoint — Ensure the workflows parse, both consume the composite
+- [x] 6.4 Checkpoint — Ensure the workflows parse, both consume the composite
       action, and all tests pass; ask the user if questions arise.
   - Verifies the purpose-scoped workflow split, the prod environment gate, and
     the factored shared setup (no new AWS infrastructure is added)
