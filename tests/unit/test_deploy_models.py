@@ -316,11 +316,19 @@ class TestNoLocalProdDeploy:
         assert command.stage == "dev"
 
     @pytest.mark.parametrize(
-        "capability",
-        [Capability.CONFIG, Capability.BOOTSTRAP, Capability.RELEASE],
+        ("capability", "args"),
+        [
+            (Capability.CONFIG, {}),
+            # A prod bootstrap needs its reviewers (Requirement 4.5); that is a
+            # separate rule, and passing them shows this one still lets it through.
+            (Capability.BOOTSTRAP, {"reviewers": ["User:1234"]}),
+            (Capability.RELEASE, {}),
+        ],
     )
-    def test_non_deploy_capabilities_are_unaffected(self, capability: Capability) -> None:
-        command = Command(capability=capability, target=Target.LOCAL, stage="prod")
+    def test_non_deploy_capabilities_are_unaffected(
+        self, capability: Capability, args: dict[str, str | bool | list[str]]
+    ) -> None:
+        command = Command(capability=capability, target=Target.LOCAL, stage="prod", args=args)
         assert command.stage == "prod"
         assert command.target is Target.LOCAL
 

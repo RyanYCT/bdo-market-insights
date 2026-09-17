@@ -57,7 +57,7 @@ from bdo_deploy.core.errors import (
 from bdo_deploy.core.executors.base import StepExecutor
 from bdo_deploy.core.executors.config import ConfigStore
 from bdo_deploy.core.executors.git import GitExecutor
-from bdo_deploy.core.executors.github import GitHubExecutor
+from bdo_deploy.core.executors.github import SECRET_ENV_PREFIX, GitHubExecutor
 from bdo_deploy.core.executors.sam import SamExecutor
 from bdo_deploy.core.models import (
     Capability,
@@ -68,6 +68,7 @@ from bdo_deploy.core.models import (
     PlanStep,
     Result,
     Target,
+    bootstrap_reviewers,
 )
 from bdo_deploy.core.validation import PROD_STAGE, SSM_ROOT_SEGMENT, validate_ssm_path
 
@@ -139,6 +140,46 @@ def _ssm_stage_prefix(stage: str) -> str:
     cannot name a prefix the executor would not actually read.
     """
     return f"/{SSM_ROOT_SEGMENT}/{stage}/"
+
+
+def _reviewer_list(reviewers: list[str]) -> str:
+    """Render the required reviewers for a human, in the order they were given."""
+    return ", ".join(reviewers)
+
+
+def _environment_description(stage: str, reviewers: list[str]) -> str:
+    """Describe the Environment step, naming the protection it configures."""
+    created = f"create or update the {stage} GitHub Environment"
+    if not reviewers:
+        return created
+    return f"{created} with required reviewers {_reviewer_list(reviewers)}"
+
+
+def _environment_command(stage: str, reviewers: list[str]) -> str:
+    """Render the ``gh api`` call that creates the Environment.
+
+    With reviewers the adapter sends them as a JSON body on stdin (``--input
+    -``), so the rendering says so and names them in a trailing comment: the line
+    stays a faithful preview of the invocation while still showing *which*
+    reviewers it configures. Reviewers are not secret, so nothing is masked.
+    """
+    line = f"gh api --method PUT repos/{{owner}}/{{repo}}/environments/{stage}"
+    if not reviewers:
+        return line
+    return f"{line} --input -  # required reviewers: {_reviewer_list(reviewers)}"
+
+
+def _environment_params(stage: str, reviewers: list[str]) -> dict[str, str | bool | list[str]]:
+    """The typed intent ``GitHubExecutor.set_environment`` reads.
+
+    ``reviewers`` is present only when the command named some: an empty list sent
+    to the API would *clear* an existing environment's reviewers, which is the
+    opposite of what a bootstrap that mentioned none intends.
+    """
+    params: dict[str, str | bool | list[str]] = {"environment": stage}
+    if reviewers:
+        params["reviewers"] = reviewers
+    return params
 
 
 def _str_arg(cmd: Command, name: str) -> str:
@@ -464,7 +505,22 @@ class Dispatcher:
 
         Deliberately out-of-band (Requirement 4.2): the routine deploy path is a
         single declarative deploy and never plans these steps.
+
+        The Environment step carries the command's required reviewers, so the
+        gate is configured **as part of creating the Environment** rather than by
+        a follow-up nobody runs (Requirement 6.4). They are rendered, not masked:
+        a reviewer list is not a secret, and which reviewers will guard the
+        environment is precisely what a preview is for. A ``prod`` command that
+        names none never reaches here — ``Command`` refuses it (Requirement 4.5).
+
+        The secret step names the **environment variable** its value is read from
+        (``BDO_DEPLOY_SECRET_<NAME>``). Only the variable's name: naming it turns
+        a run that mutated two steps and then failed on an unset variable into a
+        plan the operator can satisfy before confirming, while the value itself
+        stays out of the plan entirely (Requirement 4.4).
         """
+        reviewers = bootstrap_reviewers(cmd.args)
+        secret_variable = f"{SECRET_ENV_PREFIX}{DEPLOY_ROLE_SECRET}"
         return _plan_for(
             cmd,
             [
@@ -482,18 +538,16 @@ class Dispatcher:
                 # ConfigStore's: ConfigStore stays strictly config-as-data over
                 # samconfig.toml + SSM.
                 PlanStep(
-                    description=f"create or update the {cmd.stage} GitHub Environment",
-                    command=(
-                        f"gh api --method PUT repos/{{owner}}/{{repo}}/environments/{cmd.stage}"
-                    ),
+                    description=_environment_description(cmd.stage, reviewers),
+                    command=_environment_command(cmd.stage, reviewers),
                     executor="github",
                     op=Op.GITHUB_ENVIRONMENT_SET,
-                    params={"environment": cmd.stage},
+                    params=_environment_params(cmd.stage, reviewers),
                 ),
                 PlanStep(
                     description=(
                         "record the OIDC deploy role ARN as the environment's "
-                        f"{DEPLOY_ROLE_SECRET} secret"
+                        f"{DEPLOY_ROLE_SECRET} secret, read from {secret_variable}"
                     ),
                     command=f"gh secret set {DEPLOY_ROLE_SECRET} --env {cmd.stage}",
                     executor="github",
@@ -505,6 +559,16 @@ class Dispatcher:
                 f"creates the {cmd.stage} OIDC deploy role and the SAM artifact bucket",
                 f"creates or updates the {cmd.stage} GitHub Environment and its "
                 "AWS_DEPLOY_ROLE_ARN secret",
+                *(
+                    [
+                        f"requires {_reviewer_list(reviewers)} to approve every "
+                        f"{cmd.stage} deploy run"
+                    ]
+                    if reviewers
+                    else []
+                ),
+                f"reads the {DEPLOY_ROLE_SECRET} value from the {secret_variable} "
+                "environment variable, which must be set before confirming",
                 "one-time, out-of-band step: not part of the routine deploy path",
             ],
             confirm=True,

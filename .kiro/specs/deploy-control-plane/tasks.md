@@ -136,7 +136,7 @@ nothing ships half-built.
     tracked files or writes SSM with audit
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.6_
 
-- [ ] 4.2 Wire the **bootstrap** capability
+- [x] 4.2 Wire the **bootstrap** capability
   - One-time, clearly-labelled helper: the `SamExecutor` wraps `sam pipeline
     bootstrap` (OIDC deploy role + artifact bucket) while the `GitHubExecutor`
     creates/updates the GitHub Environments (`github.environment_set`) and sets

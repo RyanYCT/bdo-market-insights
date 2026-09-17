@@ -100,6 +100,7 @@ STAGE_PARAM: Final = "stage"
 VERSION_PARAM: Final = "version"
 ENVIRONMENT_PARAM: Final = "environment"
 NAME_PARAM: Final = "name"
+REVIEWERS_PARAM: Final = "reviewers"
 
 _RUN_LIST_FIELDS: Final = "url,databaseId"
 """The two fields the run-URL query asks for; ``url`` is what ends up surfaced."""
@@ -362,7 +363,10 @@ class GitHubCli:
                     workflow=str_param(step, WORKFLOW_PARAM),
                 )
             case Op.GITHUB_ENVIRONMENT_SET:
-                return self.set_environment(name=str_param(step, ENVIRONMENT_PARAM))
+                return self.set_environment(
+                    name=str_param(step, ENVIRONMENT_PARAM),
+                    reviewers=_reviewers_param(step),
+                )
             case Op.GITHUB_SECRET_SET:
                 name = str_param(step, NAME_PARAM)
                 return self.set_environment_secret(
@@ -445,6 +449,27 @@ def _run_selector(run: RunRef) -> list[str]:
     look at when the dispatch's URL could not be resolved.
     """
     return [] if run.run_id is None else [run.run_id]
+
+
+def _reviewers_param(step: PlanStep) -> list[str] | None:
+    """Read the optional required-reviewer list out of ``step.params``.
+
+    ``None`` when the planned step named none — the Environment is then created
+    or updated without touching its reviewers, rather than having them cleared by
+    an empty list. A present-but-wrongly-typed value is a planning fault and is
+    named as such, in keeping with ``str_param``; the reviewers matter too much
+    to be quietly dropped, since they *are* the prod gate (Requirement 6.4).
+    """
+    if REVIEWERS_PARAM not in step.params:
+        return None
+    value = step.params[REVIEWERS_PARAM]
+    if not isinstance(value, list):
+        raise UsageError(
+            field=f"params.{REVIEWERS_PARAM}",
+            value=value,
+            problem=f"{step.op.value} needs a list {REVIEWERS_PARAM!r} param",
+        )
+    return value
 
 
 def _reviewers_body(reviewers: list[str]) -> str:

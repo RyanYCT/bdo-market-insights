@@ -6,16 +6,18 @@ free JSON serialization for the CLI's ``--json`` mode, which emits exactly one
 serialized ``Result``.
 
 The validation rules the models enforce (stage membership, the release-version
-regex, the LOCAL prod deploy rejection, repo-scoped SSM paths) live in
-``core.validation`` so both front-ends inherit them; a violating ``Command``
-cannot be constructed. They raise ``UsageError`` (exit ``2``) before any executor
-is reached.
+regex, the LOCAL prod deploy rejection, the required reviewers a ``prod``
+bootstrap must carry, repo-scoped SSM paths) are enforced here, on the models
+themselves, off the pure checks in ``core.validation`` — so both front-ends
+inherit them and a violating ``Command`` cannot be constructed. They raise
+``UsageError`` (exit ``2``) before any executor is reached.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
@@ -89,7 +91,12 @@ class Op(StrEnum):
     """Dispatch a workflow run. Params: ``workflow``, ``stage``, ``version`` (when set)."""
 
     GITHUB_ENVIRONMENT_SET = "github.environment_set"
-    """Create/update a GitHub Environment. Params: ``environment``."""
+    """Create/update a GitHub Environment. Params: ``environment``, and an
+    optional ``reviewers`` — the required reviewers to configure on it.
+
+    The reviewer list is carried in ``params`` (and rendered in the step) because
+    it is not secret: it is *what protection will be configured*, which is
+    exactly what a plan preview exists to show."""
 
     GITHUB_SECRET_SET = "github.secret_set"  # nosec B105 - op name; no secret value in source
     """Set an environment secret. Params: ``environment``, ``name``.
@@ -182,12 +189,60 @@ class PrRef(BaseModel):
     url: str | None = None
 
 
+REVIEWERS_ARG: Final = "reviewers"
+"""``bootstrap`` arg carrying the required reviewers of the GitHub Environment.
+
+Each entry is ``<Type>:<id>`` — ``User:1234``, ``Team:56`` — the form
+``GitHubExecutor.set_environment`` sends to the GitHub API; a bare id is read as
+a ``User``.
+"""
+
+
+def bootstrap_reviewers(args: Mapping[str, str | bool | list[str]]) -> list[str]:
+    """Return the required reviewers named in ``args``, validating their shape.
+
+    Shared by ``Command``'s validator (which refuses a ``prod`` bootstrap that
+    names none) and by the planner (which puts them in the
+    ``github.environment_set`` step's params), so the reviewers a command is
+    *accepted* for are exactly the reviewers that get *configured* — one reader,
+    no second interpretation of the same arg.
+
+    A missing arg is an empty list, which is legitimate for a non-prod stage. A
+    present-but-mis-shaped arg (a bare string, an empty entry) is a
+    ``UsageError``: silently reading ``"User:1234"`` as five reviewers, or
+    sending an empty reviewer id to the API, would configure a gate other than
+    the one the operator asked for.
+    """
+    value = args.get(REVIEWERS_ARG)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise UsageError(
+            field=f"args.{REVIEWERS_ARG}",
+            value=value,
+            problem=f"{REVIEWERS_ARG!r} must be a list of required reviewers",
+            hint='e.g. reviewers=["User:1234", "Team:56"]',
+        )
+    if any(not entry.strip() for entry in value):
+        raise UsageError(
+            field=f"args.{REVIEWERS_ARG}",
+            value=value,
+            problem=f"{REVIEWERS_ARG!r} contains an empty reviewer",
+            hint='every entry names a reviewer as "<Type>:<id>", e.g. "User:1234"',
+        )
+    return list(value)
+
+
 class Command(BaseModel):
     """The typed request object both front-ends build.
 
     Validation runs on construction *and* on assignment, so there is no way to
     hold an invalid command — in particular no way to hold a LOCAL prod deploy
-    (design Property 2: no first-party prod deploy).
+    (design Property 2: no first-party prod deploy), and no way to hold a
+    ``prod`` bootstrap that names no required reviewer (Requirements 4.5, 6.4).
+    Both production invariants are enforced the same way and in the same place:
+    the offending command is *unconstructable*, so no planner or executor needs a
+    second check that could drift from it.
     """
 
     model_config = ConfigDict(validate_assignment=True)
@@ -232,6 +287,41 @@ class Command(BaseModel):
                 hint=(
                     "use `release` to tag a version and let the environment-protected "
                     f"CI job deploy, or re-run with target={Target.CI.value}"
+                ),
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_reviewers_for_prod_bootstrap(self) -> Command:
+        """Refuse a ``prod`` bootstrap that names no required reviewer.
+
+        Requirements 4.5 and 6.4: the prod gate is the GitHub Environment's
+        required reviewers, so an Environment created without them is an
+        *unprotected* production — and the bootstrap helper is the one code path
+        that creates it. Refusing here, rather than in the planner or the
+        executor, means the rejection happens before any executor call (exit
+        ``2``), so no Environment is created and none is created-then-fixed. It
+        also sits beside the LOCAL-prod-deploy rule, which is the other invariant
+        of the same kind, enforced the same way.
+
+        The reviewers' *shape* is checked for every bootstrap, prod or not: a
+        mis-shaped list would otherwise configure a gate nobody asked for on a
+        non-prod Environment.
+        """
+        if self.capability is not Capability.BOOTSTRAP:
+            return self
+        reviewers = bootstrap_reviewers(self.args)
+        if self.stage == PROD_STAGE and not reviewers:
+            raise UsageError(
+                field=f"args.{REVIEWERS_ARG}",
+                value=None,
+                problem=(
+                    f"a {PROD_STAGE} bootstrap needs at least one required reviewer; "
+                    f"none was given, so no GitHub Environment was created"
+                ),
+                hint=(
+                    f"pass the reviewers of the {PROD_STAGE} GitHub Environment, e.g. "
+                    f'{REVIEWERS_ARG}=["User:1234", "Team:56"]'
                 ),
             )
         return self
@@ -324,6 +414,7 @@ class Result(BaseModel):
 
 
 __all__ = [
+    "REVIEWERS_ARG",
     "Capability",
     "Command",
     "CommandResult",
@@ -336,4 +427,5 @@ __all__ = [
     "PrRef",
     "Result",
     "Target",
+    "bootstrap_reviewers",
 ]

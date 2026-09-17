@@ -23,7 +23,7 @@ from bdo_deploy.core.dispatch import (
     Dispatcher,
 )
 from bdo_deploy.core.errors import ConfirmationRequired, UsageError, exit_code_for
-from bdo_deploy.core.executors.github import RunRef, RunStatus
+from bdo_deploy.core.executors.github import SECRET_ENV_PREFIX, RunRef, RunStatus
 from bdo_deploy.core.exit_codes import ExitCode
 from bdo_deploy.core.models import (
     Capability,
@@ -372,7 +372,8 @@ class TestPlanBootstrap:
             PlanStep(
                 description=(
                     "record the OIDC deploy role ARN as the environment's "
-                    f"{DEPLOY_ROLE_SECRET} secret"
+                    f"{DEPLOY_ROLE_SECRET} secret, read from "
+                    f"{SECRET_ENV_PREFIX}{DEPLOY_ROLE_SECRET}"
                 ),
                 command=f"gh secret set {DEPLOY_ROLE_SECRET} --env dev",
                 executor="github",
@@ -383,6 +384,9 @@ class TestPlanBootstrap:
         assert plan.effects == [
             "creates the dev OIDC deploy role and the SAM artifact bucket",
             "creates or updates the dev GitHub Environment and its AWS_DEPLOY_ROLE_ARN secret",
+            f"reads the {DEPLOY_ROLE_SECRET} value from the "
+            f"{SECRET_ENV_PREFIX}{DEPLOY_ROLE_SECRET} environment variable, "
+            "which must be set before confirming",
             "one-time, out-of-band step: not part of the routine deploy path",
         ]
         assert plan.requires_confirmation is True
