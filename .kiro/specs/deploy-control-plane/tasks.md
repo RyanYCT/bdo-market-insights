@@ -118,13 +118,13 @@ nothing ships half-built.
     flag store is introduced here
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 9.1, 9.2, 9.3_
 
-- [ ]* 3.5 Executor tests
+- [x]* 3.5 Executor tests
   - `moto` for `ConfigStore` SSM reads/writes; recorded-command assertions for
     `sam` / `gh` / `git` invocations; verbatim executor output on failure (exit `1`,
     no traceback)
   - _Requirements: 3.4, 3.5, 9.1, 10.2_
 
-- [ ] 3.6 Checkpoint — Ensure all tests pass, ask the user if questions arise.
+- [x] 3.6 Checkpoint — Ensure all tests pass, ask the user if questions arise.
   - Verifies every executor adapter: `--config-env`-only SAM invocation, the
     `deploy.yml` dispatch, release preconditions, and config-as-data writes
   - _Requirements: 2.2, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 7.1, 9.1, 10.2_
