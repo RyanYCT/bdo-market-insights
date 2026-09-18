@@ -271,7 +271,7 @@ completeness — AGENTS.md). Each cites the requirement(s) it defends.
   - **Property 5: Dry-run purity**
   - **Validates: Requirements 10.5**
 
-- [ ] 8.6 Final checkpoint — Ensure `ruff` / `mypy` / `pytest` pass, ask the user if questions arise.
+- [x] 8.6 Final checkpoint — Ensure `ruff` / `mypy` / `pytest` pass, ask the user if questions arise.
   - Verifies every stated invariant holds end-to-end across the four capabilities
   - _Requirements: 1.5, 3.3, 3.4, 3.6, 6.1, 6.2, 8.3, 10.5_
 

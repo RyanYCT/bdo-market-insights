@@ -2335,3 +2335,45 @@ records (the sessions did not log at the time); dates are the merge dates._
 ### Deferred / open questions
 - Phase 6 (composite action, `deploy.yml`, `ci.yml` refactor) is the first
   phase to touch real CI. Phases 7-8: three ADRs, five property tests.
+
+## 2026-09-17 — Deploy control plane: workflows, ADRs, property tests (Phases 6-8)
+
+**Agent:** Kiro
+**Mode:** Spec
+**Branch:** `feat/deploy-control-plane-impl`
+**Phase:** Phases 6-8 of `.kiro/specs/deploy-control-plane/tasks.md` — spec complete
+**Commits:** `..af36acf` — PR #125
+
+### Done
+- Workflows: `.github/actions/setup/` composite action consumed by every job of
+  both workflows; the tag-gated deploy moved out of `ci.yml` into a dedicated
+  `deploy.yml` (environment-gated, OIDC, stage-parameterised), so a pushed tag
+  runs exactly one deploy. `ci.yml` is validation only and holds no
+  `id-token: write`.
+- ADR-0039 (thin control plane + console entry point), ADR-0040 (prod gated by
+  GitHub Environments, OIDC keyless, and why the deploy is not gated on the full
+  validation suite), ADR-0041 (Typer + Textual).
+- Five property tests, one per stated invariant, each mutation-verified by
+  breaking the production code and confirming the property failed.
+- Fixed a CI-only test failure: Typer forces colour when `GITHUB_ACTIONS` is set
+  (`rich_utils.FORCE_TERMINAL`), so help-text assertions passed locally and
+  failed on the runner. The tests now force colour on and strip ANSI.
+- 859 tests. Local gates and CI both green.
+
+### Decisions
+- Moving the deploy out of `ci.yml` loses the cross-workflow `needs`; rather than
+  couple the workflows, `deploy.yml` invokes `scripts/validate_regions.py`
+  itself, stage-scoped — a second call site of one authoritative script. A
+  tagged commit reached `main` under branch protection and is already
+  validated → ADR-0040
+- The recurring ADR procedure was added to the existing
+  `.kiro/skills/domain-modeling/references/ADR-FORMAT.md` rather than as a new
+  skill, which would have duplicated it → no ADR (local choice)
+
+### Deferred / open questions
+- `workflow_dispatch` accepts an arbitrary ref, so a dev deploy of an unmerged
+  branch is expressible; prod is protected by required reviewers. Constraining
+  prod dispatches to a tag or `main` is not done.
+- Requirement 8.4 lists "checkout" among the steps to factor, which a local
+  composite action cannot satisfy (it must run after checkout). Wording only.
+- The reviewer gate lives in repository settings, so it is not captured in IaC.
