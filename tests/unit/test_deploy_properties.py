@@ -24,10 +24,20 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from bdo_deploy.cli import main
-from bdo_deploy.core.dispatch import CONFIG_SET, CONFIG_SHOW
+from bdo_deploy.core.dispatch import (
+    ACTION_ARG,
+    CONFIG_SET,
+    CONFIG_SHOW,
+    DISPATCH_ARG,
+    KEY_ARG,
+    SYNC_ARG,
+    VALUE_ARG,
+    Dispatcher,
+)
+from bdo_deploy.core.errors import UsageError
 from bdo_deploy.core.exit_codes import ExitCode
-from bdo_deploy.core.models import Capability, Target
-from bdo_deploy.core.validation import SSM_ROOT_SEGMENT, samconfig_stages
+from bdo_deploy.core.models import REVIEWERS_ARG, Capability, Command, Op, Plan, Target
+from bdo_deploy.core.validation import PROD_STAGE, SSM_ROOT_SEGMENT, samconfig_stages
 from tests.unit.test_deploy_equivalence import RecordingDispatcher
 from tests.unit.test_deploy_tui import Step, check, choose, drive, set_input, set_select
 
@@ -282,3 +292,194 @@ class TestFrontEndEquivalenceHoldsForAnyIntent:
             if _through_cli(intent).plans:
                 planned.add(capability)
         assert planned == set(Capability)
+
+
+# -- the constructible command space ------------------------------------------
+#
+# Property 2 quantifies over "all commands the wizard can construct", so this
+# strategy covers the whole ``Command`` space rather than the intents a front-end
+# happens to express: every capability, both targets, every stage defined in
+# samconfig.toml, with or without a version, and arbitrary ``args`` — including an
+# arg no capability reads, because "arbitrary" is the point.
+
+_command_args = st.fixed_dictionaries(
+    {},
+    optional={
+        ACTION_ARG: st.sampled_from([CONFIG_SHOW, CONFIG_SET]),
+        KEY_ARG: _config_keys,
+        VALUE_ARG: _config_values,
+        SYNC_ARG: st.booleans(),
+        DISPATCH_ARG: st.booleans(),
+        REVIEWERS_ARG: st.lists(_reviewer_ids, max_size=2, unique=True),
+        "unknown": st.one_of(st.booleans(), _param_names),
+    },
+)
+
+_commands: st.SearchStrategy[dict[str, object]] = st.builds(
+    dict,
+    capability=st.sampled_from(Capability),
+    target=st.sampled_from(Target),
+    stage=_stages,
+    version=st.one_of(st.none(), _versions),
+    args=_command_args,
+    dry_run=st.booleans(),
+    assume_yes=st.booleans(),
+)
+"""The *fields* of a command, not a ``Command``: whether they make one at all is
+the first half of the property. A strategy that could only yield valid commands
+would quietly exclude exactly the combinations the invariant is about."""
+
+_LOCAL_SAM_MUTATIONS: frozenset[Op] = frozenset({Op.SAM_DEPLOY, Op.SAM_SYNC})
+"""The ops that change a stack by running the SAM CLI **on this machine**.
+
+``SAM_BUILD`` is local but changes no stack, and ``SAM_PIPELINE_BOOTSTRAP``
+provisions the deploy plumbing rather than deploying the application — neither is
+a deploy. The set is re-derived from the plans themselves below (every step that
+selects a ``config_env`` must be in it), so a future op that deploys locally
+cannot slip past this constant by not being listed in it."""
+
+_CI_TRIGGERS: frozenset[Op] = frozenset({Op.GITHUB_RUN_WORKFLOW, Op.GIT_TAG, Op.GIT_PUSH})
+"""The sanctioned triggers. Issuing one locally does not deploy anything locally:
+``git tag`` / ``git push`` run on this machine, and the deploy they trigger runs in
+the environment-protected CI job (Requirement 7.5)."""
+
+
+def _planned(fields: dict[str, object]) -> Plan | None:
+    """Return the ``Plan`` these command fields produce, or ``None`` if there is none.
+
+    Two distinct refusals, both of which mean "no plan exists for this intent":
+    the ``Command`` cannot be constructed (a LOCAL ``prod`` deploy, a ``prod``
+    bootstrap naming no reviewer), or it can be but no plan shape expresses it
+    (``sync`` with ``target=ci``). Either way the invariant is satisfied by there
+    being nothing to inspect, which is why both collapse to ``None`` here.
+
+    Reaches no executor: the ``Dispatcher`` is built with none injected, and
+    ``plan()`` never touches one.
+    """
+    try:
+        cmd = Command.model_validate(fields)
+        return Dispatcher().plan(cmd)
+    except UsageError:
+        return None
+
+
+# -- Property 2: no first-party prod deploy ----------------------------------
+
+
+class TestNoPlanDeploysProdLocally:
+    """**Property 2** — production is unreachable from this machine.
+
+    **Validates: Requirements 6.1, 6.2, 7.5**
+
+    Asserted on the *structured* intent a step carries — its ``op`` and ``params``
+    — and deliberately not by searching ``PlanStep.command`` for the string
+    ``sam deploy --config-env prod``. A string search is what an executor never
+    does, so it could pass vacuously the moment the rendering changed wording,
+    while the plan still told the SAM executor to deploy prod. What the step
+    *means* is what has to be safe.
+    """
+
+    @settings(max_examples=500)
+    @given(fields=_commands)
+    def test_no_constructible_command_plans_a_local_prod_deploy(
+        self, fields: dict[str, object]
+    ) -> None:
+        plan = _planned(fields)
+        if plan is None:
+            return
+        for step in plan.steps:
+            if step.op not in _LOCAL_SAM_MUTATIONS and "config_env" not in step.params:
+                continue
+            assert step.op in _LOCAL_SAM_MUTATIONS, (
+                f"{step.op} selects a samconfig environment but is not accounted for as a "
+                "local SAM mutation; this test's vocabulary has drifted from the planner's"
+            )
+            assert step.params.get("config_env") != PROD_STAGE, (
+                f"{step.op} would deploy {PROD_STAGE} from this machine"
+            )
+            assert plan.target is Target.LOCAL, (
+                f"{step.op} runs the local SAM CLI, so no plan may claim to target CI with it"
+            )
+
+    @settings(max_examples=500)
+    @given(fields=_commands)
+    def test_an_expressible_prod_deploy_only_triggers_the_protected_ci_job(
+        self, fields: dict[str, object]
+    ) -> None:
+        """The positive half: prod *is* reachable, by exactly one kind of step.
+
+        Without this, the property above would be satisfied by a control plane
+        that simply refused every prod command — true, and useless. A ``deploy``
+        may only dispatch ``deploy.yml``; a ``release`` may dispatch it or push the
+        tag that triggers it, and either way the plan records ``target = CI``
+        because the deploy runs in Actions however it was triggered.
+
+        ``bootstrap`` is excluded: it provisions a stage's deploy plumbing rather
+        than deploying it, and is out-of-band by design (Requirement 4.2).
+        """
+        plan = _planned(fields)
+        if plan is None or fields["stage"] != PROD_STAGE:
+            return
+        if fields["capability"] not in {Capability.DEPLOY, Capability.RELEASE}:
+            return
+        ops = {step.op for step in plan.steps}
+        assert ops <= _CI_TRIGGERS, f"a {PROD_STAGE} plan may only trigger CI, not {ops}"
+        assert plan.target is Target.CI
+
+    def test_the_space_generated_is_not_one_of_refusals(self) -> None:
+        """A strategy nothing could be planned from would pass both properties.
+
+        Enumerates the spine of the space deterministically — every capability
+        against both targets and every stage — and pins that it yields plans, that
+        a local SAM deploy of a non-prod stage is among them (so the guarded branch
+        is genuinely reachable), and that a prod plan is among them (so the
+        positive half is not asserted about an empty set).
+        """
+        plans = [
+            plan
+            for capability in Capability
+            for target in Target
+            for stage in _STAGES
+            if (
+                plan := _planned(
+                    {
+                        "capability": capability,
+                        "target": target,
+                        "stage": stage,
+                        "version": "v1.2.3",
+                        "args": {REVIEWERS_ARG: ["User:1234"]},
+                    }
+                )
+            )
+            is not None
+        ]
+        local_deploys = [
+            step for plan in plans for step in plan.steps if step.op in _LOCAL_SAM_MUTATIONS
+        ]
+        assert len(plans) >= len(Capability), "the enumerated spine must produce plans"
+        assert local_deploys, "a local SAM deploy must be reachable, or nothing is guarded"
+        assert {step.params["config_env"] for step in local_deploys} == {"dev"}
+        assert any(plan.steps and plan.target is Target.CI for plan in plans)
+
+    def test_a_locally_issued_release_trigger_is_not_a_local_prod_deploy(self) -> None:
+        """Requirement 7.5: pushing the tag is local; the deploy it starts is not.
+
+        Spelled out as an example because it is the one case the property's
+        wording has to exclude explicitly, and a reader should be able to see
+        *which* steps are allowed to run on this machine for a prod release.
+        """
+        plan = _planned(
+            {
+                "capability": Capability.RELEASE,
+                "target": Target.LOCAL,
+                "stage": PROD_STAGE,
+                "version": "v1.2.3",
+                "args": {},
+            }
+        )
+        assert plan is not None
+        assert [step.op for step in plan.steps] == [Op.GIT_TAG, Op.GIT_PUSH]
+        assert plan.target is Target.CI, (
+            "the deploy runs in CI even though the tag was pushed here"
+        )
+        assert all("config_env" not in step.params for step in plan.steps)

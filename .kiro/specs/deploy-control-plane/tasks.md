@@ -255,7 +255,7 @@ completeness — AGENTS.md). Each cites the requirement(s) it defends.
   - **Property 1: Front-end equivalence**
   - **Validates: Requirements 1.5**
 
-- [ ]* 8.2 Property test — No first-party prod deploy
+- [x]* 8.2 Property test — No first-party prod deploy
   - **Property 2: No first-party prod deploy**
   - **Validates: Requirements 6.1, 6.2**
 
