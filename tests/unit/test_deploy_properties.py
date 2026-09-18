@@ -17,11 +17,13 @@ confirmed.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
-from typing import NamedTuple
+from typing import Final, NamedTuple
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from pydantic import SecretStr
 
 from bdo_deploy.cli import main
 from bdo_deploy.core.dispatch import (
@@ -30,6 +32,7 @@ from bdo_deploy.core.dispatch import (
     CONFIG_SHOW,
     DISPATCH_ARG,
     KEY_ARG,
+    MASK,
     SYNC_ARG,
     VALUE_ARG,
     Dispatcher,
@@ -483,3 +486,221 @@ class TestNoPlanDeploysProdLocally:
             "the deploy runs in CI even though the tag was pushed here"
         )
         assert all("config_env" not in step.params for step in plan.steps)
+
+
+# -- the config-change space --------------------------------------------------
+#
+# Property 3 quantifies over "every config change", which is a ``config set``:
+# ``config show`` changes nothing and ``bootstrap`` / ``deploy`` / ``release``
+# change no configuration location at all (the second test below is what pins
+# *that* down). The key is the existing ``_config_keys`` — which generates both an
+# absolute repo-scoped SSM path and a bare ``samconfig.toml`` parameter name, the
+# two inputs the routing rule discriminates on — and the value is the existing
+# ``_config_values``. ``target`` is generated even though ``config`` does not vary
+# by it, so a future routing that *did* read it would be covered here rather than
+# silently untested.
+
+SECRET_IN_JSON: Final = "**********"
+"""What Pydantic renders a ``SecretStr`` as in ``model_dump_json()``.
+
+Asserted against the *serialized* plan rather than searched for in it: a masked
+value must be absent from the serialization, and the only way to state that
+without tripping over a generated value that happens to also occur in the path or
+the stage is to read the one field it would have been in."""
+
+_SANCTIONED_CONFIG_WRITES: frozenset[Op] = frozenset({Op.SAMCONFIG_PR, Op.SSM_PUT})
+"""The two locations a config change may land in, and there is no third.
+
+``Op.CONFIG_SHOW`` is the read, so it is not here. Both members are *writes*: one
+opens a pull request against a tracked file, one performs an audited SSM put."""
+
+_config_set_commands: st.SearchStrategy[dict[str, object]] = st.builds(
+    lambda stage, key, value, target: {
+        "capability": Capability.CONFIG,
+        "target": target,
+        "stage": stage,
+        "args": {ACTION_ARG: CONFIG_SET, KEY_ARG: key, VALUE_ARG: value},
+    },
+    stage=_stages,
+    key=_config_keys,
+    value=_config_values,
+    target=st.sampled_from(Target),
+)
+
+
+# -- Property 3: config-as-data ----------------------------------------------
+
+
+class TestEveryConfigChangeLandsInOneOfTwoLocations:
+    """**Property 3** — a pull request or an audited SSM write, never a third place.
+
+    **Validates: Requirements 3.3, 3.4, 3.6**
+
+    Asserted on ``op`` and ``params``, never on the rendered ``command`` string:
+    the rendering is display-only and no executor parses it, so a plan that
+    *rendered* ``gh pr create`` while telling the ``ConfigStore`` to do something
+    else would satisfy a string search and violate the property. What the step
+    means is what has to be in one of the two sanctioned places.
+    """
+
+    @settings(max_examples=300)
+    @given(fields=_config_set_commands)
+    def test_a_config_change_is_one_step_in_one_of_the_two_sanctioned_locations(
+        self, fields: dict[str, object]
+    ) -> None:
+        """Both halves of the property: the shape, and the rule that chooses it.
+
+        The shape alone would be satisfied by a planner that routed *everything*
+        to one location; the routing rule alone would not say that nothing else
+        can be emitted. An absolute repo-scoped SSM path is operational config and
+        becomes the audited put; anything else is deploy-time config held in
+        ``samconfig.toml`` and becomes the reviewed pull request.
+        """
+        plan = _planned(fields)
+        if plan is None:
+            return
+        args = fields["args"]
+        assert isinstance(args, dict)
+        key = args[KEY_ARG]
+        assert isinstance(key, str)
+
+        assert len(plan.steps) == 1, "one config change, one write"
+        step = plan.steps[0]
+        assert step.executor == "config", (
+            f"a config change reached the {step.executor!r} executor, "
+            "which is not one of the two sanctioned locations"
+        )
+        assert step.op in _SANCTIONED_CONFIG_WRITES, f"{step.op} is a third configuration location"
+        expected = Op.SSM_PUT if key.startswith("/") else Op.SAMCONFIG_PR
+        assert step.op is expected, f"{key!r} was routed to {step.op}, expected {expected}"
+        if step.op is Op.SSM_PUT:
+            assert step.params["path"] == key, "the audited put must target the named path"
+        else:
+            assert step.params["key"] == key
+            assert step.params["stage"] == fields["stage"], (
+                "the pull request must edit the stage's parameter table, not another's"
+            )
+
+    @settings(max_examples=300)
+    @given(fields=_config_set_commands)
+    def test_the_ssm_write_masks_its_value_and_the_pull_request_does_not(
+        self, fields: dict[str, object]
+    ) -> None:
+        """The asymmetry the design justifies, pinned so neither side can flip.
+
+        An operational value is masked in the rendering and carried as a
+        ``SecretStr``, so it is *absent from the serialized plan* rather than
+        merely omitted by a renderer (Requirement 3.7) — ``--dry-run`` and
+        ``--json`` cannot print it. A deploy-time value is not masked: it is bound
+        for a public pull request against a tracked file, so hiding it would only
+        make the plan a worse preview of the diff it opens.
+
+        A property that asserted only "there are two locations" would let a
+        regression mask the wrong one — a redacted PR title, or an SSM value
+        printed into ``--json`` — without failing anything.
+        """
+        plan = _planned(fields)
+        if plan is None:
+            return
+        args = fields["args"]
+        assert isinstance(args, dict)
+        value = args[VALUE_ARG]
+        assert isinstance(value, str)
+
+        step = plan.steps[0]
+        serialized = json.loads(plan.model_dump_json())["steps"][0]
+        if step.op is Op.SSM_PUT:
+            carried = step.params["value"]
+            assert isinstance(carried, SecretStr), (
+                "an operational value must be carried as a SecretStr, or the "
+                "serialized plan prints it"
+            )
+            assert carried.get_secret_value() == value, "the executor must still get the value"
+            assert serialized["params"]["value"] == SECRET_IN_JSON
+            assert MASK in step.command, "the rendered put must show the mask, not the value"
+        else:
+            assert step.params["value"] == value
+            assert serialized["params"]["value"] == value, (
+                "a deploy-time value belongs in the plan: it is the diff being proposed"
+            )
+            assert value in step.command
+
+    @settings(max_examples=300)
+    @given(fields=_commands)
+    def test_no_other_capability_writes_configuration_anywhere(
+        self, fields: dict[str, object]
+    ) -> None:
+        """The containment half, over the whole command space rather than ``config``.
+
+        Two directions, because each admits a different regression: a sanctioned
+        write reached through some other executor would put config-as-data outside
+        the ``ConfigStore``, and a ``config`` step carrying some *other* op would
+        be the third location arriving from the inside. Only the read is allowed
+        to join the two writes.
+        """
+        plan = _planned(fields)
+        if plan is None:
+            return
+        for step in plan.steps:
+            if step.op in _SANCTIONED_CONFIG_WRITES:
+                assert step.executor == "config", (
+                    f"{step.op} was routed to the {step.executor!r} executor"
+                )
+            if step.executor == "config":
+                assert step.op in _SANCTIONED_CONFIG_WRITES | {Op.CONFIG_SHOW}, (
+                    f"{step.op} is a config operation outside the two sanctioned writes"
+                )
+
+    def test_both_sanctioned_locations_are_actually_reachable(self) -> None:
+        """A planner that refused every config change would pass the above.
+
+        Pins one key of each kind onto the branch it must take, so neither half of
+        the routing rule can become unreachable without this failing — including
+        ``BdoRegions``, the single active-region toggle that Requirement 3.6 names
+        as belonging in a pull request (ADR-0036).
+        """
+        operational = _planned(
+            {
+                "capability": Capability.CONFIG,
+                "stage": "dev",
+                "args": {
+                    ACTION_ARG: CONFIG_SET,
+                    KEY_ARG: f"/{SSM_ROOT_SEGMENT}/dev/domain/api-domain-name",
+                    VALUE_ARG: "api.example.com",
+                },
+            }
+        )
+        deploy_time = _planned(
+            {
+                "capability": Capability.CONFIG,
+                "stage": "dev",
+                "args": {ACTION_ARG: CONFIG_SET, KEY_ARG: "BdoRegions", VALUE_ARG: "NA"},
+            }
+        )
+        assert operational is not None and deploy_time is not None
+        assert [step.op for step in operational.steps] == [Op.SSM_PUT]
+        assert [step.op for step in deploy_time.steps] == [Op.SAMCONFIG_PR]
+
+    def test_a_path_outside_the_repo_scope_is_refused_rather_than_rerouted(self) -> None:
+        """The escape hatch the routing rule must not open (Requirement 9.1).
+
+        ``_config_keys`` generates only *valid* repo-scoped paths, so the property
+        above never sees this case — and the tempting way to satisfy "two
+        locations" for a bad path would be to fall through to the pull-request
+        branch, quietly turning a rejected SSM name into a ``samconfig.toml``
+        parameter called ``/bdo/dev/db/dsn``. It is a refusal instead.
+        """
+        assert (
+            _planned(
+                {
+                    "capability": Capability.CONFIG,
+                    "stage": "dev",
+                    "args": {
+                        ACTION_ARG: CONFIG_SET,
+                        KEY_ARG: "/bdo/dev/db/dsn",
+                        VALUE_ARG: "postgres://x",
+                    },
+                }
+            )
+            is None
+        )

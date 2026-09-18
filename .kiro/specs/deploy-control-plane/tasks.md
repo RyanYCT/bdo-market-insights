@@ -259,7 +259,7 @@ completeness — AGENTS.md). Each cites the requirement(s) it defends.
   - **Property 2: No first-party prod deploy**
   - **Validates: Requirements 6.1, 6.2**
 
-- [ ]* 8.3 Property test — Config-as-data
+- [x]* 8.3 Property test — Config-as-data
   - **Property 3: Config-as-data**
   - **Validates: Requirements 3.3, 3.4, 3.6**
 
