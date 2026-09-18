@@ -17,17 +17,23 @@ confirmed.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import pathlib
+import subprocess  # nosec B404 - patched, never invoked: see the assembly purity test
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Final, NamedTuple
+from typing import Final, NamedTuple, cast
 
+import boto3
+import pytest
 import yaml
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import SecretStr
 
 from bdo_deploy.cli import main
+from bdo_deploy.core.assembly import ControlPlane, build_control_plane, build_dispatcher
 from bdo_deploy.core.dispatch import (
     ACTION_ARG,
     CONFIG_SET,
@@ -41,7 +47,10 @@ from bdo_deploy.core.dispatch import (
     Dispatcher,
 )
 from bdo_deploy.core.errors import UsageError
-from bdo_deploy.core.executors.github import GH, VERSION_PARAM, GitHubCli
+from bdo_deploy.core.executors.config import ConfigStore
+from bdo_deploy.core.executors.git import GitExecutor
+from bdo_deploy.core.executors.github import GH, VERSION_PARAM, GitHubCli, GitHubExecutor
+from bdo_deploy.core.executors.sam import SamExecutor
 from bdo_deploy.core.exit_codes import ExitCode
 from bdo_deploy.core.models import REVIEWERS_ARG, Capability, Command, Op, Plan, PlanStep, Target
 from bdo_deploy.core.validation import PROD_STAGE, SSM_ROOT_SEGMENT, samconfig_stages
@@ -887,3 +896,248 @@ class TestTheWorkflowAcceptsEverythingTheControlPlaneSends:
         assert _dispatched_inputs(ci_deploy[0]) == {"stage": PROD_STAGE}
         assert _dispatched_inputs(release[0]) == {"stage": PROD_STAGE, VERSION_PARAM: "v1.2.3"}
         assert set(_declared_dispatch_inputs(DEPLOY_WORKFLOW)) == {"stage", VERSION_PARAM}
+
+
+# -- an executor that cannot be used ------------------------------------------
+
+
+class Untouchable:
+    """A stand-in for an executor that fails loudly if anything touches it.
+
+    The weak way to test dry-run purity is to record what a fake was asked to do
+    and assert the record is empty; the strong way is for the fake to have no
+    usable behaviour at all, so a dry run that reached it could not also *succeed*.
+    Both are asserted below — the raise catches a reached executor even where the
+    caller swallows exceptions, and the empty record catches a call that was
+    somehow tolerated.
+
+    Every attribute resolves to the same exploding callable, which is what lets one
+    class stand in for all four executor Protocols: their method sets differ, none
+    of the methods may be called, and enumerating fifteen raising stubs would only
+    invite one of them to be forgotten.
+    """
+
+    def __init__(self) -> None:
+        self.touched: list[str] = []
+
+    def __getattr__(self, name: str) -> Callable[..., object]:
+        def explode(*_args: object, **_kwargs: object) -> object:
+            self.touched.append(name)
+            raise AssertionError(f"a dry run reached the executor: {name}()")
+
+        return explode
+
+
+class Executors(NamedTuple):
+    """The four untouchable executors, and whether any of them was touched."""
+
+    sam: Untouchable
+    github: Untouchable
+    git: Untouchable
+    config: Untouchable
+
+    @property
+    def touched(self) -> list[str]:
+        """Every executor method called, across all four — empty for a pure run."""
+        return [name for executor in self for name in executor.touched]
+
+
+_mutating_intents = _intents.filter(
+    lambda intent: intent.capability is not Capability.CONFIG or intent.action != CONFIG_SHOW
+)
+"""The intents a TUI *preview* is a preview of.
+
+``config show`` is the one plan that requires no confirmation, so the TUI runs it
+on reaching the review step rather than previewing it — a merged read, which is
+none of the mutations the property enumerates. Excluding it here keeps the TUI
+property about previews;
+``test_the_tui_read_is_the_one_flow_that_legitimately_reaches_an_executor`` pins
+the exclusion so it cannot widen."""
+
+
+def _untouchable_executors() -> Executors:
+    return Executors(Untouchable(), Untouchable(), Untouchable(), Untouchable())
+
+
+def _untouchable_plane(executors: Executors) -> ControlPlane:
+    """A ``ControlPlane`` from the **real** composition root, wired to explode.
+
+    ``build_control_plane()`` is what the front-ends call, so the assembly under
+    test is the production one; only the four adapters are substituted. Typed
+    through ``cast`` because ``Untouchable`` satisfies the four Protocols by
+    ``__getattr__`` rather than by declaring their methods — the cast is the
+    test's statement that it knows these stand in for executors and intends never
+    to call one.
+    """
+    return build_control_plane(
+        sam=cast("SamExecutor", executors.sam),
+        github=cast("GitHubExecutor", executors.github),
+        git=cast("GitExecutor", executors.git),
+        config=cast("ConfigStore", executors.config),
+    )
+
+
+# -- Property 5: dry-run purity ----------------------------------------------
+
+
+class TestADryRunTouchesNothing:
+    """**Property 5** — a preview renders the plan and reaches no tool at all.
+
+    **Validates: Requirements 10.5**
+
+    Purity here is structural rather than a flag checked at run time: ``plan()``
+    holds no executor reference and ``execute()`` is the only method that can
+    reach one, so a dry run is inert because it stops earlier — not because
+    something remembered to look at ``dry_run``. These properties are what keep
+    that true as the planner grows.
+    """
+
+    @settings(max_examples=300)
+    @given(fields=_commands)
+    def test_planning_any_command_reaches_no_executor(self, fields: dict[str, object]) -> None:
+        """The core claim, over the whole ``Command`` field space.
+
+        ``plan()`` is called on a ``Dispatcher`` that *has* all four executors
+        injected, so this is not satisfied by there being nothing to reach: the
+        executors are present and are still never touched.
+        """
+        executors = _untouchable_executors()
+        dispatcher = _untouchable_plane(executors).dispatcher
+        with contextlib.suppress(UsageError):
+            # A refusal is one of the outcomes quantified over, not a case to
+            # skip: an intent no plan expresses must also reach no executor.
+            dispatcher.plan(Command.model_validate({**fields, "dry_run": True}))
+        assert executors.touched == []
+
+    @settings(max_examples=100)
+    @given(intent=_intents)
+    def test_a_dry_run_through_the_cli_mutates_nothing_even_with_yes(
+        self, intent: GeneratedIntent
+    ) -> None:
+        """The whole front-end, driven for real, with ``--dry-run`` **and** ``--yes``.
+
+        ``--yes`` is deliberate: without it the confirmation gate would stop every
+        mutating command anyway, and the test would prove Requirement 10.4 twice
+        over instead of Requirement 10.5 once. Confirmed *and* dry means the only
+        thing left standing between the command and a mutation is the dry-run
+        contract itself.
+
+        The exit code is asserted too, because "touched nothing" is also true of a
+        crash: a dry run succeeds (exit ``0``) unless the intent is one no plan can
+        express, which is a usage error (exit ``2``) — and either way nothing ran.
+        """
+        executors = _untouchable_executors()
+        # `config show` is the one read-only subcommand and deliberately offers no
+        # `--yes`, so passing it would make Click refuse the invocation and the
+        # example would prove nothing. It confirms itself in the front-end, which
+        # is the same starting position the flag buys for the others.
+        confirmable = not (intent.capability is Capability.CONFIG and intent.action == CONFIG_SHOW)
+        code = main(
+            [*intent.argv(), "--dry-run", *(["--yes"] if confirmable else [])],
+            plane=_untouchable_plane(executors),
+        )
+        assert executors.touched == [], f"a dry run reached {executors.touched}"
+        assert code in {int(ExitCode.SUCCESS), int(ExitCode.USAGE_ERROR)}
+
+    @settings(max_examples=10, deadline=None)
+    @given(intent=_mutating_intents)
+    def test_a_tui_preview_mutates_nothing(self, intent: GeneratedIntent) -> None:
+        """The TUI's preview is its review screen: reaching it must change nothing.
+
+        The TUI has no ``--dry-run`` flag — reviewing the plan *is* the preview —
+        so the equivalent of a dry run is driving the real widgets up to the
+        confirmation step and stopping, which is exactly what ``intent.steps()``
+        does. The session's exit code says it stopped there: a mutating plan was
+        produced and not confirmed.
+
+        Fewer examples than the CLI property above because each one runs a Textual
+        pilot; the CLI half carries the breadth.
+        """
+        executors = _untouchable_executors()
+        driven = drive(_untouchable_plane(executors).dispatcher, *intent.steps())
+        assert executors.touched == [], f"a TUI preview reached {executors.touched}"
+        assert int(driven.app.exit_code) in {
+            int(ExitCode.CONFIRMATION_REQUIRED),
+            int(ExitCode.USAGE_ERROR),
+        }
+
+    def test_the_tui_read_is_the_one_flow_that_legitimately_reaches_an_executor(self) -> None:
+        """Why ``config show`` is excluded above, stated rather than left implicit.
+
+        ``config show`` is the only plan in the whole space that needs no
+        confirmation, so the TUI runs it on reaching the review step instead of
+        previewing it — and that is correct: the property forbids a *mutation*, and
+        a merged read is none of the things it lists. Pinned so the exclusion stays
+        narrow: exactly one executor is reached, it is the ``ConfigStore``, and the
+        three that could mutate anything are not touched at all.
+        """
+        executors = _untouchable_executors()
+        reading = GeneratedIntent(
+            capability=Capability.CONFIG,
+            stage="dev",
+            target=Target.LOCAL,
+            version="v1.2.3",
+            sync=False,
+            dispatch=False,
+            action=CONFIG_SHOW,
+            key="BdoRegions",
+            value="NA",
+        )
+        drive(_untouchable_plane(executors).dispatcher, *reading.steps())
+        assert executors.config.touched == ["run_step"], "the read, once, and nothing else"
+        assert executors.sam.touched == []
+        assert executors.git.touched == []
+        assert executors.github.touched == []
+
+    def test_a_dry_run_renders_the_plan_it_did_not_run(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Half the property is that the plan *is* rendered, not merely skipped.
+
+        A front-end that refused every dry run, or printed nothing, would satisfy
+        every purity assertion above. Pinned as an example because it is a claim
+        about one concrete rendering rather than about all of them.
+        """
+        executors = _untouchable_executors()
+        code = main(
+            ["deploy", "--stage", "dev", "--dry-run", "--yes"],
+            plane=_untouchable_plane(executors),
+        )
+        printed = capsys.readouterr().out
+        assert code == int(ExitCode.SUCCESS)
+        assert executors.touched == []
+        assert "sam deploy --config-env dev" in printed, "the dry run must show the plan"
+        assert "nothing executed" in printed
+
+    def test_assembling_the_control_plane_creates_no_client_and_runs_no_process(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The composition root is reached before ``--dry-run`` is known about.
+
+        Both front-ends build their wiring at start-up, so if *assembling* the real
+        adapters created a boto3 client or spawned a process, a dry run would have
+        performed I/O before the planner ever ran — and none of the properties
+        above would notice, since they substitute the adapters away.
+
+        Honest about its reach: patching the two factories the real adapters would
+        use proves that **these** paths are not taken (no SSM client is created
+        lazily-or-otherwise, no subprocess is spawned). It does not prove the
+        absence of all I/O in-process — a future adapter could read a file or open
+        a socket by some other route, which no in-process assertion can rule out.
+        What it does do is fail if the documented laziness is undone.
+        """
+
+        def no_client(*_args: object, **_kwargs: object) -> object:
+            raise AssertionError("assembling the control plane created a boto3 client")
+
+        def no_process(*_args: object, **_kwargs: object) -> object:
+            raise AssertionError("assembling the control plane spawned a subprocess")
+
+        # Patched on the modules the adapters call through (``boto3.client`` and
+        # ``subprocess.run``), so nothing about the production import graph has to
+        # be rearranged to make the assertion possible.
+        monkeypatch.setattr(boto3, "client", no_client)
+        monkeypatch.setattr(subprocess, "run", no_process)
+
+        assert build_dispatcher() is not None
+        assert build_control_plane().github is not None

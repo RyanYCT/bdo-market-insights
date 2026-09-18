@@ -267,7 +267,7 @@ completeness — AGENTS.md). Each cites the requirement(s) it defends.
   - **Property 4: Dispatch fidelity**
   - **Validates: Requirements 8.3**
 
-- [ ]* 8.5 Property test — Dry-run purity
+- [x]* 8.5 Property test — Dry-run purity
   - **Property 5: Dry-run purity**
   - **Validates: Requirements 10.5**
 
