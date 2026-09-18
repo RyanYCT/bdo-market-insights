@@ -263,7 +263,7 @@ completeness — AGENTS.md). Each cites the requirement(s) it defends.
   - **Property 3: Config-as-data**
   - **Validates: Requirements 3.3, 3.4, 3.6**
 
-- [ ]* 8.4 Property test — Dispatch fidelity
+- [x]* 8.4 Property test — Dispatch fidelity
   - **Property 4: Dispatch fidelity**
   - **Validates: Requirements 8.3**
 

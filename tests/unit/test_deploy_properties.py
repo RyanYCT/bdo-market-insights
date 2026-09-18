@@ -18,9 +18,11 @@ confirmed.
 from __future__ import annotations
 
 import json
+import pathlib
 from dataclasses import dataclass, field
 from typing import Final, NamedTuple
 
+import yaml
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import SecretStr
@@ -30,6 +32,7 @@ from bdo_deploy.core.dispatch import (
     ACTION_ARG,
     CONFIG_SET,
     CONFIG_SHOW,
+    DEPLOY_WORKFLOW,
     DISPATCH_ARG,
     KEY_ARG,
     MASK,
@@ -38,10 +41,12 @@ from bdo_deploy.core.dispatch import (
     Dispatcher,
 )
 from bdo_deploy.core.errors import UsageError
+from bdo_deploy.core.executors.github import GH, VERSION_PARAM, GitHubCli
 from bdo_deploy.core.exit_codes import ExitCode
-from bdo_deploy.core.models import REVIEWERS_ARG, Capability, Command, Op, Plan, Target
+from bdo_deploy.core.models import REVIEWERS_ARG, Capability, Command, Op, Plan, PlanStep, Target
 from bdo_deploy.core.validation import PROD_STAGE, SSM_ROOT_SEGMENT, samconfig_stages
 from tests.unit.test_deploy_equivalence import RecordingDispatcher
+from tests.unit.test_deploy_executors import FakeRunner
 from tests.unit.test_deploy_tui import Step, check, choose, drive, set_input, set_select
 
 # -- the intent space ---------------------------------------------------------
@@ -704,3 +709,181 @@ class TestEveryConfigChangeLandsInOneOfTwoLocations:
             )
             is None
         )
+
+
+# -- the real workflow artefact -----------------------------------------------
+#
+# Property 4 is the one property here that spans two artefacts: the control
+# plane's Python and a YAML file GitHub owns the semantics of. Neither half can
+# state it alone, so both are read — the workflow from disk, the sent inputs from
+# the real ``GitHubCli`` — and nothing about either is restated as a literal list
+# of names, which is the only way the test can fail when they drift apart.
+
+_REPO_ROOT: Final = pathlib.Path(__file__).resolve().parents[2]
+_WORKFLOW_DIR: Final = _REPO_ROOT / ".github" / "workflows"
+
+_DISPATCH_FLAG: Final = "-f"
+"""How ``gh workflow run`` is given one typed ``workflow_dispatch`` input."""
+
+
+def _workflow_triggers(workflow: str) -> dict[str, object]:
+    """The ``on:`` block of ``workflow``, read from the real file on disk.
+
+    YAML 1.1 reads the bare key ``on`` as the **boolean** ``True``, which is why
+    the lookup tries both: the file is correct GitHub Actions YAML and it is
+    ``yaml.safe_load`` that is idiosyncratic here, so the reader accommodates it
+    rather than the workflow being quoted to suit the test.
+    """
+    document = yaml.safe_load((_WORKFLOW_DIR / workflow).read_text())
+    triggers = document.get("on", document.get(True))
+    assert isinstance(triggers, dict), f"{workflow} declares no on: block"
+    return triggers
+
+
+def _declared_dispatch_inputs(workflow: str) -> dict[str, dict[str, object]]:
+    """The typed ``workflow_dispatch`` inputs ``workflow`` declares, by name."""
+    dispatch = _workflow_triggers(workflow)["workflow_dispatch"]
+    assert isinstance(dispatch, dict), f"{workflow} takes no workflow_dispatch inputs"
+    inputs = dispatch["inputs"]
+    assert isinstance(inputs, dict)
+    return inputs
+
+
+def _dispatched_inputs(step: PlanStep) -> dict[str, str]:
+    """The inputs the control plane really sends for ``step``, from the real code path.
+
+    Executes the planned step through the actual ``GitHubCli`` against a recording
+    runner, then reads the ``-f key=value`` flags back out of the argument list it
+    built. Derived rather than declared: a test that listed the names would still
+    pass after someone renamed one in ``_input_flags``, which is precisely the
+    drift this property exists to catch. No ``gh`` runs — the runner records.
+    """
+    runner = FakeRunner()
+    GitHubCli(runner=runner).run_step(step)
+    argv = runner.argvs[0]
+    assert argv[:3] == [GH, "workflow", "run"], (
+        f"a dispatch must invoke gh workflow run, not {argv}"
+    )
+    sent: dict[str, str] = {}
+    for flag, pair in zip(argv, argv[1:], strict=False):
+        if flag == _DISPATCH_FLAG:
+            key, _, value = pair.partition("=")
+            sent[key] = value
+    return sent
+
+
+def _dispatch_steps(fields: dict[str, object]) -> list[PlanStep]:
+    """Every ``workflow_dispatch`` step the command fields plan, if any."""
+    plan = _planned(fields)
+    if plan is None:
+        return []
+    return [step for step in plan.steps if step.op is Op.GITHUB_RUN_WORKFLOW]
+
+
+# -- Property 4: dispatch fidelity -------------------------------------------
+
+
+class TestTheWorkflowAcceptsEverythingTheControlPlaneSends:
+    """**Property 4** — the Actions UI and the wizard dispatch the identical run.
+
+    **Validates: Requirements 8.3**
+
+    Quantified over the whole generated command space rather than over the two
+    capabilities that happen to dispatch today, so a third path to
+    ``workflow_dispatch`` is covered the moment it exists.
+    """
+
+    @settings(max_examples=300)
+    @given(fields=_commands)
+    def test_every_sent_input_is_one_the_workflow_declares(
+        self, fields: dict[str, object]
+    ) -> None:
+        """The superset claim, with both sides read from the real artefacts.
+
+        Renaming ``stage`` in ``deploy.yml`` fails this because the sent name is no
+        longer declared; renaming it in ``_input_flags`` fails it for the same
+        reason from the other side. Neither name appears in this test.
+        """
+        for step in _dispatch_steps(fields):
+            workflow = step.params["workflow"]
+            assert isinstance(workflow, str)
+            declared = set(_declared_dispatch_inputs(workflow))
+            sent = _dispatched_inputs(step)
+            assert set(sent) <= declared, (
+                f"the control plane sends {sorted(set(sent) - declared)}, which "
+                f"{workflow} does not declare as a workflow_dispatch input"
+            )
+            assert sent, "a dispatch that sent no input would satisfy any superset"
+            assert sent["stage"] == step.params["stage"], (
+                "the dispatched stage must be the planned one"
+            )
+            if VERSION_PARAM in step.params:
+                assert sent[VERSION_PARAM] == step.params[VERSION_PARAM]
+            else:
+                assert VERSION_PARAM not in sent
+
+    @settings(max_examples=300)
+    @given(fields=_commands)
+    def test_the_workflow_the_control_plane_targets_is_the_file_that_exists(
+        self, fields: dict[str, object]
+    ) -> None:
+        """A dispatch at a workflow that is not there would trigger nothing at all.
+
+        The superset property is satisfiable by a plan targeting a file nobody
+        ever added — ``_declared_dispatch_inputs`` would simply fail to open it, so
+        this states the requirement directly: whatever ``DEPLOY_WORKFLOW`` names,
+        that file is on disk and offers ``workflow_dispatch``.
+        """
+        for step in _dispatch_steps(fields):
+            assert step.params["workflow"] == DEPLOY_WORKFLOW
+            assert (_WORKFLOW_DIR / DEPLOY_WORKFLOW).is_file()
+            assert "workflow_dispatch" in _workflow_triggers(DEPLOY_WORKFLOW)
+
+    @settings(max_examples=300)
+    @given(fields=_commands)
+    def test_no_input_the_workflow_insists_on_is_left_unsent(
+        self, fields: dict[str, object]
+    ) -> None:
+        """The other direction: a superset the wizard cannot actually dispatch.
+
+        A required input with no default would make every wizard dispatch fail at
+        ``gh`` while the superset property still held, so the run the Actions UI
+        starts and the run the wizard starts would no longer be the same reachable
+        run. Vacuous today — ``deploy.yml``'s required input has a default — and
+        that is the point: it fails the day someone adds one.
+        """
+        for step in _dispatch_steps(fields):
+            workflow = step.params["workflow"]
+            assert isinstance(workflow, str)
+            sent = _dispatched_inputs(step)
+            for name, declaration in _declared_dispatch_inputs(workflow).items():
+                if declaration.get("required") and "default" not in declaration:
+                    assert name in sent, (
+                        f"{workflow} requires {name!r} with no default, and the "
+                        "control plane does not send it"
+                    )
+
+    def test_a_dispatch_is_reachable_and_carries_both_inputs(self) -> None:
+        """A generated space with no dispatch in it would pass all three vacuously.
+
+        Pins the two capabilities that reach ``workflow_dispatch`` today onto a
+        concrete dispatch, and pins that the optional input is genuinely
+        exercised — otherwise the ``version`` branch of the property above would
+        never run and a rename there would go unnoticed.
+        """
+        ci_deploy = _dispatch_steps(
+            {"capability": Capability.DEPLOY, "target": Target.CI, "stage": PROD_STAGE}
+        )
+        release = _dispatch_steps(
+            {
+                "capability": Capability.RELEASE,
+                "target": Target.CI,
+                "stage": PROD_STAGE,
+                "version": "v1.2.3",
+                "args": {DISPATCH_ARG: True},
+            }
+        )
+        assert len(ci_deploy) == 1 and len(release) == 1
+        assert _dispatched_inputs(ci_deploy[0]) == {"stage": PROD_STAGE}
+        assert _dispatched_inputs(release[0]) == {"stage": PROD_STAGE, VERSION_PARAM: "v1.2.3"}
+        assert set(_declared_dispatch_inputs(DEPLOY_WORKFLOW)) == {"stage", VERSION_PARAM}
