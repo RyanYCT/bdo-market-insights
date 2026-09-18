@@ -251,7 +251,7 @@ nothing ships half-built.
 One executable property test per stated invariant (invariants only, not for
 completeness — AGENTS.md). Each cites the requirement(s) it defends.
 
-- [ ]* 8.1 Property test — Front-end equivalence
+- [x]* 8.1 Property test — Front-end equivalence
   - **Property 1: Front-end equivalence**
   - **Validates: Requirements 1.5**
 
