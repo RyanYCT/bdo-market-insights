@@ -323,7 +323,7 @@ defence-in-depth (ADR-0040, amended).
     default branch
   - _Requirements: 6.6, 6.7_
 
-- [ ] 9.7 Checkpoint — Ensure `ruff` / `mypy` / `pytest` pass and the workflow parses; ask the user if questions arise.
+- [x] 9.7 Checkpoint — Ensure `ruff` / `mypy` / `pytest` pass and the workflow parses; ask the user if questions arise.
   - Verifies both layers: the platform-enforced Environment policy and the
     in-workflow guard, with the control plane dispatching no explicit ref
   - _Requirements: 6.5, 6.6, 6.7_

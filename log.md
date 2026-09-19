@@ -2377,3 +2377,43 @@ records (the sessions did not log at the time); dates are the merge dates._
 - Requirement 8.4 lists "checkout" among the steps to factor, which a local
   composite action cannot satisfy (it must run after checkout). Wording only.
 - The reviewer gate lives in repository settings, so it is not captured in IaC.
+
+## 2026-09-17 — Follow-up: the arbitrary-ref dispatch hole is closed (Phase 9)
+
+**Agent:** Kiro
+**Mode:** Spec
+**Branch:** `feat/deploy-control-plane-impl`
+**Phase:** Phase 9 of `.kiro/specs/deploy-control-plane/tasks.md`
+**Commits:** `a8ca671..` — PR #125
+
+Follow-up to the entry above, which listed the arbitrary-ref dispatch as an open
+question. It is now closed in two layers, and Requirement 8.4's wording is
+corrected.
+
+### Done
+- `bootstrap` configures the `prod` Environment's deployment branch/tag policy
+  (`tag:v*` + `branch:main`) alongside its required reviewers: the environment
+  PUT enables custom policies, then one `deployment-branch-policies` entry per
+  pattern. A repeat run adds no duplicate — GitHub keys the entry on the pattern
+  and answers a repeat with `303`.
+- `deploy.yml` refuses a prod run from any other ref, before
+  `configure-aws-credentials`, naming the rejected ref. It carries the same
+  `<type>:<pattern>` list as `PROD_ALLOWED_REFS`, and a test asserts the two are
+  equal so the layers cannot disagree about what they admit.
+- Requirement 8.4 no longer lists checkout among the steps factored into the
+  composite action: a local action resolves only from the caller's
+  already-checked-out workspace, so a checkout inside would be a redundant second
+  one — and would wipe what a job had already written.
+- 879 tests.
+
+### Decisions
+- The Environment policy is the boundary; the in-workflow guard is feedback only.
+  `workflow_dispatch` runs the workflow definition from the selected ref, so a
+  guard written there is editable on the branch being dispatched → ADR-0040,
+  amended (decision 4)
+- The guard matches `v*` as a glob rather than `startsWith`, so the workflow
+  interprets the pattern the way the Environment policy does → no ADR
+
+### Deferred / open questions
+- The branch/tag policy, like the reviewer gate, lives in repository settings and
+  is not captured in IaC; `bootstrap` is what sets it.
