@@ -15,7 +15,10 @@ the ``command`` rendering shown by ``--dry-run`` and the TUI. That rendering is
 faithful except in one respect: secret-shaped and operational values are
 **masked** in it and in ``Plan.effects``, and travel in ``params`` as a
 ``SecretStr`` instead — so neither ``--dry-run`` nor ``--json`` can print such a
-value (Requirements 3.7, 4.4). The ``config`` executor's SSM
+value (Requirements 3.7, 4.4). On the one branch where masking cannot help — a
+deploy-time ``config set``, whose ``key=value`` is bound for a pull-request title
+and a tracked file — a secret-shaped key is **refused** instead (Requirement 3.8).
+The ``config`` executor's SSM
 operations are *rendered* as their equivalent AWS CLI invocation: the
 ``ConfigStore`` calls the SSM API through boto3 off ``params``, and the CLI form
 is the faithful, copy-pasteable rendering of that one API call. No executor parses
@@ -55,7 +58,12 @@ from bdo_deploy.core.errors import (
     exit_code_for,
 )
 from bdo_deploy.core.executors.base import StepExecutor
-from bdo_deploy.core.executors.config import ConfigStore
+from bdo_deploy.core.executors.config import (
+    SAMCONFIG_FILE,
+    SECRET_NAME_SUBSTRINGS,
+    ConfigStore,
+    is_secret_name,
+)
 from bdo_deploy.core.executors.git import GitExecutor
 from bdo_deploy.core.executors.github import SECRET_ENV_PREFIX, GitHubExecutor
 from bdo_deploy.core.executors.sam import SamExecutor
@@ -269,6 +277,48 @@ def _bool_arg(cmd: Command, name: str) -> bool:
             problem=f"{name!r} must be a boolean",
         )
     return value
+
+
+def _refuse_secret_shaped_samconfig_key(cmd: Command, key: str) -> None:
+    """Refuse a secret-shaped ``config set`` bound for ``samconfig.toml`` (Req. 3.8).
+
+    The deploy-time branch renders ``key=value`` verbatim — into the step's
+    command, the plan's effects, the pull-request title and finally a tracked
+    file — so a secret-shaped key must not reach it. Raising here, at validation,
+    means exit ``2`` with no executor call, no branch and no pull request: the
+    value is never written anywhere a redaction would have to chase it.
+
+    The criterion is deliberately the *same* substring test ``config show`` masks
+    by (``is_secret_name``), which makes it coarse on purpose: it has false
+    positives such as ``IconKeyPrefix``. The trade is accepted because a refusal
+    costs one re-run while a committed secret costs a rotation — so the message
+    below spells out both the secret case *and* the false-positive case, and how
+    to proceed in each.
+    """
+    if not is_secret_name(key):
+        return
+    lowered = key.lower()
+    matched = sorted(sub for sub in SECRET_NAME_SUBSTRINGS if sub in lowered)
+    raise UsageError(
+        field=f"args.{KEY_ARG}",
+        value=key,
+        problem=(
+            f"{key!r} is not an SSM path, so setting it would open a pull request "
+            f"titled {key}=<value> against {SAMCONFIG_FILE} — and its name contains "
+            f"{', '.join(repr(sub) for sub in matched)}, which marks it secret-shaped. "
+            "A secret-shaped value must not be rendered into a plan, a pull request "
+            "title or a tracked file, so nothing was planned and no pull request was "
+            "opened"
+        ),
+        hint=(
+            "if this is a secret or an operational value, write it to a repo-scoped "
+            f"SSM path instead, where the value is masked and the write audited: "
+            f"config set /{SSM_ROOT_SEGMENT}/{cmd.stage}/<category>/{key} <value>; if it "
+            f"really is a deploy-time {SAMCONFIG_FILE} parameter that only looks "
+            "secret-shaped (the check is a plain substring match, so a name like "
+            "IconKeyPrefix trips it), edit the file and open that pull request by hand"
+        ),
+    )
 
 
 def _step_failed(step: PlanStep, *, position: int, total: int) -> str:
@@ -540,6 +590,15 @@ class Dispatcher:
             # value is not masked — it is bound for a public pull request against
             # a tracked file, so hiding it would only make the plan a worse
             # preview of the diff it opens.
+            #
+            # Which is exactly why a secret-shaped *key* cannot take this branch:
+            # ``key=value`` is rendered verbatim into ``PlanStep.command``,
+            # ``Plan.effects`` and the pull-request title, and then committed. So
+            # the write is refused here, before any executor call and before any
+            # branch or pull request exists (Requirement 3.8). Masking the preview
+            # was considered and rejected: the title and the tracked file would
+            # still carry the value, which hides the leak rather than closing it.
+            _refuse_secret_shaped_samconfig_key(cmd, key)
             branch = f"config/{cmd.stage}-{key}"
             title = f"config({cmd.stage}): set {key}={value}"
             step = PlanStep(

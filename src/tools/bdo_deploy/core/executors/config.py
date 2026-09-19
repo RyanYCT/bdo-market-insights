@@ -298,7 +298,7 @@ class SsmSamconfigStore:
         # ``.../db/password`` back out through the returned diff — and from there
         # into ``Result.model_dump_json()``, which is the one place Requirement
         # 3.2's mask has to survive to be worth anything.
-        secure = parameter_type == SECURE_STRING or _is_secret_name(path)
+        secure = parameter_type == SECURE_STRING or is_secret_name(path)
         try:
             self.client.put_parameter(
                 Name=path,
@@ -618,14 +618,21 @@ def _mask(
     conditions Requirement 3.2 names. ``masked`` collects the keys that were
     masked, so the view can say which values it is withholding.
     """
-    if secure or _is_secret_name(key):
+    if secure or is_secret_name(key):
         masked.append(key)
         return SecretStr(value)
     return value
 
 
-def _is_secret_name(key: str) -> bool:
-    """Whether ``key``'s name marks it secret-shaped (case-insensitive)."""
+def is_secret_name(key: str) -> bool:
+    """Whether ``key``'s name marks it secret-shaped (case-insensitive).
+
+    Public because it is the criterion in **two** places: masking a value read
+    here (Requirement 3.2) and refusing a deploy-time ``config set`` in
+    ``core.dispatch`` (Requirement 3.8). The dispatcher imports this rather than
+    re-testing ``SECRET_NAME_SUBSTRINGS`` itself, so the masking criterion and the
+    refusal criterion cannot drift apart.
+    """
     lowered = key.lower()
     return any(substring in lowered for substring in SECRET_NAME_SUBSTRINGS)
 
@@ -844,9 +851,11 @@ __all__ = [
     "GH",
     "GIT",
     "MASK",
+    "SAMCONFIG_FILE",
     "SECRET_NAME_SUBSTRINGS",
     "SECURE_STRING",
     "ConfigStore",
     "SsmClient",
     "SsmSamconfigStore",
+    "is_secret_name",
 ]

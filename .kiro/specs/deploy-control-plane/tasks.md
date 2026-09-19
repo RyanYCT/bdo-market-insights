@@ -330,7 +330,7 @@ defence-in-depth (ADR-0040, amended).
 
 ### Phase 10 — Review follow-ups
 
-- [ ] 10.1 Refuse secret-shaped keys on the deploy-time `config set` path
+- [x] 10.1 Refuse secret-shaped keys on the deploy-time `config set` path
   - In `core/dispatch.py::_plan_config_set`, reject a `config set` whose target is
     not a `Repo_Scoped_SSM_Path` and whose key name matches
     `SECRET_NAME_SUBSTRINGS` (reuse the predicate from
