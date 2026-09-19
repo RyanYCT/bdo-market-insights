@@ -2467,3 +2467,53 @@ A two-axis review of the branch found two defects and four standards gaps.
 - If the secret-name predicate's false positives become routine, an allowlist of
   known-safe `samconfig.toml` parameter names would be preferable to weakening
   the check.
+
+## 2026-09-17 — Follow-up: deploy-path corrections (Phase 11)
+
+**Agent:** Kiro
+**Mode:** Spec
+**Branch:** `feat/deploy-control-plane-impl`
+**Phase:** Phase 11 of `.kiro/specs/deploy-control-plane/tasks.md`
+**Commits:** `68a7343..` — PR #125
+
+Five corrections, four of them gaps between what the design claimed and what a
+control-plane deploy did.
+
+### Done
+- The shared runner reports `stdout` alone beside the verbatim `output`, and every
+  parse now reads `stdout`: the `gh --json` boundary, the pull-request response,
+  and the git branch / clean-tree / tag precondition reads. A `gh` warning on
+  stderr used to make a well-formed payload unreadable and report a *passing* CI
+  run as failed; a git advisory used to become part of the branch name that is
+  later checked out, and could make an absent tag look present.
+- `config set` on a secret-shaped key the stage already carries in
+  `samconfig.toml` is planned rather than refused — an already-committed key is
+  already public. A key that is not carried is still refused.
+- `samconfig.toml` now declares the full stage-static parameter set, so
+  `sam deploy --config-env <stage>` converges the same state a full-state caller
+  does. Previously a local deploy took template defaults, including dev-scoped
+  SSM paths on a prod path. `ApiVersion` and `MigrationsFingerprint` stay
+  caller-supplied — both are derived at deploy time — and `make deploy` plus
+  `deploy.yml` compose their override string from the file rather than restating
+  it, because a CLI `--parameter-overrides` replaces that list wholesale.
+- `sam deploy` is invoked with `--no-confirm-changeset`: the runner captures
+  output, so the prompt `confirm_changeset = true` raises was unanswerable and a
+  local deploy sat there until the 1800 s timeout.
+- 983 tests.
+
+### Decisions
+- Overrides are merged by the samconfig reader rather than by appending a second
+  `Key=` token: which duplicate SAM prefers is undocumented, and a silently
+  ignored `AUTO_MIGRATE=false` would break a fresh environment's bring-up → no ADR
+- `CatalogSyncSchedule`, `LogRetentionInDays` and the two Bedrock model ids stay
+  at their template defaults, listed explicitly so a newly-declared parameter
+  fails the suite until classified. The cron value cannot live in a
+  space-delimited override string at all → no ADR
+
+### Deferred / open questions
+- `EnableDemoKey` is now a committed samconfig key whose name contains "key", so
+  `config show` masks its value — a public SSM key path. The same false positive
+  the `config set` allowlist fixed; extending the allowlist to `read_merged`
+  would close it.
+- A benign `gh` warning is no longer a problem for the payload, but nothing yet
+  extracts JSON from a genuinely noisy stream; that remains deliberate.

@@ -545,7 +545,7 @@ on a changeset prompt nobody can see.
     each of the four release preconditions are unaffected by an advisory on stderr
   - _Requirements: 3.3, 7.1, 7.3, 10.2_
 
-- [ ] 11.12 Checkpoint — Ensure `ruff` / `mypy` / `pytest` pass, `deploy.yml`
+- [x] 11.12 Checkpoint — Ensure `ruff` / `mypy` / `pytest` pass, `deploy.yml`
       parses, and a dev deploy plan renders the full samconfig set; ask the user
       if questions arise.
   - Verifies the five corrections: the stream split across every parse boundary
