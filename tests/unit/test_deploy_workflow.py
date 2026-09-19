@@ -2,8 +2,10 @@
 
 The guard is defence in depth behind the prod Environment's deployment branch/tag
 policy (Requirement 6.6 / ADR-0040 decision 4), so what has to be true of it is
-structural: it exists, it runs *before* any AWS credential is assumed, it admits
-exactly what the Environment policy admits, and it leaves a dev deploy alone.
+structural: it lives in a job referencing **no** Environment that ``deploy``
+depends on via ``needs:`` — the boundary that lets it fail before the approval
+wait rather than after it — it admits exactly what the Environment policy admits,
+and it leaves a dev deploy alone.
 
 Two things are read rather than restated. The admitted refs come from
 ``PROD_ALLOWED_REFS`` — the same constant the bootstrap planner sends to the
@@ -37,8 +39,8 @@ ALLOWED_REFS_VAR: Final = "ALLOWED_REFS"
 """The guard's env key naming the admitted refs; how the step is identified.
 
 Located by the data it carries rather than by its ``name``, which is prose and may
-be reworded, and rather than by an index, which would move whenever a step is
-added above it.
+be reworded, and rather than by the job or step it sits in, either of which may be
+renamed or reordered.
 """
 
 REF_VAR: Final = "REF"
@@ -47,12 +49,15 @@ REF_VAR: Final = "REF"
 CREDENTIAL_ACTION: Final = "aws-actions/configure-aws-credentials"
 
 
-def _steps() -> list[dict[str, object]]:
-    """The deploy job's steps, in order, from the real workflow file."""
+def _jobs() -> dict[str, dict[str, object]]:
+    """Every job in the real workflow file, keyed by job id."""
     jobs = workflow_document(DEPLOY_WORKFLOW)["jobs"]
     assert isinstance(jobs, dict)
-    job = jobs[DEPLOY_JOB]
-    assert isinstance(job, dict)
+    return {str(name): job for name, job in jobs.items() if isinstance(job, dict)}
+
+
+def _steps(job: dict[str, object]) -> list[dict[str, object]]:
+    """``job``'s steps, in order."""
     steps = job["steps"]
     assert isinstance(steps, list)
     return steps
@@ -82,9 +87,30 @@ def _is_credential_step(step: dict[str, object]) -> bool:
     return isinstance(uses, str) and uses.startswith(CREDENTIAL_ACTION)
 
 
+def _guard_job() -> tuple[str, dict[str, object]]:
+    """The job id and body of the one job carrying the guard step."""
+    found = [
+        (name, job)
+        for name, job in _jobs().items()
+        if any(_is_guard(step) for step in _steps(job))
+    ]
+    assert len(found) == 1, f"expected exactly one job to carry the guard, found {found}"
+    return found[0]
+
+
 def _guard() -> dict[str, object]:
-    steps = _steps()
+    _, job = _guard_job()
+    steps = _steps(job)
     return steps[_index_of(_is_guard, steps)]
+
+
+def _needs(job: dict[str, object]) -> list[str]:
+    """``job``'s ``needs:``, normalised — the key accepts a scalar or a list."""
+    declared = job.get("needs", [])
+    if isinstance(declared, str):
+        return [declared]
+    assert isinstance(declared, list)
+    return [str(one) for one in declared]
 
 
 def _run_guard(ref: str) -> subprocess.CompletedProcess[str]:
@@ -116,14 +142,49 @@ class TestTheProdRefGuard:
     **Validates: Requirements 6.6**
     """
 
-    def test_the_guard_runs_before_any_aws_credential_is_assumed(self) -> None:
-        """Position, by index, is the whole point of "leaves AWS untouched".
+    def test_the_guard_lives_outside_the_deploy_job_in_no_environment(self) -> None:
+        """The job boundary is the guard's whole reason to work at all.
 
-        A guard that failed *after* ``configure-aws-credentials`` would have
-        assumed the deploy role before deciding the ref was not allowed to deploy.
+        A job referencing an Environment with required reviewers waits for approval
+        before it starts, so a guard *inside* ``deploy`` could only run after the
+        wait. What has to hold structurally: the guard is not in ``deploy``, and its
+        own job references no Environment — while ``deploy`` still does, so this is
+        a real boundary rather than both jobs being unprotected.
         """
-        steps = _steps()
-        assert _index_of(_is_guard, steps) < _index_of(_is_credential_step, steps)
+        guard_job_id, guard_job = _guard_job()
+        assert guard_job_id != DEPLOY_JOB
+        assert "environment" not in guard_job
+        assert "environment" in _jobs()[DEPLOY_JOB]
+
+    def test_the_deploy_job_needs_the_guard_job(self) -> None:
+        """Without the ``needs:`` edge the two jobs would simply run in parallel.
+
+        The pre-gate only gets to name a disallowed ref *before* the approval wait
+        because ``deploy`` waits for it.
+        """
+        guard_job_id, _ = _guard_job()
+        assert guard_job_id in _needs(_jobs()[DEPLOY_JOB])
+
+    def test_the_guard_job_is_never_skipped_so_dev_still_deploys(self) -> None:
+        """A ``needs:`` on a *skipped* job skips the dependent job by default.
+
+        So the prod scoping must stay on the step (asserted below) and the job must
+        carry no condition of its own: it always runs, no-ops on dev, and succeeds,
+        which is what keeps ``deploy``'s ``needs:`` from blocking a dev deploy.
+        """
+        _, guard_job = _guard_job()
+        assert "if" not in guard_job
+
+    def test_the_deploy_job_still_assumes_credentials_after_the_gate(self) -> None:
+        """The "leaves AWS untouched" claim now rests on the job graph.
+
+        Once the guard moved out, nothing orders it against
+        ``configure-aws-credentials`` by index any more — the credential step lives
+        in the gated job, which cannot start until the pre-gate has passed.
+        """
+        deploy_steps = _steps(_jobs()[DEPLOY_JOB])
+        assert not any(_is_guard(step) for step in deploy_steps)
+        _index_of(_is_credential_step, deploy_steps)
 
     def test_the_guard_applies_only_to_prod(self) -> None:
         """A dev deploy from a feature branch stays legitimate (Req 6.5's scoping).
@@ -136,6 +197,11 @@ class TestTheProdRefGuard:
         assert isinstance(condition, str)
         assert "env.STAGE" in condition
         assert f"'{PROD_STAGE}'" in condition
+        # The guard now sits in its own job, so `STAGE` must be workflow-level env
+        # rather than the deploy job's, or the condition would read as empty here.
+        workflow_env = workflow_document(DEPLOY_WORKFLOW)["env"]
+        assert isinstance(workflow_env, dict)
+        assert "STAGE" in workflow_env
 
     def test_the_guard_admits_exactly_what_the_environment_policy_admits(self) -> None:
         """One list, two layers: the guard's patterns are ``PROD_ALLOWED_REFS``.

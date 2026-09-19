@@ -354,7 +354,7 @@ defence-in-depth (ADR-0040, amended).
     the boundary — it is editable on the dispatched ref
   - _Requirements: 6.6_
 
-- [ ]* 10.4 Update the workflow structural tests for the new job boundary
+- [x]* 10.4 Update the workflow structural tests for the new job boundary
   - `tests/unit/test_deploy_workflow.py` asserts the guard's position *within* the
     deploy job; assert instead that the guard job exists, references no
     `environment:`, is listed in the deploy job's `needs:`, and covers the
