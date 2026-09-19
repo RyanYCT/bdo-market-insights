@@ -68,6 +68,19 @@ the process environment instead — from ``BDO_DEPLOY_SECRET_<NAME>``, e.g.
 it is absent or empty. The value is never echoed: not into an argument, not into
 a returned message, not into an error.
 
+**The ``gh --json`` payloads are validated, and the validation never raises.**
+``gh``'s JSON is an I/O boundary, so it is validated against a Pydantic model
+rather than hand-parsed with ``dict.get`` + ``isinstance`` (repo standard,
+AGENTS.md). Every ``ValidationError`` is caught at that boundary and turned into
+the tolerant outcome the callers already have: an unreadable ``gh run view``
+payload is ``RunStatus(ok=False)`` carrying ``gh``'s own output with **no status
+and no conclusion invented**, and an unreadable ``gh run list`` payload is a
+``RunRef`` naming only the workflow, still a successful dispatch. A
+``ValidationError`` escaping as an exception would reach the operator as a
+traceback (Requirement 10.2) and would turn an unreadable run into a crash rather
+than a reported failure — so the models are deliberately *permissive about
+fields* and strict only about the payload being a run object at all.
+
 **The deployment branch/tag policy takes two calls, in one order.** GitHub keeps
 the *mode* on the Environment and each admitted *pattern* as its own resource, so
 ``set_environment`` sends the ``deployment_branch_policy`` mode first and only
@@ -86,7 +99,9 @@ from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING, Final, Protocol, assert_never
+from typing import TYPE_CHECKING, Annotated, Final, Protocol, assert_never
+
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, RootModel, ValidationError
 
 from bdo_deploy.core.errors import UsageError
 from bdo_deploy.core.executors._process import CommandRunner, run_command
@@ -135,6 +150,135 @@ case needs no prefix, and the prefix is what distinguishes the other kind
 
 _RUN_LIST_FIELDS: Final = "url,databaseId"
 """The two fields the run-URL query asks for; ``url`` is what ends up surfaced."""
+
+
+def _str_or_none(value: object) -> object:
+    """Keep a string field, drop anything else — the tolerance, in one place.
+
+    ``gh`` documents these fields as strings, so a non-string is a payload this
+    adapter cannot read. Reading it as *absent* rather than raising is what keeps
+    an odd field from escalating into a ``ValidationError``: ``view`` must report
+    "no status" for an unreadable payload, and a status of ``None`` is exactly
+    that, whereas a raise would reach the operator as a traceback (Requirement
+    10.2). This replaces the ``isinstance`` test the hand-parsed ``_str_field``
+    performed, in the model where Pydantic can apply it to every such field.
+    """
+    return value if isinstance(value, str) else None
+
+
+def _run_id_or_none(value: object) -> object:
+    """A run id as ``gh`` sends it — a JSON number — rendered as a ``str``.
+
+    The ``bool`` check comes first and is load-bearing: ``True`` is an ``int`` in
+    Python *and* Pydantic's lax mode coerces a ``bool`` into an ``int | str``
+    field (``True`` arrives as ``1``), so without this the payload
+    ``{"databaseId": true}`` would yield the run id ``"1"`` — a real run number
+    invented out of a boolean. The hand-parsed ``_id_field`` guarded the same case
+    with an explicit ``isinstance(value, bool)`` test; the guard has to live in a
+    ``BeforeValidator`` because the coercion Pydantic would otherwise apply
+    happens inside validation, not before it.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value)
+    return value if isinstance(value, str) else None
+
+
+def _objects_only(value: object) -> object:
+    """Drop non-object entries of a ``gh --json`` array, leaving the rest to validate.
+
+    ``_json_array`` filtered the same way. A non-array payload is passed through
+    untouched so it fails validation — ``gh run list`` answering with something
+    that is not a list of runs is a payload this adapter reports as unreadable,
+    not one it reinterprets.
+    """
+    return (
+        [entry for entry in value if isinstance(entry, dict)] if isinstance(value, list) else value
+    )
+
+
+GhString = Annotated[str | None, BeforeValidator(_str_or_none)]
+"""A string field of a ``gh --json`` payload: present as a ``str``, or ``None``."""
+
+GhRunId = Annotated[str | None, BeforeValidator(_run_id_or_none)]
+"""``databaseId`` as carried here: a ``str``, never coerced out of a ``bool``."""
+
+
+class _GhRunView(BaseModel):
+    """The ``gh run view --json status,conclusion,url`` payload.
+
+    Private to this module rather than in ``core.models`` because it is the *wire
+    shape of ``gh``*, consumed entirely inside this adapter and reaching no public
+    signature: ``view`` returns the domain ``RunStatus``. ``RunRef`` / ``RunStatus``
+    live in ``core.models`` only because ``Result`` carries them; putting a ``gh``
+    payload model beside them would widen the shared vocabulary with a type
+    nothing outside this file can use.
+
+    Every field defaults to ``None`` and tolerates a non-string, so a *partial*
+    payload validates and reports what it actually carried. The failure that
+    remains — and the only one — is a payload that is not a JSON object at all,
+    which ``view`` reports as unreadable.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    status: GhString = None
+    conclusion: GhString = None
+    url: GhString = None
+
+
+class _GhRunListEntry(BaseModel):
+    """One run of the ``gh run list --json url,databaseId`` array."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    url: GhString = None
+    run_id: GhRunId = Field(default=None, alias="databaseId")
+
+
+class _GhRunList(RootModel[list[_GhRunListEntry]]):
+    """The ``gh run list --json`` array, newest run first."""
+
+    root: Annotated[list[_GhRunListEntry], BeforeValidator(_objects_only)] = Field(
+        default_factory=list
+    )
+
+
+def _viewed_run(output: str) -> _GhRunView | None:
+    """Validate ``gh run view``'s payload, or ``None`` when it cannot be read.
+
+    ``model_validate_json`` is the ``model_validate`` of a JSON string, which is
+    what the boundary actually hands over: it makes the two ways this read can
+    fail — a body that does not parse, and a body that parses into something that
+    is not a run object — one ``ValidationError`` caught in one place, instead of
+    a parse step and a shape step that could disagree about which is tolerated.
+
+    ``gh``'s ``--json`` output is captured together with stderr, so a warning line
+    can accompany the JSON. Such a body does not parse, and it is reported as
+    unreadable rather than guessed at — exactly as the hand-parsed
+    ``_json_object`` reported it. The ``ValidationError`` is **caught**, never
+    raised at the caller: an unreadable status has to arrive as ``ok=False``, not
+    as a traceback (Requirement 10.2).
+    """
+    try:
+        return _GhRunView.model_validate_json(output)
+    except ValidationError:
+        return None
+
+
+def _listed_runs(output: str) -> list[_GhRunListEntry]:
+    """Validate ``gh run list``'s payload, or an empty list when it cannot be read.
+
+    An empty list is what the caller already treats as "the run could not be
+    located", so a non-array, an empty array and an unparseable body all reach
+    the same tolerant outcome: a ``RunRef`` naming only the workflow, still a
+    successful dispatch.
+    """
+    try:
+        return _GhRunList.model_validate_json(output).root
+    except ValidationError:
+        return []
 
 
 class GitHubExecutor(StepExecutor, Protocol):
@@ -292,17 +436,17 @@ class GitHubCli:
         )
         if not viewed.ok:
             return RunStatus(run=run, output=viewed.output, ok=False)
-        fields = _json_object(viewed.output)
+        fields = _viewed_run(viewed.output)
         if fields is None:
             return RunStatus(run=run, output=viewed.output, ok=False)
         return RunStatus(
             run=RunRef(
                 workflow=run.workflow,
                 run_id=run.run_id,
-                url=_str_field(fields, "url") or run.url,
+                url=fields.url or run.url,
             ),
-            status=_str_field(fields, "status"),
-            conclusion=_str_field(fields, "conclusion"),
+            status=fields.status,
+            conclusion=fields.conclusion,
             output=viewed.output,
             ok=True,
         )
@@ -471,15 +615,11 @@ class GitHubCli:
         )
         if not listed.ok:
             return RunRef(workflow=workflow)
-        runs = _json_array(listed.output)
+        runs = _listed_runs(listed.output)
         if not runs:
             return RunRef(workflow=workflow)
         newest = runs[0]
-        return RunRef(
-            workflow=workflow,
-            run_id=_id_field(newest, "databaseId"),
-            url=_str_field(newest, "url"),
-        )
+        return RunRef(workflow=workflow, run_id=newest.run_id, url=newest.url)
 
 
 def _input_flags(
@@ -602,47 +742,6 @@ def _secret_from_environment(name: str) -> str:
             hint=f"export {variable} and re-run",
         )
     return value
-
-
-def _json_object(output: str) -> dict[str, object] | None:
-    """Parse ``output`` as a JSON object, or ``None`` if it is not one.
-
-    ``gh`` writes machine-readable JSON on ``--json``, but its output is captured
-    together with stderr, so a warning line can precede it. A body that does not
-    parse is reported as unreadable rather than guessed at.
-    """
-    try:
-        parsed: object = json.loads(output)
-    except ValueError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-def _json_array(output: str) -> list[dict[str, object]]:
-    """Parse ``output`` as a JSON array of objects, or an empty list."""
-    try:
-        parsed: object = json.loads(output)
-    except ValueError:
-        return []
-    if not isinstance(parsed, list):
-        return []
-    return [item for item in parsed if isinstance(item, dict)]
-
-
-def _str_field(fields: dict[str, object], name: str) -> str | None:
-    """A string field of a parsed ``gh --json`` object, or ``None``."""
-    value = fields.get(name)
-    return value if isinstance(value, str) else None
-
-
-def _id_field(fields: dict[str, object], name: str) -> str | None:
-    """A run id, which ``gh`` reports as a number, rendered as a string."""
-    value = fields.get(name)
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return str(value)
-    return value if isinstance(value, str) else None
 
 
 if TYPE_CHECKING:  # pragma: no cover - a type-check-time assertion, not runtime code

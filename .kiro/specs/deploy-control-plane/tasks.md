@@ -361,7 +361,7 @@ defence-in-depth (ADR-0040, amended).
     `v*`-tag / `main` cases
   - _Requirements: 6.6_
 
-- [ ] 10.5 Pydantic model at the `gh` boundary
+- [x] 10.5 Pydantic model at the `gh` boundary
   - Replace `_json_object` / `_str_field` / `_id_field` hand-parsing in
     `core/executors/github.py` with a Pydantic model of a `gh run` view validated
     via `model_validate`; on validation failure return `ok=False` carrying `gh`'s
