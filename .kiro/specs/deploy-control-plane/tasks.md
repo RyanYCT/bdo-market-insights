@@ -338,7 +338,7 @@ defence-in-depth (ADR-0040, amended).
     call, no PR, error naming the key and directing the operator to an SSM path
   - _Requirements: 3.7, 3.8_
 
-- [ ]* 10.2 Update the property suite that currently asserts the leak
+- [x]* 10.2 Update the property suite that currently asserts the leak
   - `tests/unit/test_deploy_properties.py::test_the_ssm_write_masks_its_value_and_the_pull_request_does_not`
     asserts `value in step.command` on the deploy-time branch; re-assert refusal
     (exit `2`, no PR, value absent from `command`/`effects`/PR title)

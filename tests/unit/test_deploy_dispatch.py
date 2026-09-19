@@ -24,6 +24,7 @@ from bdo_deploy.core.dispatch import (
     Dispatcher,
 )
 from bdo_deploy.core.errors import ConfirmationRequired, UsageError, exit_code_for
+from bdo_deploy.core.executors.config import SAMCONFIG_FILE
 from bdo_deploy.core.executors.github import SECRET_ENV_PREFIX, RunRef, RunStatus
 from bdo_deploy.core.exit_codes import ExitCode
 from bdo_deploy.core.models import (
@@ -39,7 +40,7 @@ from bdo_deploy.core.models import (
     PrRef,
     Target,
 )
-from bdo_deploy.core.validation import PROD_STAGE
+from bdo_deploy.core.validation import PROD_STAGE, SSM_ROOT_SEGMENT
 
 SSM_KEY = "/bdo-market-insights/dev/domain/api-domain-name"
 RUN_URL = "https://github.com/RyanYCT/bdo-market-insights/actions/runs/42"
@@ -708,6 +709,41 @@ class TestPlanMasking:
         )
         assert "NA,EU" in plan.steps[0].command
         assert "NA,EU" in plan.model_dump_json()
+
+    def test_a_secret_shaped_deploy_time_key_is_refused_not_rendered(self) -> None:
+        # Requirement 3.8: this branch renders key=value into the command, the
+        # effects, the PR title and eventually a tracked file, so masking the
+        # preview would hide the leak instead of closing it. The reported defect,
+        # pinned at the exact invocation that leaked.
+        with pytest.raises(UsageError) as raised:
+            _plan(
+                Command(
+                    capability=Capability.CONFIG,
+                    args={"action": "set", "key": "ApiToken", "value": self.SECRET},
+                )
+            )
+        error = raised.value
+        assert error.exit_code == ExitCode.USAGE_ERROR
+        assert self.SECRET not in str(error)
+        assert "ApiToken" in str(error)
+        assert f"/{SSM_ROOT_SEGMENT}/dev/" in str(error)
+
+    def test_the_predicates_false_positives_are_refused_legibly(self) -> None:
+        # The accepted trade: the substring test catches a legitimate parameter
+        # name too. A refusal costs one re-run, a committed secret costs a
+        # rotation — but the operator must be able to see *why* it was refused,
+        # so the message names samconfig.toml and the substring that matched.
+        with pytest.raises(UsageError) as raised:
+            _plan(
+                Command(
+                    capability=Capability.CONFIG,
+                    args={"action": "set", "key": "IconKeyPrefix", "value": "icons/"},
+                )
+            )
+        summary = str(raised.value)
+        assert "IconKeyPrefix" in summary
+        assert "'key'" in summary, "the matched substring is what makes the refusal legible"
+        assert SAMCONFIG_FILE in summary
 
     def test_no_plan_renders_a_secret_value(self) -> None:
         for cmd in _all_commands():

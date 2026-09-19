@@ -47,7 +47,12 @@ from bdo_deploy.core.dispatch import (
     Dispatcher,
 )
 from bdo_deploy.core.errors import UsageError
-from bdo_deploy.core.executors.config import ConfigStore
+from bdo_deploy.core.executors.config import (
+    SAMCONFIG_FILE,
+    SECRET_NAME_SUBSTRINGS,
+    ConfigStore,
+    is_secret_name,
+)
 from bdo_deploy.core.executors.git import GitExecutor
 from bdo_deploy.core.executors.github import GH, VERSION_PARAM, GitHubCli, GitHubExecutor
 from bdo_deploy.core.executors.sam import SamExecutor
@@ -76,8 +81,28 @@ _versions = st.tuples(
     st.integers(min_value=0, max_value=99),
 ).map(lambda parts: "v{}.{}.{}".format(*parts))
 
-_param_names = st.from_regex(r"[A-Za-z][A-Za-z0-9]{0,11}", fullmatch=True)
-"""A ``samconfig.toml`` parameter name — deploy-time config, changed by a PR."""
+_param_names = st.from_regex(r"[A-Za-z][A-Za-z0-9]{0,11}", fullmatch=True).filter(
+    lambda name: not is_secret_name(name)
+)
+"""A ``samconfig.toml`` parameter name — deploy-time config, changed by a PR.
+
+Secret-shaped names are filtered *out* rather than left to chance: on this branch
+they are refused, not planned (Requirement 3.8), so leaving them in would make
+every property that quantifies over a config key intermittently sample the
+refusal path and assert the planned-PR contract against nothing. The refusal has
+its own generator (``_secret_param_names``) and its own property below."""
+
+_secret_param_names = st.builds(
+    lambda prefix, substring, suffix: f"{prefix}{substring.capitalize()}{suffix}",
+    st.from_regex(r"[A-Za-z]{0,6}", fullmatch=True),
+    st.sampled_from(SECRET_NAME_SUBSTRINGS),
+    st.from_regex(r"[A-Za-z0-9]{0,6}", fullmatch=True),
+)
+"""A non-SSM key name the refusal must catch: some ``SECRET_NAME_SUBSTRINGS``
+member embedded in an otherwise ordinary parameter name, with its case flipped so
+the generated names exercise the case-insensitivity too. Deliberately includes the
+false positives the design accepts (``IconKeyPrefix``): they are refused by the
+same rule, and that is the trade, not a defect."""
 
 _path_segments = st.from_regex(r"[a-z][a-z0-9-]{0,9}", fullmatch=True)
 
@@ -97,6 +122,12 @@ where the front-ends genuinely differ: it must not begin with ``-`` (argv would
 read it as an option rather than as this intent) and it must not contain
 whitespace, which the TUI's key field strips and argv does not. Everything inside
 those bounds — commas, dots, ``=``, digits — is generated."""
+
+_distinctive_values = st.from_regex(r"[A-Za-z0-9][A-Za-z0-9,._=-]{7,15}", fullmatch=True)
+"""``_config_values`` with a floor on its length, for the one property that asserts
+a value is **absent** from a human-readable message. A one- or two-character value
+occurs in ordinary English prose, so a substring search would report the message's
+own wording as a leak; at eight characters and up, a match is the value itself."""
 
 _reviewer_ids = st.from_regex(r"(User|Team):[0-9]{1,6}", fullmatch=True)
 
@@ -612,6 +643,14 @@ class TestEveryConfigChangeLandsInOneOfTwoLocations:
         A property that asserted only "there are two locations" would let a
         regression mask the wrong one — a redacted PR title, or an SSM value
         printed into ``--json`` — without failing anything.
+
+        The deploy-time half is stated for a **non-secret-shaped** key, which is
+        the only kind that reaches this branch at all: a secret-shaped one is
+        refused (Requirement 3.8), asserted by
+        ``test_a_secret_shaped_deploy_time_key_is_refused_rather_than_rendered``.
+        The two together are what closes the leak this property used to pin open —
+        it previously asserted ``value in step.command`` for *any* generated key,
+        secret-shaped included.
         """
         plan = _planned(fields)
         if plan is None:
@@ -638,6 +677,55 @@ class TestEveryConfigChangeLandsInOneOfTwoLocations:
                 "a deploy-time value belongs in the plan: it is the diff being proposed"
             )
             assert value in step.command
+            assert not is_secret_name(str(step.params["key"])), (
+                "a secret-shaped key must never reach the pull-request branch"
+            )
+
+    @settings(max_examples=300)
+    @given(stage=_stages, key=_secret_param_names, value=_distinctive_values)
+    def test_a_secret_shaped_deploy_time_key_is_refused_rather_than_rendered(
+        self, stage: str, key: str, value: str
+    ) -> None:
+        """Requirement 3.8: no plan, exit ``2``, and the value nowhere at all.
+
+        The deploy-time branch cannot mask: ``key=value`` is the pull request's
+        title and, once merged, a line in a tracked file, so masking the preview
+        would hide the leak rather than close it. Refusal is therefore the
+        contract, and it is asserted as *three* things, because dropping any one of
+        them would still let the value out: the error is a usage error (exit ``2``,
+        so nothing reached an executor), no ``Plan`` exists to render, and the
+        value does not appear in the error the operator sees either.
+
+        The value space is ``_distinctive_values`` rather than ``_config_values``
+        for the absence assertion to mean anything: a one-character value like
+        ``"I"`` occurs inside the hint's own English prose, and shrinking finds it
+        immediately — a true substring match that is not a leak. Eight characters
+        and up, a match is the value and nothing else.
+
+        The message is also asserted to name the key and to point at an SSM path —
+        the substring predicate has false positives by design, and an operator who
+        hits one has to be able to tell instantly what happened and where the value
+        does belong.
+        """
+        fields: dict[str, object] = {
+            "capability": Capability.CONFIG,
+            "stage": stage,
+            "args": {ACTION_ARG: CONFIG_SET, KEY_ARG: key, VALUE_ARG: value},
+        }
+        with pytest.raises(UsageError) as raised:
+            Dispatcher().plan(Command.model_validate(fields))
+
+        error = raised.value
+        assert error.exit_code == ExitCode.USAGE_ERROR
+        assert _planned(fields) is None, "a refused write must leave no plan to render"
+        assert value not in str(error), "the refusal must not quote the value it refused"
+        assert key in str(error), "the operator has to be told which key was refused"
+        assert f"/{SSM_ROOT_SEGMENT}/{stage}/" in str(error), (
+            "a refusal that does not say where the value belongs is a dead end"
+        )
+        assert SAMCONFIG_FILE in str(error), (
+            "the false-positive case needs the tracked file named to be recognisable"
+        )
 
     @settings(max_examples=300)
     @given(fields=_commands)
