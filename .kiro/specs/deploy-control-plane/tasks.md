@@ -291,7 +291,7 @@ defence-in-depth (ADR-0040, amended).
   - Read the list out of `step.params` in `run_step`; no secret enters argv
   - _Requirements: 6.5_
 
-- [ ] 9.2 Plan the policy in the bootstrap planner
+- [x] 9.2 Plan the policy in the bootstrap planner
   - Have the `github.environment_set` step for `prod` carry `allowed_refs` of
     `tag:v*` + `branch:main` in `params`, and name the admitted refs in the
     step description and in `Plan.effects` (a ref pattern is not secret, so

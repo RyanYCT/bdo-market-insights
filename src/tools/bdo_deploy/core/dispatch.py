@@ -79,6 +79,22 @@ DEPLOY_WORKFLOW: Final = "deploy.yml"
 RELEASE_BASE_BRANCH: Final = "main"
 GIT_REMOTE: Final = "origin"
 
+RELEASE_TAG_PATTERN: Final = "v*"
+"""The tag shape ``deploy.yml``'s ``push`` trigger fires on, hence a release ref."""
+
+PROD_ALLOWED_REFS: Final = (
+    f"tag:{RELEASE_TAG_PATTERN}",
+    f"branch:{RELEASE_BASE_BRANCH}",
+)
+"""The only refs a ``prod`` deploy may run from (Requirement 6.5).
+
+Built from the two constants that already say what a release is — the tag shape
+``deploy.yml`` triggers on and the branch a release is cut from — so the policy
+cannot admit a ref the release path does not use. It is configured on the
+Environment, where GitHub enforces it outside the repository; the ``deploy.yml``
+guard is only defence in depth behind it (ADR-0040).
+"""
+
 ACTION_ARG: Final = "action"
 """``config`` sub-action: ``show`` (default) or ``set``."""
 
@@ -148,38 +164,80 @@ def _reviewer_list(reviewers: list[str]) -> str:
     return ", ".join(reviewers)
 
 
-def _environment_description(stage: str, reviewers: list[str]) -> str:
+def _ref_list(allowed_refs: list[str]) -> str:
+    """Render the admitted deploy refs for a human: ``tag v* and branch main``.
+
+    Joined with "and" rather than commas because the reviewer list beside it in
+    the same sentence already uses commas, and a reader should not have to work
+    out where one list ends.
+    """
+    return " and ".join(ref.replace(":", " ", 1) for ref in allowed_refs)
+
+
+def _allowed_refs(stage: str) -> list[str]:
+    """The refs admitted to deploy ``stage`` — ``prod``'s policy, or none.
+
+    Only ``prod`` gets a policy: "deploy this branch to dev" stays expressible,
+    which is the point of restricting ``prod`` alone (ADR-0040). An empty list
+    here means *plan no policy at all*, which is how it reaches the executor as
+    an absent param and so leaves any existing policy untouched.
+    """
+    return list(PROD_ALLOWED_REFS) if stage == PROD_STAGE else []
+
+
+def _environment_description(stage: str, reviewers: list[str], allowed_refs: list[str]) -> str:
     """Describe the Environment step, naming the protection it configures."""
-    created = f"create or update the {stage} GitHub Environment"
-    if not reviewers:
-        return created
-    return f"{created} with required reviewers {_reviewer_list(reviewers)}"
+    described = f"create or update the {stage} GitHub Environment"
+    if reviewers:
+        described = f"{described} with required reviewers {_reviewer_list(reviewers)}"
+    if allowed_refs:
+        described = f"{described}, admitting deploys only from {_ref_list(allowed_refs)}"
+    return described
 
 
-def _environment_command(stage: str, reviewers: list[str]) -> str:
+def _environment_command(stage: str, reviewers: list[str], allowed_refs: list[str]) -> str:
     """Render the ``gh api`` call that creates the Environment.
 
-    With reviewers the adapter sends them as a JSON body on stdin (``--input
-    -``), so the rendering says so and names them in a trailing comment: the line
-    stays a faithful preview of the invocation while still showing *which*
-    reviewers it configures. Reviewers are not secret, so nothing is masked.
+    With reviewers or a ref policy the adapter sends them as a JSON body on stdin
+    (``--input -``), so the rendering says so and names them in a trailing
+    comment: the line stays a faithful preview of the invocation while still
+    showing *which* protection it configures. The comment also names the
+    per-pattern calls that follow the PUT, since one rendered line cannot be a
+    literal transcript of several invocations. Neither list is secret, so nothing
+    is masked.
     """
     line = f"gh api --method PUT repos/{{owner}}/{{repo}}/environments/{stage}"
-    if not reviewers:
+    notes = []
+    if reviewers:
+        notes.append(f"required reviewers: {_reviewer_list(reviewers)}")
+    if allowed_refs:
+        notes.append(
+            f"then one deployment-branch-policies entry per ref: {_ref_list(allowed_refs)}"
+        )
+    if not notes:
         return line
-    return f"{line} --input -  # required reviewers: {_reviewer_list(reviewers)}"
+    return f"{line} --input -  # {'; '.join(notes)}"
 
 
-def _environment_params(stage: str, reviewers: list[str]) -> dict[str, str | bool | list[str]]:
+def _environment_params(
+    stage: str,
+    reviewers: list[str],
+    allowed_refs: list[str],
+) -> dict[str, str | bool | list[str]]:
     """The typed intent ``GitHubExecutor.set_environment`` reads.
 
-    ``reviewers`` is present only when the command named some: an empty list sent
-    to the API would *clear* an existing environment's reviewers, which is the
-    opposite of what a bootstrap that mentioned none intends.
+    ``reviewers`` and ``allowed_refs`` are present only when the command has some:
+    an empty list sent to the API would *clear* an existing environment's
+    reviewers, or admit no ref at all, which is the opposite of what a bootstrap
+    that mentioned neither intends. Both are plain ``list[str]`` values, which is
+    what ``PlanStep.params`` already admits — a ref pattern is not secret, so
+    neither is masked or carried as a ``SecretStr``.
     """
     params: dict[str, str | bool | list[str]] = {"environment": stage}
     if reviewers:
         params["reviewers"] = reviewers
+    if allowed_refs:
+        params["allowed_refs"] = allowed_refs
     return params
 
 
@@ -525,6 +583,13 @@ class Dispatcher:
         environment is precisely what a preview is for. A ``prod`` command that
         names none never reaches here — ``Command`` refuses it (Requirement 4.5).
 
+        For ``prod`` that same step carries the deployment branch/tag policy —
+        ``tag:v*`` + ``branch:main`` — for the same reason and on the same terms:
+        it is the boundary that closes arbitrary-ref dispatch (Requirement 6.5),
+        and a ref pattern is no more secret than a reviewer id, so it is named in
+        the description and in the effects rather than masked. No other stage gets
+        one.
+
         The secret step names the **environment variable** its value is read from
         (``BDO_DEPLOY_SECRET_<NAME>``). Only the variable's name: naming it turns
         a run that mutated two steps and then failed on an unset variable into a
@@ -532,6 +597,7 @@ class Dispatcher:
         stays out of the plan entirely (Requirement 4.4).
         """
         reviewers = bootstrap_reviewers(cmd.args)
+        allowed_refs = _allowed_refs(cmd.stage)
         secret_variable = f"{SECRET_ENV_PREFIX}{DEPLOY_ROLE_SECRET}"
         return _plan_for(
             cmd,
@@ -550,11 +616,11 @@ class Dispatcher:
                 # ConfigStore's: ConfigStore stays strictly config-as-data over
                 # samconfig.toml + SSM.
                 PlanStep(
-                    description=_environment_description(cmd.stage, reviewers),
-                    command=_environment_command(cmd.stage, reviewers),
+                    description=_environment_description(cmd.stage, reviewers, allowed_refs),
+                    command=_environment_command(cmd.stage, reviewers, allowed_refs),
                     executor="github",
                     op=Op.GITHUB_ENVIRONMENT_SET,
-                    params=_environment_params(cmd.stage, reviewers),
+                    params=_environment_params(cmd.stage, reviewers, allowed_refs),
                 ),
                 PlanStep(
                     description=(
@@ -577,6 +643,14 @@ class Dispatcher:
                         f"{cmd.stage} deploy run"
                     ]
                     if reviewers
+                    else []
+                ),
+                *(
+                    [
+                        f"admits only {_ref_list(allowed_refs)} as a {cmd.stage} deploy ref, "
+                        "enforced by GitHub outside the repository"
+                    ]
+                    if allowed_refs
                     else []
                 ),
                 f"reads the {DEPLOY_ROLE_SECRET} value from the {secret_variable} "
