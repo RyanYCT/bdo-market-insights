@@ -31,7 +31,7 @@ here. They are this adapter's vocabulary, but ``Result.run`` and
 re-export keeps ``from ...executors.github import RunRef`` working, so nothing
 else had to learn where the type moved.
 
-Three things about this adapter are load-bearing and easy to undo by accident:
+Four things about this adapter are load-bearing and easy to undo by accident:
 
 **The dispatched inputs are exactly the workflow's typed inputs.** A dispatch
 sends ``-f stage=…`` and, when the command carries one, ``-f version=…`` — built
@@ -67,6 +67,19 @@ the process environment instead — from ``BDO_DEPLOY_SECRET_<NAME>``, e.g.
 ``BDO_DEPLOY_SECRET_AWS_DEPLOY_ROLE_ARN`` — and fails naming that variable when
 it is absent or empty. The value is never echoed: not into an argument, not into
 a returned message, not into an error.
+
+**The deployment branch/tag policy takes two calls, in one order.** GitHub keeps
+the *mode* on the Environment and each admitted *pattern* as its own resource, so
+``set_environment`` sends the ``deployment_branch_policy`` mode first and only
+then POSTs one ``deployment-branch-policies`` entry per pattern — the per-pattern
+endpoint 404s while ``custom_branch_policies`` is false. Re-running ``bootstrap``
+therefore cannot accumulate duplicates: the POST is keyed on the pattern and
+GitHub answers a repeat with ``303 See Other`` at the existing entry instead of
+creating a second one, which is why no read-then-diff is done here. The mode is
+sent as ``protected_branches: false`` + ``custom_branch_policies: true`` because
+the API requires both and refuses them equal (422). This policy is the boundary
+that closes arbitrary-ref dispatch, enforced outside the repository (Requirement
+6.5, ADR-0040).
 """
 
 from __future__ import annotations
@@ -110,6 +123,15 @@ VERSION_PARAM: Final = "version"
 ENVIRONMENT_PARAM: Final = "environment"
 NAME_PARAM: Final = "name"
 REVIEWERS_PARAM: Final = "reviewers"
+ALLOWED_REFS_PARAM: Final = "allowed_refs"
+
+BRANCH_REF_TYPE: Final = "branch"
+"""The ``type`` an ``allowed_refs`` entry carrying no ``<Type>:`` prefix is sent as.
+
+``reviewers`` reads a bare entry as a ``User`` for the same reason: the common
+case needs no prefix, and the prefix is what distinguishes the other kind
+(``tag:v*``).
+"""
 
 _RUN_LIST_FIELDS: Final = "url,databaseId"
 """The two fields the run-URL query asks for; ``url`` is what ends up surfaced."""
@@ -149,12 +171,20 @@ class GitHubExecutor(StepExecutor, Protocol):
         *,
         name: str,
         reviewers: list[str] | None = None,
+        allowed_refs: list[str] | None = None,
     ) -> CommandResult:
         """Create or update a GitHub Environment, e.g. ``prod`` with reviewers.
 
         ``gh api repos/{owner}/{repo}/environments/{name}``. Required reviewers
         are what makes the prod gate a *platform* control rather than application
         code (Requirement 6.3).
+
+        ``allowed_refs`` sets the deployment branch/tag policy — entries spelled
+        ``branch:main`` / ``tag:v*``, as ``reviewers`` entries are ``<Type>:<id>``.
+        For ``prod`` that is ``tag:v*`` + ``branch:main``, the boundary that
+        closes arbitrary-ref dispatch (Requirement 6.5). ``None`` leaves any
+        existing policy untouched, exactly as an absent ``reviewers`` leaves the
+        reviewers untouched.
         """
         ...
 
@@ -284,23 +314,69 @@ class GitHubCli:
         *,
         name: str,
         reviewers: list[str] | None = None,
+        allowed_refs: list[str] | None = None,
     ) -> CommandResult:
-        """Create or update the ``name`` Environment, optionally with reviewers.
+        """Create or update the ``name`` Environment and the protection it carries.
 
         ``gh api`` substitutes ``{owner}`` / ``{repo}`` from the repository the
         command runs in, which is the repository root ``_process`` always uses —
         so the owner and repo are never hard-coded or derived here.
 
-        Reviewers, when given, are sent as a JSON body on **stdin** (``--input
-        -``) rather than as flags: the reviewer list is a nested structure the
-        GitHub API wants as JSON, and building it on stdin avoids composing that
-        structure out of repeated arguments. Each entry is ``<Type>:<id>``, e.g.
-        ``User:1234`` or ``Team:56``; a bare id is read as a ``User``.
+        Reviewers and the branch/tag policy's mode, when given, are sent as one
+        JSON body on **stdin** (``--input -``) rather than as flags: both are
+        nested structures the GitHub API wants as JSON, and building them on stdin
+        avoids composing that structure out of repeated arguments. Each reviewer
+        is ``<Type>:<id>``, e.g. ``User:1234`` or ``Team:56``; a bare id is read
+        as a ``User``.
+
+        The admitted ref patterns then follow as one POST each, because GitHub
+        holds them as separate resources and rejects them until the environment's
+        mode enables custom policies — see this module's docstring for that
+        ordering and for why a repeat run adds no duplicate. A failed policy call
+        is returned as-is, with ``gh``'s own output (Requirement 10.2): the
+        environment was already updated, and describing that as untouched would be
+        a worse report than the tool's own.
         """
         argv = [GH, "api", "--method", "PUT", f"repos/{{owner}}/{{repo}}/environments/{name}"]
-        if reviewers is None:
-            return self._run(argv)
-        return self._run([*argv, "--input", "-"], stdin=_reviewers_body(reviewers))
+        body = _environment_body(reviewers, allowed_refs)
+        updated = (
+            self._run(argv) if body is None else self._run([*argv, "--input", "-"], stdin=body)
+        )
+        if not updated.ok or not allowed_refs:
+            return updated
+        return self._add_branch_policies(name, allowed_refs, updated)
+
+    def _add_branch_policies(
+        self,
+        name: str,
+        allowed_refs: list[str],
+        updated: CommandResult,
+    ) -> CommandResult:
+        """POST one ``deployment-branch-policies`` entry per pattern, in order.
+
+        Stops at the first failure and returns it. Each pattern's body goes on
+        stdin for the same reason the environment's does; the outputs are
+        concatenated so the operator sees every call the step made, as
+        ``run_workflow`` does with its dispatch and its follow-up query.
+        """
+        outputs = [updated.output.rstrip()]
+        for pattern in allowed_refs:
+            created = self._run(
+                [
+                    GH,
+                    "api",
+                    "--method",
+                    "POST",
+                    f"repos/{{owner}}/{{repo}}/environments/{name}/deployment-branch-policies",
+                    "--input",
+                    "-",
+                ],
+                stdin=_branch_policy_body(pattern),
+            )
+            if not created.ok:
+                return created
+            outputs.append(created.output.rstrip())
+        return CommandResult(ok=True, output="\n".join(line for line in outputs if line))
 
     def set_environment_secret(
         self,
@@ -350,7 +426,8 @@ class GitHubCli:
             case Op.GITHUB_ENVIRONMENT_SET:
                 return self.set_environment(
                     name=str_param(step, ENVIRONMENT_PARAM),
-                    reviewers=_reviewers_param(step),
+                    reviewers=_list_param(step, REVIEWERS_PARAM),
+                    allowed_refs=_list_param(step, ALLOWED_REFS_PARAM),
                 )
             case Op.GITHUB_SECRET_SET:
                 name = str_param(step, NAME_PARAM)
@@ -436,39 +513,75 @@ def _run_selector(run: RunRef) -> list[str]:
     return [] if run.run_id is None else [run.run_id]
 
 
-def _reviewers_param(step: PlanStep) -> list[str] | None:
-    """Read the optional required-reviewer list out of ``step.params``.
+def _list_param(step: PlanStep, name: str) -> list[str] | None:
+    """Read an optional list param — ``reviewers``, ``allowed_refs`` — out of a step.
 
-    ``None`` when the planned step named none — the Environment is then created
-    or updated without touching its reviewers, rather than having them cleared by
-    an empty list. A present-but-wrongly-typed value is a planning fault and is
-    named as such, in keeping with ``str_param``; the reviewers matter too much
-    to be quietly dropped, since they *are* the prod gate (Requirement 6.4).
+    ``None`` when the planned step named none, which for both of the Environment's
+    lists means *leave that protection as it is*: the Environment is created or
+    updated without touching the reviewers or the branch/tag policy, rather than
+    having either cleared by an empty list. A present-but-wrongly-typed value is a
+    planning fault and is named as such, in keeping with ``str_param``; both lists
+    matter too much to be quietly dropped, since they *are* the prod gate
+    (Requirements 6.4, 6.5).
     """
-    if REVIEWERS_PARAM not in step.params:
+    if name not in step.params:
         return None
-    value = step.params[REVIEWERS_PARAM]
+    value = step.params[name]
     if not isinstance(value, list):
         raise UsageError(
-            field=f"params.{REVIEWERS_PARAM}",
+            field=f"params.{name}",
             value=value,
-            problem=f"{step.op.value} needs a list {REVIEWERS_PARAM!r} param",
+            problem=f"{step.op.value} needs a list {name!r} param",
         )
     return value
 
 
-def _reviewers_body(reviewers: list[str]) -> str:
-    """The JSON body that sets ``reviewers`` on an Environment.
+def _environment_body(
+    reviewers: list[str] | None,
+    allowed_refs: list[str] | None,
+) -> str | None:
+    """The JSON body for the Environment PUT, or ``None`` when there is nothing to send.
 
-    Each entry is ``<Type>:<id>``; a bare id is read as a ``User``. The ids stay
-    strings here — the API accepts them either way, and parsing them into ints
-    would only add a failure mode for a value this adapter does not interpret.
+    Each list contributes its key only when it was given, so an absent one leaves
+    that protection untouched while a given one is taken literally — an empty
+    ``reviewers`` clears the reviewers, and an empty ``allowed_refs`` enables
+    custom policies with no pattern, which admits no ref at all. The planner sends
+    neither empty list; they mean what they say rather than being second-guessed
+    here.
+
+    Reviewer ids stay strings — the API accepts them either way, and parsing them
+    into ints would only add a failure mode for a value this adapter does not
+    interpret. The policy mode carries ``protected_branches`` too because the API
+    requires both keys and refuses them equal.
     """
-    entries = []
-    for reviewer in reviewers:
-        kind, _, identifier = reviewer.rpartition(":")
-        entries.append({"type": kind or "User", "id": identifier})
-    return json.dumps({"reviewers": entries})
+    body: dict[str, object] = {}
+    if reviewers is not None:
+        body["reviewers"] = [_reviewer_entry(reviewer) for reviewer in reviewers]
+    if allowed_refs is not None:
+        body["deployment_branch_policy"] = {
+            "protected_branches": False,
+            "custom_branch_policies": True,
+        }
+    return json.dumps(body) if body else None
+
+
+def _reviewer_entry(reviewer: str) -> dict[str, str]:
+    """One ``<Type>:<id>`` reviewer as the API's ``{type, id}``; a bare id is a ``User``."""
+    kind, _, identifier = reviewer.rpartition(":")
+    return {"type": kind or "User", "id": identifier}
+
+
+def _branch_policy_body(pattern: str) -> str:
+    """The JSON body creating one admitted ref pattern.
+
+    ``tag:v*`` becomes ``{"name": "v*", "type": "tag"}``; an unprefixed pattern is
+    a branch. The prefix is read exactly as ``reviewers`` reads ``<Type>:<id>``,
+    and it is not validated here for the same reason the reviewer type is not: a
+    misspelled kind is GitHub's 422 to describe, and inventing a second
+    vocabulary for it would only hide which value the API rejected.
+    """
+    kind, _, name = pattern.rpartition(":")
+    return json.dumps({"name": name, "type": kind or BRANCH_REF_TYPE})
 
 
 def _secret_from_environment(name: str) -> str:

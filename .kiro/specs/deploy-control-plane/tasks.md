@@ -281,7 +281,7 @@ Closes the arbitrary-ref dispatch hole in two layers: the GitHub Environment
 deployment branch/tag policy is the boundary; the `deploy.yml` guard is
 defence-in-depth (ADR-0040, amended).
 
-- [ ] 9.1 Extend `GitHubExecutor.set_environment` with a deployment branch/tag policy
+- [x] 9.1 Extend `GitHubExecutor.set_environment` with a deployment branch/tag policy
   - Add `allowed_refs: list[str] | None = None` (entries `branch:main` / `tag:v*`,
     mirroring the `<Type>:<id>` spelling `reviewers` already uses); `None` leaves
     an existing policy untouched, as an absent `reviewers` does

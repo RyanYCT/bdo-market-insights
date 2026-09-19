@@ -133,6 +133,7 @@ class FakeGitHubExecutor(FakeExecutor):
         *,
         name: str,
         reviewers: list[str] | None = None,
+        allowed_refs: list[str] | None = None,
     ) -> CommandResult:
         return CommandResult(ok=True, output=f"{self.name}: environment {name}")
 

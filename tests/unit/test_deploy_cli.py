@@ -187,7 +187,13 @@ class FakeGitHub:
     ) -> CommandResult:
         raise AssertionError("a front-end never dispatches; the Dispatcher does")
 
-    def set_environment(self, *, name: str, reviewers: list[str] | None = None) -> CommandResult:
+    def set_environment(
+        self,
+        *,
+        name: str,
+        reviewers: list[str] | None = None,
+        allowed_refs: list[str] | None = None,
+    ) -> CommandResult:
         raise AssertionError("a front-end never administers GitHub")
 
     def set_environment_secret(self, *, environment: str, name: str, value: str) -> CommandResult:

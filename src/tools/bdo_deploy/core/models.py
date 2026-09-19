@@ -91,11 +91,13 @@ class Op(StrEnum):
     """Dispatch a workflow run. Params: ``workflow``, ``stage``, ``version`` (when set)."""
 
     GITHUB_ENVIRONMENT_SET = "github.environment_set"
-    """Create/update a GitHub Environment. Params: ``environment``, and an
-    optional ``reviewers`` — the required reviewers to configure on it.
+    """Create/update a GitHub Environment. Params: ``environment``, an optional
+    ``reviewers`` — the required reviewers to configure on it — and an optional
+    ``allowed_refs``, the deployment branch/tag policy's admitted patterns
+    (``branch:main`` / ``tag:v*``).
 
-    The reviewer list is carried in ``params`` (and rendered in the step) because
-    it is not secret: it is *what protection will be configured*, which is
+    Both lists are carried in ``params`` (and rendered in the step) because
+    neither is secret: they are *what protection will be configured*, which is
     exactly what a plan preview exists to show."""
 
     GITHUB_SECRET_SET = "github.secret_set"  # nosec B105 - op name; no secret value in source
