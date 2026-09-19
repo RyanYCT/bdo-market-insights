@@ -451,7 +451,7 @@ on a changeset prompt nobody can see.
     writes a warning
   - _Requirements: 7.6, 10.2, 10.6_
 
-- [ ] 11.4 Allowlist existing samconfig keys in the secret-shaped refusal
+- [x] 11.4 Allowlist existing samconfig keys in the secret-shaped refusal
   - In `core/dispatch.py::_plan_config_set`, exempt a key already present in the
     target stage's `samconfig.toml` parameter set from the `SECRET_NAME_SUBSTRINGS`
     refusal: an already-committed key is already public, so refusing to change it
