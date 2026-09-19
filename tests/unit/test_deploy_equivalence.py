@@ -253,7 +253,7 @@ class TestFrontEndEquivalence:
         """
         serialized = _through_cli(("deploy",))
         assert '"steps":[' in serialized
-        assert "sam deploy --config-env dev" in serialized
+        assert "sam deploy --config-env dev --no-confirm-changeset" in serialized
 
     def test_distinct_intents_do_not_collapse_to_one_plan(self) -> None:
         """The comparison has to be able to fail: differing intents must differ."""

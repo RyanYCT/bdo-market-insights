@@ -520,7 +520,7 @@ class TestPlanDeployLocal:
             ),
             PlanStep(
                 description="deploy the dev stack",
-                command="sam deploy --config-env dev",
+                command="sam deploy --config-env dev --no-confirm-changeset",
                 executor="sam",
                 op=Op.SAM_DEPLOY,
                 params={"config_env": "dev"},

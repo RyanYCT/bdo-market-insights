@@ -340,7 +340,7 @@ class TestFrontEndEquivalenceHoldsForAnyIntent:
         )
         cli = _through_cli(accepted)
         assert len(cli.plans) == 1
-        assert "sam deploy --config-env dev" in cli.plans[0]
+        assert "sam deploy --config-env dev --no-confirm-changeset" in cli.plans[0]
         assert cli.plans == _through_tui(accepted).plans
 
     def test_a_generated_intent_reaches_every_capability(self) -> None:
@@ -1328,7 +1328,9 @@ class TestADryRunTouchesNothing:
         printed = capsys.readouterr().out
         assert code == int(ExitCode.SUCCESS)
         assert executors.touched == []
-        assert "sam deploy --config-env dev" in printed, "the dry run must show the plan"
+        assert "sam deploy --config-env dev --no-confirm-changeset" in printed, (
+            "the dry run must show the plan, and the flag the deploy really runs with"
+        )
         assert "nothing executed" in printed
 
     def test_assembling_the_control_plane_creates_no_client_and_runs_no_process(

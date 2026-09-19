@@ -39,6 +39,7 @@ import pytest
 from botocore.exceptions import ClientError
 from pydantic import SecretStr
 
+from bdo_deploy.core.dispatch import Dispatcher
 from bdo_deploy.core.errors import UsageError
 from bdo_deploy.core.executors._process import run_command
 from bdo_deploy.core.executors.config import (
@@ -56,8 +57,20 @@ from bdo_deploy.core.executors.github import (
     GitHubCli,
     RunRef,
 )
-from bdo_deploy.core.executors.sam import SamCli
-from bdo_deploy.core.models import CommandResult, ConfigDiff, Op, PlanStep
+from bdo_deploy.core.executors.sam import (
+    CONFIG_ENV_FLAG,
+    NO_CONFIRM_CHANGESET_FLAG,
+    SamCli,
+)
+from bdo_deploy.core.models import (
+    Capability,
+    Command,
+    CommandResult,
+    ConfigDiff,
+    Op,
+    PlanStep,
+    Target,
+)
 from bdo_deploy.core.validation import SAMCONFIG_PATH
 
 SECRET: Final = "sup3r-s3cret-value"
@@ -382,9 +395,29 @@ class TestSamInvocations:
         assert runner.argvs == [["sam", "build"]]
 
     def test_deploy(self) -> None:
+        # ``--no-confirm-changeset`` (Requirement 5.5): the runner captures
+        # output, so the prompt samconfig.toml's ``confirm_changeset = true``
+        # raises would be invisible and unanswerable, and the deploy would hang
+        # until the runner's timeout. The plan-then---yes gate is the
+        # confirmation. The argv is asserted whole, so the flag cannot be
+        # accompanied by anything else unnoticed.
         runner = FakeRunner()
         SamCli(runner=runner).deploy("dev")
-        assert runner.argvs == [["sam", "deploy", "--config-env", "dev"]]
+        assert runner.argvs == [
+            ["sam", "deploy", CONFIG_ENV_FLAG, "dev", NO_CONFIRM_CHANGESET_FLAG]
+        ]
+
+    def test_only_deploy_answers_the_changeset_prompt(self) -> None:
+        # The flag belongs to ``sam deploy`` alone: ``sam sync`` and
+        # ``sam pipeline bootstrap`` prompt for nothing, and passing it to them
+        # would be an invocation the CLI does not accept.
+        runner = FakeRunner()
+        sam = SamCli(runner=runner)
+        sam.validate()
+        sam.build()
+        sam.sync("dev")
+        sam.pipeline_bootstrap("dev")
+        assert NO_CONFIRM_CHANGESET_FLAG not in runner.flat_argv
 
     def test_sync(self) -> None:
         runner = FakeRunner()
@@ -407,6 +440,23 @@ class TestSamInvocations:
         sam.pipeline_bootstrap("dev")
         assert "--parameter-overrides" not in runner.flat_argv
         assert not any("parameter_overrides" in argument for argument in runner.flat_argv)
+
+    def test_the_planned_deploy_line_is_the_argv_that_runs(self) -> None:
+        """The preview an operator confirms must be the invocation (Req. 5.5, 2.2).
+
+        Planned and recorded in the same test and compared as one string: the plan
+        renders for a human and the executor builds a list for ``subprocess``, so
+        nothing but a comparison keeps the two from drifting — and a preview that
+        omitted ``--no-confirm-changeset`` would describe the deploy that used to
+        hang.
+        """
+        plan = Dispatcher().plan(
+            Command(capability=Capability.DEPLOY, target=Target.LOCAL, stage="dev")
+        )
+        step = next(step for step in plan.steps if step.op is Op.SAM_DEPLOY)
+        runner = FakeRunner()
+        SamCli(runner=runner).run_step(step)
+        assert " ".join(runner.argvs[0]) == step.command
 
     def test_a_failing_sam_is_reported_verbatim(self) -> None:
         failure = CommandResult(ok=False, output="Error: Failed to create changeset\n")
@@ -444,7 +494,7 @@ class TestSamRunStep:
             (_step(Op.SAM_BUILD, "sam"), ["sam", "build"]),
             (
                 _step(Op.SAM_DEPLOY, "sam", config_env="dev"),
-                ["sam", "deploy", "--config-env", "dev"],
+                ["sam", "deploy", CONFIG_ENV_FLAG, "dev", NO_CONFIRM_CHANGESET_FLAG],
             ),
             (
                 _step(Op.SAM_SYNC, "sam", config_env="dev"),

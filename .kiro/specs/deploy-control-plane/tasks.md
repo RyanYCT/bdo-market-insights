@@ -518,7 +518,7 @@ on a changeset prompt nobody can see.
     the preview stays faithful to what runs
   - _Requirements: 5.1, 5.5_
 
-- [ ]* 11.11 Executor and plan tests for the flag
+- [x]* 11.11 Executor and plan tests for the flag
   - Assert the recorded `sam deploy` argv carries `--config-env <stage>` and
     `--no-confirm-changeset` and still composes no `--parameter-overrides`; assert
     the rendered plan line matches the argv
