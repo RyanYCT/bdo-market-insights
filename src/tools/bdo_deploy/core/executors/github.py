@@ -71,7 +71,13 @@ a returned message, not into an error.
 **The ``gh --json`` payloads are validated, and the validation never raises.**
 ``gh``'s JSON is an I/O boundary, so it is validated against a Pydantic model
 rather than hand-parsed with ``dict.get`` + ``isinstance`` (repo standard,
-AGENTS.md). Every ``ValidationError`` is caught at that boundary and turned into
+AGENTS.md). What is validated is ``CommandResult.stdout`` — the stream ``gh``
+prints JSON to — and not the stdout+stderr join ``output`` carries: a warning on
+stderr used to be concatenated onto the payload, which made it unparseable and
+turned a *passing* run into a reported failure once ``follow_run`` folded the
+unreadable status in. The reported output is still the combined ``output``, so a
+failure surfaces everything ``gh`` said (Requirement 10.2); only the parsing is
+narrowed. Every ``ValidationError`` is caught at that boundary and turned into
 the tolerant outcome the callers already have: an unreadable ``gh run view``
 payload is ``RunStatus(ok=False)`` carrying ``gh``'s own output with **no status
 and no conclusion invented**, and an unreadable ``gh run list`` payload is a
@@ -246,7 +252,7 @@ class _GhRunList(RootModel[list[_GhRunListEntry]]):
     )
 
 
-def _viewed_run(output: str) -> _GhRunView | None:
+def _viewed_run(stdout: str) -> _GhRunView | None:
     """Validate ``gh run view``'s payload, or ``None`` when it cannot be read.
 
     ``model_validate_json`` is the ``model_validate`` of a JSON string, which is
@@ -255,21 +261,27 @@ def _viewed_run(output: str) -> _GhRunView | None:
     is not a run object — one ``ValidationError`` caught in one place, instead of
     a parse step and a shape step that could disagree about which is tolerated.
 
-    ``gh``'s ``--json`` output is captured together with stderr, so a warning line
-    can accompany the JSON. Such a body does not parse, and it is reported as
-    unreadable rather than guessed at — exactly as the hand-parsed
-    ``_json_object`` reported it. The ``ValidationError`` is **caught**, never
-    raised at the caller: an unreadable status has to arrive as ``ok=False``, not
-    as a traceback (Requirement 10.2).
+    The argument is ``CommandResult.stdout`` — the stream ``gh`` writes JSON to —
+    and **not** the stdout+stderr join. A warning line on stderr is therefore no
+    longer part of what is validated: it used to make a well-formed payload
+    unparseable, which ``view`` reported as an unreadable status and
+    ``presentation.follow_run`` folded in as a *failed* run, so a warning could
+    fail a passing deploy. A body that still does not parse is reported as
+    unreadable rather than guessed at, and the ``ValidationError`` is **caught**,
+    never raised at the caller: an unreadable status has to arrive as
+    ``ok=False``, not as a traceback (Requirement 10.2).
     """
     try:
-        return _GhRunView.model_validate_json(output)
+        return _GhRunView.model_validate_json(stdout)
     except ValidationError:
         return None
 
 
-def _listed_runs(output: str) -> list[_GhRunListEntry]:
+def _listed_runs(stdout: str) -> list[_GhRunListEntry]:
     """Validate ``gh run list``'s payload, or an empty list when it cannot be read.
+
+    Reads ``CommandResult.stdout`` for the same reason ``_viewed_run`` does: a
+    warning ``gh`` wrote to stderr is not part of the JSON array it printed.
 
     An empty list is what the caller already treats as "the run could not be
     located", so a non-array, an empty array and an unparseable body all reach
@@ -277,7 +289,7 @@ def _listed_runs(output: str) -> list[_GhRunListEntry]:
     successful dispatch.
     """
     try:
-        return _GhRunList.model_validate_json(output).root
+        return _GhRunList.model_validate_json(stdout).root
     except ValidationError:
         return []
 
@@ -421,9 +433,12 @@ class GitHubCli:
     def view(self, run: RunRef) -> RunStatus:
         """Report ``run``'s status and conclusion without waiting for it.
 
-        A run whose JSON could not be read is reported as ``ok=False`` with
-        ``gh``'s own output and no status, rather than as a run with a guessed
-        one: an unreadable status is not a passing status.
+        The payload is read from ``stdout`` alone, so a warning ``gh`` wrote to
+        stderr does not make a well-formed status unreadable. A run whose JSON
+        genuinely could not be read is reported as ``ok=False`` with ``gh``'s own
+        output — **both** streams, so the warning the operator needs to see is
+        still there — and no status, rather than as a run with a guessed one: an
+        unreadable status is not a passing status.
         """
         viewed = self._run(
             [
@@ -437,7 +452,7 @@ class GitHubCli:
         )
         if not viewed.ok:
             return RunStatus(run=run, output=viewed.output, ok=False)
-        fields = _viewed_run(viewed.output)
+        fields = _viewed_run(viewed.stdout)
         if fields is None:
             return RunStatus(run=run, output=viewed.output, ok=False)
         return RunStatus(
@@ -616,7 +631,7 @@ class GitHubCli:
         )
         if not listed.ok:
             return RunRef(workflow=workflow)
-        runs = _listed_runs(listed.output)
+        runs = _listed_runs(listed.stdout)
         if not runs:
             return RunRef(workflow=workflow)
         newest = runs[0]

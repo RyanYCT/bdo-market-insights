@@ -431,7 +431,7 @@ on a changeset prompt nobody can see.
     missing-executable path has no tool output and sets `stdout` empty
   - _Requirements: 10.2_
 
-- [ ] 11.2 Read the `gh --json` payload from stdout only
+- [x] 11.2 Read the `gh --json` payload from stdout only
   - In `core/executors/github.py`, have `_viewed_run` / `_listed_runs` validate
     `CommandResult.stdout` instead of the combined `output`, so a `gh` warning on
     stderr no longer makes a well-formed payload unreadable and no longer turns a

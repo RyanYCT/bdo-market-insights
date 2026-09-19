@@ -606,10 +606,21 @@ RUN_LIST_ARGV: Final = (
 )
 
 
+def _gh_payload(body: str, *, stderr: str = "") -> CommandResult:
+    """A ``gh --json`` reply shaped the way the real runner reports one.
+
+    ``gh`` prints the payload to **stdout** and any warning to stderr, so the
+    runner returns the payload alone in ``stdout`` and both streams, in terminal
+    order, in ``output``. Scripting only ``output`` would hand the boundary a
+    payload on a stream ``gh`` never writes JSON to.
+    """
+    return CommandResult(ok=True, output=f"{stderr}{body}", stdout=body)
+
+
 def _run_list(url: str | None = RUN_URL) -> CommandResult:
     """What ``gh run list --json`` prints for the newest run of the workflow."""
     body = [] if url is None else [{"url": url, "databaseId": 42}]
-    return CommandResult(ok=True, output=json.dumps(body))
+    return _gh_payload(json.dumps(body))
 
 
 class TestGitHubDispatch:
@@ -660,7 +671,7 @@ class TestGitHubDispatch:
         [
             CommandResult(ok=False, output="gh: could not list runs\n"),
             _run_list(url=None),
-            CommandResult(ok=True, output="not json at all"),
+            _gh_payload("not json at all"),
         ],
     )
     def test_an_unresolved_url_is_still_a_success(self, listed: CommandResult) -> None:
@@ -740,11 +751,8 @@ class TestGitHubRunStatus:
     def test_view_reports_githubs_own_status_and_conclusion(self) -> None:
         runner = FakeRunner(
             responses={
-                VIEW_ARGV: CommandResult(
-                    ok=True,
-                    output=json.dumps(
-                        {"status": "completed", "conclusion": "failure", "url": RUN_URL}
-                    ),
+                VIEW_ARGV: _gh_payload(
+                    json.dumps({"status": "completed", "conclusion": "failure", "url": RUN_URL})
                 )
             }
         )
@@ -757,7 +765,7 @@ class TestGitHubRunStatus:
         "viewed",
         [
             CommandResult(ok=False, output="gh: no run found\n"),
-            CommandResult(ok=True, output="not json at all"),
+            _gh_payload("not json at all"),
         ],
     )
     def test_an_unreadable_status_is_not_a_passing_status(self, viewed: CommandResult) -> None:
@@ -1424,9 +1432,7 @@ class TestGhPayloadTolerance:
     """
 
     def test_a_partial_view_payload_reports_only_what_it_carried(self) -> None:
-        runner = FakeRunner(
-            responses={VIEW_ARGV: CommandResult(ok=True, output=json.dumps({"status": "queued"}))}
-        )
+        runner = FakeRunner(responses={VIEW_ARGV: _gh_payload(json.dumps({"status": "queued"}))})
         status = GitHubCli(runner=runner).view(
             RunRef(workflow=DEFAULT_WORKFLOW, run_id="42", url=RUN_URL)
         )
@@ -1441,15 +1447,16 @@ class TestGhPayloadTolerance:
             ("an array where an object belongs", json.dumps([{"status": "completed"}])),
             ("a bare JSON string", json.dumps("completed")),
             ("a truncated object", '{"status": "comple'),
-            # gh's --json output is captured together with stderr, so a warning
-            # line can accompany the JSON; such a body does not parse, and it is
-            # reported as unreadable rather than guessed at.
+            # Noise *on stdout itself* is still unreadable: the boundary reads
+            # that one stream, so anything gh printed there has to be the
+            # payload. A warning on stderr is a different case — it no longer
+            # reaches the parser at all (see the stderr-warning test below).
             (
-                "a warning line beside the JSON",
+                "a warning line printed into stdout",
                 'warning: gh is out of date\n{"status": "completed"}',
             ),
             (
-                "a warning line after the JSON",
+                "trailing noise printed into stdout",
                 '{"status": "completed"}\nwarning: gh is out of date',
             ),
         ],
@@ -1457,7 +1464,7 @@ class TestGhPayloadTolerance:
     def test_an_unvalidatable_view_payload_is_a_failure_not_a_pass(
         self, label: str, output: str
     ) -> None:
-        runner = FakeRunner(responses={VIEW_ARGV: CommandResult(ok=True, output=output)})
+        runner = FakeRunner(responses={VIEW_ARGV: _gh_payload(output)})
         status = GitHubCli(runner=runner).view(RunRef(workflow=DEFAULT_WORKFLOW, run_id="42"))
         assert status.ok is False, label
         assert status.status is None
@@ -1467,9 +1474,7 @@ class TestGhPayloadTolerance:
     def test_a_non_string_status_is_no_status(self) -> None:
         """A field of the wrong type reads as absent, not as a coerced status."""
         runner = FakeRunner(
-            responses={
-                VIEW_ARGV: CommandResult(ok=True, output=json.dumps({"status": 5, "url": 7}))
-            }
+            responses={VIEW_ARGV: _gh_payload(json.dumps({"status": 5, "url": 7}))}
         )
         status = GitHubCli(runner=runner).view(RunRef(workflow=DEFAULT_WORKFLOW, run_id="42"))
         assert (status.status, status.conclusion) == (None, None)
@@ -1489,7 +1494,7 @@ class TestGhPayloadTolerance:
     ) -> None:
         # The run is already moving, so the dispatch succeeded; only its URL is
         # missing, and the reference still names the workflow to follow.
-        runner = FakeRunner(responses={RUN_LIST_ARGV: CommandResult(ok=True, output=output)})
+        runner = FakeRunner(responses={RUN_LIST_ARGV: _gh_payload(output)})
         result = GitHubCli(runner=runner).run_workflow(stage="dev")
         assert result.ok is True, label
         assert result.run_url is None
@@ -1511,8 +1516,8 @@ class TestGhPayloadTolerance:
         """
         runner = FakeRunner(
             responses={
-                RUN_LIST_ARGV: CommandResult(
-                    ok=True, output=json.dumps([{"url": RUN_URL, "databaseId": database_id}])
+                RUN_LIST_ARGV: _gh_payload(
+                    json.dumps([{"url": RUN_URL, "databaseId": database_id}])
                 )
             }
         )
