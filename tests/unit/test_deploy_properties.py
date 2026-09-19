@@ -953,24 +953,53 @@ class TestTheWorkflowAcceptsEverythingTheControlPlaneSends:
     def test_no_input_the_workflow_insists_on_is_left_unsent(
         self, fields: dict[str, object]
     ) -> None:
-        """The other direction: a superset the wizard cannot actually dispatch.
+        """The other direction of the superset: every *required* input is sent.
 
-        A required input with no default would make every wizard dispatch fail at
-        ``gh`` while the superset property still held, so the run the Actions UI
-        starts and the run the wizard starts would no longer be the same reachable
-        run. Vacuous today — ``deploy.yml``'s required input has a default — and
-        that is the point: it fails the day someone adds one.
+        The claim is stated against ``required`` alone, not against
+        ``required`` **and** no ``default``. The narrower form is what the
+        workflow's own dispatch mechanics insist on — an input with a default is
+        one ``gh`` can fill in for itself — but it is vacuous against
+        ``deploy.yml`` today (``stage`` is required *and* defaulted), and an
+        assertion that no example can reach guards nothing. Quantifying over every
+        ``required`` input makes the same test non-vacuous: ``stage`` is required,
+        so this genuinely asserts that the control plane sends it, and it fails
+        both if ``stage`` stops being dispatched and if a second required input is
+        declared and left unsent — whether or not it carries a default.
+
+        Sending a defaulted required input is also the stronger behaviour to hold
+        the control plane to, which is why the property is worth stating this way
+        round: relying on the default would mean the wizard and the Actions UI
+        agree only as long as the default does not change, whereas an explicitly
+        sent value is the same run either way (Requirement 8.3).
+
+        The ``required``-with-no-default case is kept as the reason this matters at
+        all, and it is *implied* by the assertion below rather than tested
+        separately — it is a subset of the inputs quantified over. What it
+        contributes is the failure mode: such an input would make every wizard
+        dispatch fail at ``gh`` while the superset property still held, so the run
+        the Actions UI starts and the run the wizard starts would no longer be the
+        same reachable run.
         """
         for step in _dispatch_steps(fields):
             workflow = step.params["workflow"]
             assert isinstance(workflow, str)
             sent = _dispatched_inputs(step)
-            for name, declaration in _declared_dispatch_inputs(workflow).items():
-                if declaration.get("required") and "default" not in declaration:
-                    assert name in sent, (
-                        f"{workflow} requires {name!r} with no default, and the "
-                        "control plane does not send it"
-                    )
+            required = {
+                name
+                for name, declaration in _declared_dispatch_inputs(workflow).items()
+                if declaration.get("required")
+            }
+            assert required, (
+                f"{workflow} marks no workflow_dispatch input required, so this "
+                "assertion has nothing to check — see the non-vacuity test below"
+            )
+            for name in sorted(required):
+                undefaulted = "default" not in _declared_dispatch_inputs(workflow)[name]
+                assert name in sent, (
+                    f"{workflow} marks {name!r} required"
+                    f"{' with no default' if undefaulted else ''}, and the control "
+                    "plane does not send it"
+                )
 
     def test_a_dispatch_is_reachable_and_carries_both_inputs(self) -> None:
         """A generated space with no dispatch in it would pass all three vacuously.
@@ -995,7 +1024,14 @@ class TestTheWorkflowAcceptsEverythingTheControlPlaneSends:
         assert len(ci_deploy) == 1 and len(release) == 1
         assert _dispatched_inputs(ci_deploy[0]) == {"stage": PROD_STAGE}
         assert _dispatched_inputs(release[0]) == {"stage": PROD_STAGE, VERSION_PARAM: "v1.2.3"}
-        assert set(_declared_dispatch_inputs(DEPLOY_WORKFLOW)) == {"stage", VERSION_PARAM}
+        declared = _declared_dispatch_inputs(DEPLOY_WORKFLOW)
+        assert set(declared) == {"stage", VERSION_PARAM}
+        # And pins the other direction's non-vacuity: the required-input property
+        # above quantifies over the inputs deploy.yml marks required, so it asserts
+        # nothing unless at least one of them is required. ``stage`` is, and is
+        # sent — which is the example that makes that property bite today.
+        assert declared["stage"].get("required") is True
+        assert declared[VERSION_PARAM].get("required") is False
 
 
 # -- an executor that cannot be used ------------------------------------------

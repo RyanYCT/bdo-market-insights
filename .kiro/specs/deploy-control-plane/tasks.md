@@ -387,7 +387,7 @@ defence-in-depth (ADR-0040, amended).
   - Update the planned `PlanStep.command` rendering for `samconfig.pr` to match
   - _Requirements: 3.3_
 
-- [ ] 10.9 Fix the vacuous Property 4 assertion
+- [x] 10.9 Fix the vacuous Property 4 assertion
   - `tests/unit/test_deploy_properties.py::test_no_input_the_workflow_insists_on_is_left_unsent`
     admits it asserts nothing; assert the real superset relation — every input the
     control plane sends is declared in `deploy.yml`'s `workflow_dispatch` inputs,
