@@ -1,0 +1,156 @@
+"""The one subprocess wrapper every CLI-wrapping executor uses.
+
+``SamExecutor``, ``GitExecutor`` and ``GitHubExecutor`` all reach their tool the
+same way: run a fixed argument list from the repository root and report what the
+tool said. That wrapper lives here **once** so the three adapters cannot each
+grow their own — duplicated logic that then drifts is a documented anti-pattern
+in this repo (see ``AGENTS.md``). ``ConfigStore`` is deliberately not a client:
+it talks to SSM through boto3, not through a CLI.
+
+Guarantees this module makes, so no caller has to restate them:
+
+- A command is a **list of arguments**, never a shell string: ``shell=True`` is
+  never used, so no value a caller passes can be re-interpreted by a shell.
+- The command runs from the repository root (``core.validation.REPO_ROOT``), the
+  directory ``sam``/``git``/``gh`` all expect, so the caller never chooses a cwd.
+- stdout and stderr are both captured and returned verbatim: together in
+  ``CommandResult.output``, the text an operator sees on failure, and stdout
+  **alone** in ``CommandResult.stdout``, for a caller parsing a machine-readable
+  payload. ``ok`` is the exit status. Nothing is reformatted and no traceback is
+  produced, which is what Requirement 10.2 asks of executor output. The split
+  lives here, once, rather than at each call site: a caller that had to separate
+  a payload from a warning line itself would be re-deriving what the runner
+  already knew, and the ``gh --json`` boundary got that wrong — a warning on
+  stderr made a well-formed payload unparseable and reported a passing run as
+  failed.
+- A missing executable and a timeout are reported as the tool's absence or the
+  timed-out command, not as a ``FileNotFoundError`` / ``TimeoutExpired``
+  traceback.
+- **Nothing here logs or echoes anything.** No argument is written to a log, and
+  the only place an argument appears in returned text is the timeout/missing-tool
+  message, so a secret value must never be passed as an argument — the executors
+  pass secrets to ``gh`` on stdin or via the API instead.
+- ``stdin`` is the sanctioned channel for a value that must not appear in argv.
+  It is written to the child's standard input and is **never** included in any
+  returned message — not in the timeout report, not in the missing-tool report —
+  so a secret passed there cannot leak back out through ``CommandResult``.
+"""
+
+from __future__ import annotations
+
+import subprocess  # nosec B404 - fixed-argv CLI invocation only (no shell, no user-composed string)
+from collections.abc import Sequence
+from typing import Final, Protocol
+
+from bdo_deploy.core.models import CommandResult
+from bdo_deploy.core.validation import REPO_ROOT
+
+DEFAULT_TIMEOUT_SECONDS: Final = 1800.0
+"""Half an hour: long enough for a real ``sam deploy``, short enough that a hung
+CLI fails the command instead of hanging an operator's terminal forever."""
+
+
+class CommandRunner(Protocol):
+    """How an executor invokes its CLI; ``run_command`` is the real one.
+
+    A Protocol rather than a hard dependency so an executor can be tested
+    against the exact argument list it would have run, without a real ``sam`` /
+    ``git`` / ``gh`` on the machine (design: "the SAM / gh / git executors are
+    tested against recorded command invocations, not live clouds").
+
+    ``stdin`` is keyword-only and optional, so the callers that never need it
+    (every ``sam`` and ``git`` invocation) keep calling with an argument list
+    alone; only ``GitHubExecutor``'s secret write supplies it.
+    """
+
+    def __call__(self, argv: Sequence[str], *, stdin: str | None = None) -> CommandResult:
+        """Run ``argv``, optionally writing ``stdin`` to it, and report its output."""
+        ...
+
+
+def run_command(
+    argv: Sequence[str],
+    *,
+    stdin: str | None = None,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> CommandResult:
+    """Run ``argv`` from the repository root and report what the tool said.
+
+    ``argv[0]`` is the executable; the rest are its arguments, passed through
+    untouched. Returns ``ok=False`` with the tool's verbatim combined output on a
+    non-zero exit, and a named failure (never a traceback) when the executable is
+    missing or the command times out.
+
+    Both streams come back on every path that reached the tool — ``output``
+    combined, ``stdout`` alone — including a timeout, whose partial output is
+    just as worth parsing as a completed one. A missing executable reached no
+    tool, so its ``stdout`` is empty: the message explaining the absence is this
+    module's, not a tool's, and reporting it as the tool's standard output would
+    hand a payload parser a sentence to validate.
+
+    ``stdin``, when given, is written to the child process's standard input and
+    the stream is then closed. That is the only way to hand a tool a value
+    without putting it in argv, which is what makes a secret write possible here
+    at all: argv is visible to every other process on the machine and is quoted
+    back in the timeout / missing-tool messages, whereas ``stdin`` is written to
+    the child and appears in no message this module produces.
+    """
+    if not argv:
+        raise ValueError("run_command needs at least an executable")
+    try:
+        completed = subprocess.run(  # noqa: S603  # nosec B603 - fixed argv from a closed op vocabulary, shell=False
+            list(argv),
+            cwd=REPO_ROOT,
+            input=stdin,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError:
+        return CommandResult(
+            ok=False,
+            output=(
+                f"{argv[0]}: command not found — the deploy control plane dispatches to it "
+                "and cannot substitute for it; install it and re-run"
+            ),
+        )
+    except subprocess.TimeoutExpired as expired:
+        return CommandResult(
+            ok=False,
+            output=(
+                f"{' '.join(argv)}: timed out after {timeout:g}s\n"
+                f"{_partial_output(expired.stdout, expired.stderr)}"
+            ),
+            stdout=_as_text(expired.stdout) or "",
+        )
+    return CommandResult(
+        ok=completed.returncode == 0,
+        output=_combined(completed.stdout, completed.stderr),
+        stdout=completed.stdout or "",
+    )
+
+
+def _combined(stdout: str | None, stderr: str | None) -> str:
+    """Join what the tool wrote, verbatim and in the order a terminal shows it."""
+    return "".join(stream for stream in (stdout, stderr) if stream)
+
+
+def _partial_output(stdout: bytes | str | None, stderr: bytes | str | None) -> str:
+    """The partial output of a timed-out command, decoded leniently.
+
+    ``TimeoutExpired`` types its captured streams as ``bytes | str | None``
+    regardless of ``text=True``, so both shapes are handled rather than assumed.
+    """
+    return _combined(_as_text(stdout), _as_text(stderr))
+
+
+def _as_text(stream: bytes | str | None) -> str | None:
+    if stream is None:
+        return None
+    if isinstance(stream, bytes):
+        return stream.decode("utf-8", errors="replace")
+    return stream
+
+
+__all__ = ["DEFAULT_TIMEOUT_SECONDS", "CommandRunner", "run_command"]

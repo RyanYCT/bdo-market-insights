@@ -58,6 +58,26 @@ migration note that must not live in permanent code.
 - **Keep it as short as the decision allows.** An ADR earns its length from the
   context and trade-off, not from filling out sections. Omit `## Notes` when
   there is nothing to link.
+- **Verify every factual claim against the code before asserting it.** An ADR
+  that describes the system wrongly is worse than no ADR, because it is
+  trusted. Check the claim's source — that the validator really makes the state
+  unconstructable, that the layer build really globs that one directory, that
+  no long-lived key exists *anywhere*, that the `scripts/` directory you say is
+  forgone is not the one CI invokes. Quote the mechanism you verified against
+  (file, symbol, or config key) so the next reader can re-check it, and soften
+  a claim you could not verify rather than rounding it up.
+- **Record the rejected alternatives, and why.** Where the design arrived at
+  its shape by elimination, name the iterations that were discarded on the way
+  — they are the ADR's most valuable content, because they pre-empt "why
+  didn't you just …". Keep each rejected option's genuine appeal visible;
+  a strawman teaches the next reader nothing.
+- **Resolve forward pointers and annotate the owning spec.** A spec that
+  flagged the decision carries a placeholder — `ADR (task 7.2)`, "(flagged for
+  an ADR)". Writing the ADR is not done until that pointer is replaced with
+  the real `ADR-NNNN` and the entry in the spec's `design.md` "Planned ADRs"
+  list is annotated `**ADR-NNNN (accepted)**`. Annotate `design.md`, not
+  `requirements.md`, which references ADR numbers inline only. A placeholder
+  left behind tells the next reader the decision may never have been made.
 
 ## When to offer an ADR
 

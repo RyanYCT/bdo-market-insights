@@ -14,11 +14,11 @@ The tool ships **two thin front-ends over one shared command core**:
 
 - **CLI mode** (agents / automation / CI): a modern Python CLI with `--json`
   machine output, `--yes`, `--dry-run`, fully non-interactive, deterministic
-  exit codes. Recommended framework **Typer**; stdlib `argparse` is the
-  lighter zero-dependency alternative (flagged for an ADR).
-- **TUI mode** (humans): a full-screen terminal UI. Recommended framework
-  **Textual**; `questionary + rich` is the lighter prompt-driven alternative
-  (flagged for an ADR). This layer is deliberately kept thin — GitHub's own
+  exit codes. Framework **Typer**; stdlib `argparse` was the lighter
+  zero-dependency alternative (ADR-0041).
+- **TUI mode** (humans): a full-screen terminal UI. Framework
+  **Textual**; `questionary + rich` was the lighter prompt-driven alternative
+  (ADR-0041). This layer is deliberately kept thin — GitHub's own
   `workflow_dispatch` form and the Actions run dashboard are the *canonical*
   human trigger/observe surface, so the TUI is a convenience skin, not the
   system of record.
@@ -33,6 +33,13 @@ wizard is packaged as a console entry point in `pyproject.toml`; there is no ops
 folder of scripts (respecting the repo anti-pattern). All dev/ops-only
 dependencies (Typer/Textual/etc.) stay out of the Lambda layer and `bdo_common`.
 This feature adds no new AWS infrastructure.
+
+**Package placement.** The control plane lives at **`src/tools/bdo_deploy/`**,
+deliberately **outside `src/layer/python/`**, so its dev/ops-only dependencies
+(Typer, Textual, …) can never be packaged into the `bdo-common` Lambda layer.
+Placement is the enforcement mechanism for Requirement 9.4: the layer build
+globs `src/layer/python/`, so a package sitting elsewhere in the tree cannot be
+picked up by it.
 
 ## Architecture
 
@@ -56,7 +63,7 @@ graph TD
 
     subgraph EX["Executors (adapters over sanctioned tools)"]
         SAM["SamExecutor<br/>sam validate/build/deploy/sync"]
-        ACT["ActionsDispatcher<br/>gh workflow run deploy.yml / gh run watch"]
+        ACT["GitHubExecutor<br/>gh workflow run deploy.yml / gh run watch / gh environment+secret admin"]
         GIT["GitExecutor<br/>git tag + push"]
         CS["ConfigStore<br/>samconfig.toml (PR) · SSM"]
     end
@@ -76,12 +83,31 @@ graph TD
     GHA -->|"OIDC keyless, env-protected"| PROD[("prod stack")]
 ```
 
-**Deploy targeting.** A `Command` carries a `Target`:
+**Deploy targeting.** A `Command` carries a `Target`. `Target` selects **where the
+deploy executes** — not which executor the command happens to shell out to — and
+it is **only meaningful for the `deploy` capability**:
 
-- `LOCAL` → **SamExecutor**, permitted for **dev / personal** stacks only
-  (`sam deploy --config-env dev`, or `sam sync` for the dev fast-loop).
-- `CI` → **ActionsDispatcher**, the path for **shared-env and prod** deploys:
-  CI executes them, the wizard only triggers.
+- `LOCAL` → the deploy runs on the operator's machine via **SamExecutor**,
+  permitted for **dev / personal** stacks only (`sam deploy --config-env dev`, or
+  `sam sync` for the dev fast-loop).
+- `CI` → the deploy runs **in GitHub Actions**; the wizard only triggers it via
+  **GitHubExecutor**. This is the path for **shared-env and prod** deploys.
+
+For the other capabilities `Target` is not a routing choice:
+
+- **`release`** always results in the deploy running in CI — whether it gets
+  there by a pushed release tag or by a `workflow_dispatch` — so a release
+  `Plan` records `target = CI` regardless of how the command was invoked. A
+  `release` invoked with the default `target=LOCAL` is *normalised* to
+  `target=CI` during planning; it does not plan a local prod deploy.
+- **`config`** and **`bootstrap`** do not vary by target at all; their planned
+  steps are identical whichever `Target` the `Command` carried.
+
+This is why Property 2 and Requirement 7.5 are satisfied even though a `release`
+is *initiated* from a laptop: the invariant is that **no command executes a
+production deploy locally**. Pushing a release tag, or dispatching the
+environment-protected `deploy.yml`, is the sanctioned production path — the
+`git push` / `gh workflow run` happens locally, the **deploy** does not.
 
 **CI is the deploy executor and the platform-enforced gate.** Following the
 purpose-scoped-workflow convention (ADR-0038), the CD path lives in a **dedicated
@@ -90,12 +116,41 @@ triggers on `push: tags: v*` and `workflow_dispatch` (typed inputs `stage` and
 `version`), runs environment-gated deploy jobs, and uses OIDC keyless
 deploy. `ci.yml` remains the authoritative **validation** gate (lint / typecheck /
 test / …) and its validation behaviour is unchanged by this feature, while its
-shared setup steps are replaced by the reusable composite action. GitHub
+shared setup steps are replaced by the reusable composite action.
+
+**The deploy is deliberately not gated on the full validation suite.** Actions has
+no cross-workflow `needs`, and the two workflows are *not* coupled to fake one: a
+tagged commit reached `main` under branch protection and is therefore already
+validated, and re-running the whole suite would only add latency to every release.
+The one check that genuinely protects a deploy — `scripts/validate_regions.py`,
+which validates `samconfig.toml`'s `BdoRegions` (`sam build` already covers
+template validity) — runs inside `deploy.yml` itself, scoped to the target stage.
+It is a second *call site* of one authoritative script, not duplicated logic
+(ADR-0038). Rationale in full: ADR-0040.
+
+GitHub
 **Environments** `dev` and
 `prod`, with **required reviewers on `prod`** and **OIDC keyless deploy** (via
 `AWS_DEPLOY_ROLE_ARN` + `id-token: write`), enforce the prod gate. Production
 deploys are gated by the *platform* (environment protection + OIDC trust), not by
 application code — the control plane structurally cannot run a prod `sam deploy`.
+
+**Which refs may deploy prod, in two layers.** The `prod` Environment carries a
+**deployment branch/tag policy** (`tag:v*` + `branch:main`), configured by
+`bootstrap` and enforced by GitHub outside the repository, so no commit or branch
+edit can remove it — that is the boundary (Requirement 6.5). `deploy.yml`
+additionally **refuses a prod run whose ref is neither a `v*` tag nor `main`** in
+a **separate pre-gate job** that declares no `environment:`, with the deploy job
+declaring `needs:` on it (Requirement 6.6). The job boundary is load-bearing: a
+job that references an Environment with required reviewers waits for approval
+before it starts and must satisfy the Environment's protection rules before
+running or reading its secrets, so a guard *step inside* the deploy job could not
+run before the approval wait. Hoisting it into an unprotected pre-gate job is
+what lets a disallowed ref be named before the wait rather than after it. That
+guard is defence-in-depth, explicitly **not** the boundary: `workflow_dispatch` runs the
+workflow definition from the selected ref, so a guard written here is editable on
+the very branch being dispatched. The control plane sends no `--ref`, so a wizard
+dispatch always runs the default branch (Requirement 6.7). Rationale: ADR-0040.
 
 **Shared setup, factored once.** The checkout → `setup-python` → `uv sync`
 sequence common to `ci.yml` and `deploy.yml` is factored into a **reusable
@@ -110,7 +165,7 @@ sequenceDiagram
     participant F as Front-end
     participant D as Dispatcher
     participant S as SamExecutor
-    participant A as ActionsDispatcher
+    participant A as GitHubExecutor
     participant G as GitHub Actions
 
     U->>F: deploy stage=dev
@@ -134,14 +189,59 @@ sequenceDiagram
 
 ### Front-ends (`cli.py`, `tui.py`)
 
-Collect intent, build a `Command`, render a `Result`. No planning, no
-dispatch, no executor calls.
+Collect intent, build a `Command`, render a `Result`. No planning and no
+dispatch; the only executor call a front-end makes is following a dispatched run
+after `execute()` has returned (`follow_run()`, below).
 
 ```python
 def main(argv: list[str] | None = None) -> int:
     """Typer app. A subcommand runs CLI mode; `--tui` (or no subcommand on a
     tty) launches Textual. Returns the process exit code."""
 ```
+
+**Mode selection cannot hijack a non-interactive invocation.** "On a tty" means
+**both** stdin and stdout are terminals, so a pipe, an agent or a CI job never
+reaches the TUI. A subcommand-less invocation that is *not* on a tty renders help
+and exits `2` (no capability was named); `--tui` off a tty, and `--tui` alongside a
+subcommand, are both usage errors (exit `2`) rather than a silently preferred
+mode.
+
+**Run-following: one shared helper (`presentation.py`).** Following a dispatched
+CI run is presentation, so it lives beside the rest of the shared front-end
+rendering vocabulary:
+
+```python
+def follow_run(github: GitHubExecutor, result: Result) -> Result:
+    """Follow `result.run` to completion (gh run watch / gh run view) and fold
+    the run's authoritative pass/fail into the returned Result. No-op when
+    result.run is None."""
+```
+
+Both front-ends call this one helper, so CLI and TUI cannot grow two different
+notions of "did the run pass". Following is **default-on for human output** and
+**opt-in under `--json` via a `--watch` flag**: a blocking watch cannot coexist
+with `--json`'s "exactly one serialized `Result` is the sole content of stdout"
+contract (Requirement 1.2). The run URL is surfaced either way.
+
+### Composition root (`core/assembly.py`)
+
+The one place the concrete adapters are named, so both front-ends inherit the
+same wiring rather than each assembling their own.
+
+```python
+class ControlPlane(NamedTuple):
+    dispatcher: Dispatcher
+    github: GitHubExecutor     # exposed for follow_run(); never routed to by a plan
+
+def build_dispatcher(...) -> Dispatcher: ...        # unchanged
+def build_control_plane(...) -> ControlPlane: ...   # dispatcher + the GitHub executor
+```
+
+`build_control_plane()` sits beside the existing `build_dispatcher()`, which keeps
+working unchanged. Exposing the `GitHubExecutor` to the front-ends is what makes
+run-following possible **without a plan** — see the `watch` / `view` note below.
+Assembling still reaches no tool (no subprocess, no AWS client, no network), so it
+remains safe to call before a `--dry-run` is known about.
 
 ### Dispatcher (`core/dispatch.py`)
 
@@ -157,9 +257,65 @@ class Dispatcher:
         there is no plan that runs `sam deploy --config-env prod` locally."""
 
     def execute(self, plan: Plan, *, confirmed: bool) -> Result:
-        """Run the plan through its executor. Raises ConfirmationRequired when
-        the plan mutates and `confirmed` is False."""
+        """Run the plan through its executor. Raises ConfirmationRequired
+        (carrying the plan) when the plan mutates and `confirmed` is False.
+        Raises ExecutorUnavailable when the plan needs an executor that was
+        not injected — before any step runs."""
 ```
+
+**Confirmation: raised in the core, returned at the CLI boundary.**
+`Dispatcher.execute()` **raises** `ConfirmationRequired`, carrying the `Plan`.
+The core raises rather than returning a "refused" `Result` because a raise
+**cannot be silently ignored by a caller** — for a safety gate that matters: a
+caller that forgets to inspect a returned status would proceed as though the
+mutation had been approved, whereas an unhandled exception fails loudly.
+
+The **CLI front-end** is where that becomes the documented contract: it catches
+`ConfirmationRequired`, renders a `Result` carrying the refused `Plan`
+(`Result.plan`), and exits `3`. Requirement 10.4 describes **CLI_Mode**
+behaviour, and it is satisfied at that boundary. TUI_Mode catches the same
+exception and turns it into its explicit confirmation step (Requirement 1.3)
+rather than an exit code.
+
+### Execution seam: `StepExecutor` (`core/executors/base.py`)
+
+The uniform seam between a planned step and the executor that performs it.
+
+```python
+class StepExecutor(Protocol):
+    def run_step(self, step: PlanStep) -> CommandResult: ...
+```
+
+Every executor below implements `StepExecutor`. `run_step` switches on
+`step.op` and reads `step.params`; it **never parses `step.command`**, which
+exists only as the display rendering. Each `op` maps onto the executor's own
+typed domain method — the ones documented below for `SamExecutor`,
+`GitHubExecutor`, `GitExecutor` and `ConfigStore` — so those Protocols remain
+each executor's real API. This seam sits in front of them; it does not replace
+them.
+
+Because the intent arrives structured, each executor reaches its tool in its own
+native way: `sam`, `git` and `gh` steps shell out to those CLIs, while
+`ConfigStore` uses boto3 for SSM as already specified. The typed `params` are what
+make that possible — a step is not a shell string to be re-interpreted.
+
+**The shared runner (`core/executors/_process.py`) captures the two streams
+separately.** `run_command` previously joined stdout and stderr into one
+`CommandResult.output`, which made any `gh` warning on stderr part of the string
+the `gh --json` boundary tried to validate — so a warning turned a *passing* run
+into a reported failure once `follow_run()` folded the unreadable status in.
+The seam therefore sits in the runner, not at each call site: `CommandResult`
+carries **`stdout`** (that stream alone, for callers parsing a machine-readable
+payload) alongside **`output`** (the verbatim stdout+stderr text an operator
+sees, unchanged, so a failing tool's own output is still surfaced whole —
+Requirement 10.2). Splitting once here is what keeps the two concerns from
+being traded off against each other; the tolerance is untouched, so an
+unreadable payload is still `ok=False` with nothing invented.
+
+**Why both fields.** Routing is decided exactly once, in `plan()`, and the same
+`PlanStep` value is consumed both for display and for execution. The previewed
+plan therefore cannot drift from what actually runs, which is what keeps
+Property 5 (dry-run purity) — and the operator's trust in `--dry-run` — meaningful.
 
 ### SamExecutor (`core/executors/sam.py`)
 
@@ -172,27 +328,139 @@ class SamExecutor(Protocol):
     def validate(self) -> CommandResult: ...              # sam validate --lint
     def build(self) -> CommandResult: ...                 # sam build
     def deploy(self, config_env: str) -> CommandResult:
-        """sam deploy --config-env <env>. Refuses config_env == 'prod'."""
+        """sam deploy --config-env <env> --no-confirm-changeset.
+        Refuses config_env == 'prod'."""
     def sync(self, config_env: str) -> CommandResult:     # sam sync (dev fast-loop)
         ...
 ```
 
-### ActionsDispatcher (`core/executors/actions.py`)
+**Deploy-parameter authority: `samconfig.toml` carries the full *static* set
+(Requirement 2.5).** As configured before Phase 11 the claim above was false:
+`[dev.deploy.parameters]` / `[prod.deploy.parameters]` declared only
+`Stage`/`BdoRegions`/`UseRdsProxy`, while `template.yaml` also declares
+`AutoMigrate`, `AutoBootstrap`, `MigrationsFingerprint`, `ApiVersion`,
+`EnableDemoKey`, `ApiDomainName`, `IconDomainName` and `HostedZoneId` — which
+`make deploy` and `deploy.yml` pass explicitly. A `bdo-deploy deploy --stage dev`,
+which passes no `--parameter-overrides`, therefore silently took template
+defaults for all of them. The correction moves every static parameter into each
+stage's samconfig set, so a control-plane deploy converges the same state.
 
-Adapter over the GitHub CLI. **Triggers** a CI run (which does the deploy) and
-**surfaces** its status back to the operator/agent. This is the shared-env and
-prod deploy path.
+**Exactly two parameters remain caller-supplied**, because they are *derived at
+deploy time* and have no static value to record: `MigrationsFingerprint` (a
+content hash of `migrations/versions/`, which re-triggers the auto-migrate
+resource, ADR-0025) and `ApiVersion` (the release tag, ADR-0037).
+
+**A CLI `--parameter-overrides` replaces samconfig's list rather than merging
+with it**, so a caller supplying those two must supply the whole set. Verified
+three ways: (1) the SAM CLI loads samconfig values into click's
+`ctx.default_map` (`samcli/cli/cli_config_file.py`), and click consults a default
+only when the option is *absent* from argv — so a supplied option replaces the
+whole value, not per-key; (2) the SAM CLI design doc states a command-line
+parameter overrides one specified in the configuration file
+([sam-config.md](https://github.com/aws/aws-sam-cli/blob/develop/designs/sam-config.md));
+(3) upstream [aws-sam-cli#2380](https://github.com/aws/aws-sam-cli/issues/2380)
+reports exactly this — samconfig entries are dropped when
+`--parameter-overrides` is given — and is still open. The repo already recorded
+it too, in the `DEPLOY_PARAMS` comment and in `scripts/samconfig_regions.py`.
+
+Given that, samconfig is the **single source** of the static set and the two
+full-state callers **compose** their override string from it: `make deploy` and
+`.github/workflows/deploy.yml` read the stage's samconfig set and append the two
+derived values, instead of restating the static ones. `scripts/samconfig_regions.py`
+already reads samconfig for `BdoRegions`, so generalising it into a small reader
+that emits the whole set is the established precedent rather than a new
+mechanism. *Content was rephrased for compliance with licensing restrictions.*
+
+**`deploy` passes `--no-confirm-changeset` (Requirement 5.5).** `samconfig.toml`
+sets `confirm_changeset = true` for both stages and the runner captures executor
+output, so a local control-plane deploy waited on a prompt the operator could not
+see until the 1800 s timeout. The control plane's own plan-then-`--yes` gate *is*
+the confirmation (Requirement 10.4), so SAM's second prompt is redundant — and a
+prompt behind captured output is worse than redundant. `deploy.yml` already passes
+the flag; `make deploy` keeps `confirm_changeset = true`, so its interactive
+behaviour is unchanged.
+
+**Runbook follow-up.** `docs/runbook.md`'s *Control plane vs Makefile* section
+documents both gaps as caveats — "No full parameter set and no verify" and the
+changeset-prompt note. Both need revisiting once Phase 11 lands; only the
+`make verify` and layer-guard differences survive.
+
+### GitHubExecutor (`core/executors/github.py`)
+
+The single adapter over the **GitHub CLI**. Its remit is everything the wizard
+does through `gh`, in three groups:
+
+1. **Workflow dispatch** — trigger the CD run that does the deploy
+   (`gh workflow run deploy.yml`). This is the shared-env and prod deploy path.
+2. **Run status** — surface the dispatched run back to the operator/agent
+   (`gh run watch` / `gh run view`).
+3. **Repository / environment administration** — create or update a GitHub
+   Environment, and set an Environment secret. Used only by the one-time
+   `bootstrap` capability.
+
+Named `GitHubExecutor` rather than `ActionsDispatcher` because its remit is
+broader than Actions, and because "Dispatcher" collided with the core
+`Dispatcher` that *routes to* it.
 
 ```python
-class ActionsDispatcher(Protocol):
+class GitHubExecutor(Protocol):
+    # --- workflow dispatch ---
     def run_workflow(self, *, stage: str, version: str | None,
-                     inputs: dict[str, str]) -> RunRef:
+                     inputs: dict[str, str]) -> CommandResult:
         """gh workflow run deploy.yml -f stage=... -f version=...
-        Targets the dedicated CD workflow (ADR-0038). Returns a
-        reference to the dispatched run."""
-    def watch(self, run: RunRef) -> CommandResult:        # gh run watch
+        Targets the dedicated CD workflow (ADR-0038). Returns the uniform
+        executor value, carrying the dispatched run's reference in
+        `CommandResult.run` (a dispatch can fail, and the Dispatcher folds
+        one value type from every executor into the Result)."""
+    # --- run status ---
+    def watch(self, run: RunRef) -> CommandResult: ...    # gh run watch
     def view(self, run: RunRef) -> RunStatus: ...         # gh run view / gh api
+    # --- repository / environment administration (bootstrap only) ---
+    def set_environment(self, *, name: str,
+                        reviewers: list[str] | None = None,
+                        allowed_refs: list[str] | None = None) -> CommandResult:
+        """Create or update a GitHub Environment (e.g. `prod` with required
+        reviewers). gh api repos/{owner}/{repo}/environments/{name}.
+        `allowed_refs` sets the deployment branch/tag policy — entries spelled
+        `branch:main` / `tag:v*`, as `reviewers` entries are `<Type>:<id>` — sent
+        as `deployment_branch_policy.custom_branch_policies: true` on the
+        environment plus one `deployment-branch-policies` entry per pattern
+        (`type: branch` or `type: tag`). For `prod` that is `tag:v*` + `branch:main`
+        (Requirement 6.5); it is the boundary that closes arbitrary-ref dispatch,
+        enforced by GitHub outside the repository (ADR-0040)."""
+    def set_environment_secret(self, *, environment: str, name: str,
+                               value: str) -> CommandResult:
+        """Set an Environment secret (e.g. AWS_DEPLOY_ROLE_ARN).
+        Only `name` is ever rendered in a Plan; `value` is passed at
+        execution time and never appears in a plan, in --json output, or
+        in any tracked file."""
 ```
+
+**`watch` / `view` are deliberately not reachable from any `Op`, and stay that
+way.** A dispatch plans only the trigger; following the run afterwards is
+presentation, performed by the front-end via `follow_run()` on `Result.run` once
+`execute()` has returned — a direct call on the `GitHubExecutor` the composition
+root exposes (`build_control_plane()`), not a planned step. Keeping it out of the
+plan is what preserves dry-run purity (Property 5) — a preview must reach no tool
+— and plan equivalence (Property 1), since a blocking watch is not part of what a
+plan describes.
+
+**`gh --json` payloads are parsed by Pydantic, tolerantly.** The `gh run view
+--json` / `gh run list --json` responses are an I/O boundary, so they are
+validated with `model_validate` against a small Pydantic model of a `gh` run
+rather than hand-parsed with `dict.get` + `isinstance` (repo standard, AGENTS.md).
+The payload is validated against **`CommandResult.stdout`** — the stream `gh`
+writes JSON to — not against the stdout+stderr join, so a `gh` warning on stderr
+no longer makes a well-formed payload unreadable and no longer reports a passing
+run as failed (see the runner note under *Execution seam*). The **tolerant
+semantics are preserved**: a payload that fails validation is reported as
+`ok=False` carrying `gh`'s own output (`output`, both streams), never as a guessed
+status — an unreadable status is not a passing status.
+
+**Secret values never reach a plan.** For `secret_set` steps only the secret's
+**name** is rendered into `PlanStep.command` / `Plan.effects`. The role ARN value
+is account-identifying, so it is supplied at execution and never appears in a
+plan, in `--json` output, or in any tracked file.
 
 ### GitExecutor (`core/executors/git.py`)
 
@@ -225,14 +493,28 @@ class ConfigStore(Protocol):
         /bdo-market-insights/<stage>/<category>/<key> path."""
 ```
 
+**SSM responses are parsed by Pydantic, tolerantly.** boto3 SSM responses are an
+I/O boundary too, so a small Pydantic model of an SSM parameter validated with
+`model_validate` replaces the `dict.get` + `isinstance` hand-parsing, under the
+same rule: an unvalidatable response is reported as `ok=False` with the
+underlying output, never as a guessed value.
+
+**Pull requests are opened through `gh api`, not `gh pr create`.**
+`open_config_pr` POSTs to `repos/{owner}/{repo}/pulls` and reads `html_url` out of
+the JSON response, instead of shelling `gh pr create` and regex-scraping the URL
+from its output. Requirement 3.3 asks only that the PR be opened "via `gh`", which
+REST satisfies. The reason is robustness — a structured response beats scraping
+human-facing CLI output, whose wording is not a contract — and it additionally
+lets the tool work where `gh pr` is unavailable.
+
 ### Capability mapping
 
 | Capability | Executor(s) | Behaviour |
 |---|---|---|
 | **config** | ConfigStore | `config show` renders the merged view (samconfig + SSM). `config set` opens a PR (tracked files) or writes SSM with audit. Also covers deploy-time configuration/parameters (e.g. `BdoRegions`) → changed in `samconfig.toml` via PR. |
-| **bootstrap** | SamExecutor + ConfigStore | One-time, clearly labelled: wrap `sam pipeline bootstrap` (standard AWS CI/CD bootstrap — OIDC deploy role + artifact bucket) and configure the GitHub Environments / secrets. |
-| **deploy** | SamExecutor (LOCAL) / ActionsDispatcher (CI) | dev/personal → `sam deploy --config-env dev` or `sam sync`. shared/prod → trigger the CI job. A fresh environment reaches target state via a single declarative deploy — the stack self-bootstraps (auto-migrate custom resource, ADR-0025; bootstrap orchestrator auto-run, ADR-0028). No imperative multi-step orchestration. |
-| **release** | GitExecutor / ActionsDispatcher | `git tag` push (`deploy.yml` `push: tags: v*`) or `gh workflow run deploy.yml` (manual `workflow_dispatch`, a `run`/`dispatch` alias). Production is initiated **only by the sanctioned pipeline triggers** — a pushed release tag, or an authorised `workflow_dispatch` of `deploy.yml` (whether dispatched by the control plane or from the GitHub Actions UI). No LOCAL path initiates a production deploy. |
+| **bootstrap** | SamExecutor + GitHubExecutor | One-time, clearly labelled: `SamExecutor` wraps `sam pipeline bootstrap` (standard AWS CI/CD bootstrap — OIDC deploy role + artifact bucket); `GitHubExecutor` creates/updates the GitHub Environments (`github.environment_set`) **together with their required reviewers and their deployment branch/tag policy** (`prod`: `tag:v*` + `branch:main`, Requirement 6.5) and sets the Environment secrets (`github.secret_set`). A `prod` bootstrap carrying no required reviewer is refused, so prod cannot be bootstrapped into an unprotected state. GitHub administration is **not** a `ConfigStore` concern — `ConfigStore` stays strictly config-as-data over `samconfig.toml` + SSM. |
+| **deploy** | SamExecutor (LOCAL) / GitHubExecutor (CI) | dev/personal → `sam deploy --config-env dev` or `sam sync`. shared/prod → trigger the CI job. A fresh environment reaches target state via a single declarative deploy — the stack self-bootstraps (auto-migrate custom resource, ADR-0025; bootstrap orchestrator auto-run, ADR-0028). No imperative multi-step orchestration. |
+| **release** | GitExecutor / GitHubExecutor | `git tag` push (`deploy.yml` `push: tags: v*`) or `gh workflow run deploy.yml` (manual `workflow_dispatch`, a `run`/`dispatch` alias). Production is initiated **only by the sanctioned pipeline triggers** — a pushed release tag, or an authorised `workflow_dispatch` of `deploy.yml` (whether dispatched by the control plane or from the GitHub Actions UI). No LOCAL path initiates a production deploy. |
 | **flag** *(planned — deferred, not built in this spec)* | ConfigStore + DynamoDB (planned) | Flip a runtime feature flag without a redeploy. Flag values are stored in a DynamoDB table and read in Lambdas via the Powertools feature-flags provider (a custom `StoreProvider`), or the Powertools parameters `DynamoDBProvider` for plain booleans. Reachable from in-VPC Lambdas through the existing free DynamoDB Gateway endpoint. |
 
 **Deferred: runtime feature flags.** Runtime feature flags are out of scope here;
@@ -262,8 +544,11 @@ class Capability(StrEnum):
     DEPLOY = "deploy"; RELEASE = "release"
 
 class Target(StrEnum):
-    LOCAL = "local"   # -> SamExecutor (dev/personal only)
-    CI = "ci"         # -> ActionsDispatcher (shared-env + prod)
+    """WHERE a deploy executes. Only meaningful for capability == DEPLOY.
+    A `release` plan always records CI (the deploy runs in Actions however it
+    was triggered); `config` and `bootstrap` do not vary by target."""
+    LOCAL = "local"   # deploy runs on this machine -> SamExecutor (dev/personal only)
+    CI = "ci"         # deploy runs in GitHub Actions -> GitHubExecutor (shared-env + prod)
 
 class Command(BaseModel):
     capability: Capability
@@ -274,10 +559,30 @@ class Command(BaseModel):
     dry_run: bool = False
     assume_yes: bool = False
 
+class Op(StrEnum):
+    """The closed vocabulary of planned operations. Executors switch on this."""
+    SAM_BUILD = "sam.build"
+    SAM_DEPLOY = "sam.deploy"
+    SAM_SYNC = "sam.sync"
+    SAM_PIPELINE_BOOTSTRAP = "sam.pipeline_bootstrap"
+    GITHUB_RUN_WORKFLOW = "github.run_workflow"
+    GITHUB_ENVIRONMENT_SET = "github.environment_set"
+    """params: `environment`, and an optional `reviewers` — the list of required
+    reviewers to configure on that Environment. Carried in `params` so the
+    reviewer list appears in the plan preview."""
+    GITHUB_SECRET_SET = "github.secret_set"
+    GIT_TAG = "git.tag"
+    GIT_PUSH = "git.push"
+    CONFIG_SHOW = "config.show"
+    SSM_PUT = "ssm.put"
+    SAMCONFIG_PR = "samconfig.pr"
+
 class PlanStep(BaseModel):
     description: str
-    command: str                               # exact line, e.g. "sam deploy --config-env dev"
-    executor: Literal["sam", "actions", "git", "config"]
+    command: str                    # faithful display rendering (dry-run / TUI preview)
+    executor: Literal["sam", "github", "git", "config"]
+    op: Op                          # structured intent, from the closed vocabulary above
+    params: dict[str, str | bool | list[str]] = Field(default_factory=dict)
 
 class Plan(BaseModel):
     capability: Capability
@@ -292,8 +597,29 @@ class Result(BaseModel):
     exit_code: int                             # see exit-code contract
     summary: str
     changes: list[ConfigDiff] = []
-    run_url: str | None = None                 # CI run reference when target == CI
+    run_url: str | None = None                 # display-only CI run URL when target == CI
+    run: RunRef | None = None
+    # The structured reference to the dispatched run, set alongside run_url when
+    # target == CI. `follow_run()` needs a RunRef for GitHubExecutor.watch/view;
+    # parsing one back out of the URL string would give run identity two sources
+    # of truth.
     raw_output: str | None = None
+    plan: Plan | None = None
+    # Set when a mutating plan was refused for want of confirmation, so the
+    # caller can inspect the effects and re-invoke with --yes (exit 3).
+
+class CommandResult(BaseModel):
+    ok: bool
+    output: str                     # stdout+stderr, verbatim, surfaced on failure
+    stdout: str = ""
+    # stdout alone. A machine-readable payload (`gh --json`) is validated from
+    # this field; `output` stays the operator-facing verbatim text (Req 10.2).
+    run_url: str | None = None      # set when a dispatched CI run is created
+    run: RunRef | None = None
+    # The dispatched run's identity, set alongside run_url by the step that
+    # created it. This is how the run reaches Result.run without any string
+    # parsing: the Dispatcher carries it through execute() untouched.
+    changes: list[ConfigDiff] = Field(default_factory=list)
 
 class ConfigDiff(BaseModel):
     source: Literal["samconfig", "ssm"]
@@ -301,6 +627,34 @@ class ConfigDiff(BaseModel):
     before: str | None
     after: str | None
 ```
+
+**`PlanStep` carries both intent and rendering.** `command` is the
+human-readable rendering of the step — the line shown by `--dry-run` and in the
+TUI preview, and nothing more. `op` + `params` are the structured intent the
+executor actually acts on. No executor ever parses `command`; a step's routing is
+decided once in `plan()` and read from `op`/`params` at execution. `CommandResult`
+is the value every executor call returns, and is folded into the front-end
+`Result`.
+
+**`RunRef` / `RunStatus` are defined here, with `core/models.py`.** They are the
+`GitHubExecutor`'s vocabulary, but `Result.run` and `CommandResult.run` carry a
+`RunRef`, so defining them in `core/executors/github.py` — which imports
+`core/models.py` — would be a circular import. They live with the shared models
+and `github.py` re-exports them, so `gh`-side code still reads as if it owned
+them.
+
+**Why `op` is an enum, not a `str`.** Executors **switch on `op`**. With a closed
+`StrEnum` the type checker can verify the switch is exhaustive, so adding an op
+without handling it is a **type error at check time**; with a bare `str` the same
+omission is a silent fallthrough discovered at execution, mid-deploy. The `gh.*`
+names are spelled `github.*` to match the renamed `GitHubExecutor`.
+
+**`ConfigDiff` note.** `ConfigDiff.key` carries a field validator: when
+`source == "ssm"` the key must be a repo-scoped
+`/bdo-market-insights/<stage>/<category>/<key>` path whose `<stage>` segment is an
+environment defined in `samconfig.toml`. The validator sits on the model so the
+rule holds for every diff — planned, previewed, or returned — not only at the
+`put_ssm()` call site.
 
 **Exit-code contract:** `0` success · `1` failed · `2` usage/validation error
 (before any executor call) · `3` confirmation required.
@@ -314,10 +668,50 @@ class ConfigDiff(BaseModel):
   `ApiVersion`, ADR-0037).
 - Any SSM name written must be a repo-scoped
   `/bdo-market-insights/<stage>/<category>/<key>` path; a bare `/bdo/...` path is
-  rejected. Only SSM key **paths** — never secret values — are passed to
+  rejected. The `<stage>` segment must be **one of the environments defined in
+  `samconfig.toml`** (`dev`, `prod`) — not merely any non-empty string, which
+  would let a typo (`/bdo-market-insights/prd/...`) create a parameter nothing
+  ever reads. Only SSM key **paths** — never secret values — are passed to
   CloudFormation, which resolves them at deploy (ADR-0024).
 - `BdoRegions` is the single active-region toggle and lives only in
   `samconfig.toml` (ADR-0036).
+- A `release` `Command` is normalised to `target = CI` during planning; `config`
+  and `bootstrap` plans ignore `target` entirely (see *Deploy targeting*).
+- A `bootstrap` `Command` whose `stage` is `prod` must carry **at least one
+  required reviewer**; otherwise it is rejected at validation (exit `2`) before
+  any executor call, so no unprotected prod Environment can be created. Non-prod
+  stages may bootstrap without reviewers.
+- **Plan previews never render operational values.** `PlanStep.command` and
+  `Plan.effects` mask secret-shaped and operational values — SecureString-backed
+  values, keys whose name contains `secret`/`password`/`token`/`key`
+  (case-insensitive), and the Environment-secret values of
+  `github.secret_set`. Only names, paths, and stage/version identifiers are
+  rendered. Consequently `--dry-run` and `--json` **cannot** print such a value:
+  it is absent from the model they serialize, not merely omitted by the
+  renderer.
+- **A secret-shaped key is refused on the `samconfig.toml` path, not masked.**
+  `config set` renders `key=value` verbatim on the deploy-time branch — into
+  `PlanStep.command`, `Plan.effects` and the pull-request title — so a
+  secret-shaped key whose target is not a Repo_Scoped_SSM_Path is **rejected at
+  validation** (exit `2`, no executor call, no PR), directing the operator to an
+  SSM path (Requirement 3.8). The predicate is the `SECRET_NAME_SUBSTRINGS`
+  substring test criterion 3.2 already uses for masking. Masking the preview was
+  rejected: the PR title and the committed file would still carry the value, so
+  masking would hide the leak rather than close it.
+- **`samconfig.toml` is the allowlist for that refusal.** The substring predicate
+  has false positives (`IconKeyPrefix` contains "key"), so a key **already present
+  in that stage's `samconfig.toml` parameter set** is by definition an existing
+  deploy-time parameter and is allowed; the refusal applies only to keys not
+  already there. The reasoning is that a key already committed to a tracked file is
+  already public — refusing to *change* it protects nothing — while the refusal
+  still catches the case that matters: **introducing a new secret-shaped key** on
+  the deploy-time path. The allowlist is the stage's parameter set read from
+  samconfig, which planning already reads and caches, so no new I/O is added.
+- **"Planning is pure" is precise, not absolute.** `plan()`'s only I/O is the
+  **cached read of `samconfig.toml`** performed when a `Command` is validated (to
+  resolve the set of defined environments). It performs no network call, no AWS
+  API call, no subprocess, and no write of any kind. The read is cached per
+  process, so repeated planning is deterministic and byte-identical (Property 1).
 
 ## Error Handling
 
@@ -326,10 +720,22 @@ class ConfigDiff(BaseModel):
   call and return exit `2` with the offending field named.
 - Executor failures surface the underlying `sam` / `gh` / `git` output verbatim
   and return exit `1`; no Python traceback is emitted.
-- A mutating plan invoked without confirmation returns exit `3` and includes the
-  `Plan` so the caller can inspect effects and re-invoke with `--yes`.
-- For `target == CI` deploys, the wizard reports the dispatched run URL; the
-  authoritative pass/fail is the CI run itself (surfaced via `gh run watch`).
+- **`ConfirmationRequired`** — `Dispatcher.execute()` **raises** it, carrying the
+  `Plan`; a raise cannot be silently ignored by a caller, which is what a safety
+  gate needs. The **CLI front-end** catches it, renders a `Result` whose `plan`
+  field carries that `Plan` (so the caller can inspect the effects and re-invoke
+  with `--yes`), and exits `3` — satisfying Requirement 10.4 at the CLI_Mode
+  boundary it describes. No mutation has occurred. TUI_Mode catches the same
+  exception and renders its confirmation step instead.
+- **`ExecutorUnavailable`** — if a `Plan` contains a step whose `executor` was not
+  injected into the `Dispatcher`, the plan fails **by executor name before any
+  step runs**, and returns exit `1`. Failing up-front rather than mid-plan means a
+  misconfigured wiring can never leave a plan half-applied.
+- For `target == CI` deploys, the wizard reports the dispatched run URL and the
+  front-end follows `Result.run` (via `follow_run()` → `gh run watch` /
+  `gh run view`) after `execute()` has returned — default-on for human output,
+  opt-in under `--json` via `--watch`; the CI run itself remains the
+  authoritative pass/fail.
 
 ## Testing Strategy
 
@@ -350,7 +756,12 @@ class ConfigDiff(BaseModel):
   deploy code path.
 - No account-specific hosts are committed: SSM key paths, not values, flow to
   CloudFormation (ADR-0024). Secret-typed / secret-named SSM values are masked
-  on `config show`.
+  on `config show`, and plan previews mask secret-shaped and operational values
+  so `--dry-run` / `--json` cannot print them.
+- The OIDC deploy role ARN set as an Environment secret during `bootstrap` is
+  account-identifying: only the secret's **name** is ever rendered in a plan; the
+  value is passed at execution and never appears in a plan, in `--json` output,
+  or in any tracked file.
 - No NAT (ADR-0006) remains in force; this feature adds no new AWS
   infrastructure. IAM database authentication is unchanged and never bypassed.
 
@@ -371,8 +782,11 @@ For any operator/agent intent, the `Plan` produced through CLI mode and the
 For all commands the wizard can construct, none produces a `Plan` that executes
 `sam deploy --config-env prod` locally; a prod deploy is reachable only by
 dispatching the environment-protected CI job (structurally enforced by `Target`).
+Issuing a sanctioned trigger locally — pushing a release tag, or dispatching
+`deploy.yml` — does not violate this: the trigger runs locally, the deploy does
+not.
 
-**Validates: Requirements 6.1, 6.2**
+**Validates: Requirements 6.1, 6.2, 7.5**
 
 ### Property 3: Config-as-data
 
@@ -403,19 +817,23 @@ For any command run with `--dry-run` (or TUI preview), the wizard renders the
 
 Rationale is captured as ADRs rather than expanded inline (per AGENTS.md):
 
-- **(a)** Wizard as a thin control plane over the SAM CLI + GitHub Actions +
-  `git`, packaged as a console entry point in `pyproject.toml` (no `scripts/`
-  ops folder — respects the repo anti-pattern).
-- **(b)** Prod gating via GitHub Environments (required reviewers) + OIDC keyless
-  deploy, enforced by the platform rather than application code.
+- **(a)** **ADR-0039 (accepted)** — wizard as a thin control plane over the SAM
+  CLI + GitHub Actions + `git`, packaged as a console entry point in
+  `pyproject.toml` (no `scripts/` ops folder — respects the repo anti-pattern).
+- **(b)** **ADR-0040 (accepted)** — prod gating via GitHub Environments (required
+  reviewers) + OIDC keyless deploy, enforced by the platform rather than
+  application code; the deploy is deliberately not gated on the full validation
+  suite.
 - **(c)** **ADR-0038 (accepted)** — purpose-scoped GitHub Actions workflows.
   The former "one-workflow deviation" (extend `ci.yml` rather than add
   `deploy.yml`) is now **DECIDED against**: workflows are split by trigger /
   permission scope, with shared setup factored into a reusable composite action
   so they cannot drift. Workflow set: `ci.yml` (validation gate) and `deploy.yml`
   (CD — tag / `workflow_dispatch`, OIDC).
-- **(d)** CLI framework (Typer vs stdlib argparse) and TUI framework (Textual vs
-  questionary + rich) choices.
+- **(d)** **ADR-0041 (accepted)** — **Typer** for the CLI front-end and
+  **Textual** for the TUI front-end, over stdlib `argparse` and
+  `questionary + rich` respectively; both dev/ops-group dependencies only, kept
+  out of the Lambda layer by the placement recorded in ADR-0039.
 
 ## Constraints and Conventions
 
@@ -433,4 +851,6 @@ Rationale is captured as ADRs rather than expanded inline (per AGENTS.md):
   `ApiVersion` derives from the release tag (ADR-0037).
 - No NAT (ADR-0006); IAM database authentication for Lambdas, never bypassed.
 - Dev/ops-only dependencies (Typer/Textual/etc.) stay out of the Lambda layer and
-  `bdo_common`.
+  `bdo_common`. Enforced by placement: the package lives at
+  **`src/tools/bdo_deploy/`**, outside `src/layer/python/`, so the layer build
+  cannot pick it up.

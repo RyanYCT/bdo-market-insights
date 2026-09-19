@@ -43,27 +43,44 @@ CI/CD workflows).
 - **Dispatcher**: The single component that resolves a `Command` into a `Plan`
   and routes it to exactly one `Executor`. Planning is pure and side-effect-free.
 - **Plan**: The resolved, side-effect-free preview of a `Command` — the ordered
-  executor calls (exact command lines), the human-readable effects, and whether
-  confirmation is required.
+  executor calls (each carrying structured intent the executor acts on, plus the
+  command line rendered for preview only), the human-readable effects, and
+  whether confirmation is required.
 - **Result**: The typed outcome (`ok`, `exit_code`, `summary`, `changes`,
-  `run_url`, `raw_output`) returned after execution.
+  `run_url`, `run`, `raw_output`, `plan`) returned after execution. `run_url` is the
+  display-only URL of a dispatched CI run; `run` is that run's structured
+  reference, which the front-end follows (see criterion 7.6) rather than parsing an
+  identity back out of the URL. `plan` is set when a mutating plan was refused for
+  want of confirmation, so the caller can inspect the effects and re-invoke with
+  `--yes`.
 - **Executor**: An adapter over one sanctioned tool. The wizard shells out to
   executors; it never performs deploy work directly.
 - **SamExecutor**: The executor over the SAM CLI (`sam validate/build/deploy/
   sync`) for LOCAL, non-prod work. Selects `--config-env`; never composes
   `--parameter-overrides`.
-- **ActionsDispatcher**: The executor over the GitHub CLI that triggers a CI run
-  (`gh workflow run`) and surfaces its status (`gh run watch` / `gh run view`).
+- **GitHubExecutor**: The executor over the GitHub CLI. Covers workflow dispatch
+  (`gh workflow run deploy.yml`), run status (`gh run watch` / `gh run view`), and
+  repository/environment administration (creating or updating a GitHub
+  Environment, setting an Environment secret). Named for the tool it wraps rather
+  than for one of its uses, and so as not to collide with the core `Dispatcher`
+  that routes to it.
 - **GitExecutor**: The executor over `git` that verifies release preconditions
   and creates/pushes the release tag.
 - **ConfigStore**: The executor for config-as-data across the two sanctioned
-  locations: `samconfig.toml` (changed via PR through `gh`) and SSM Parameter
-  Store (operational config, audited writes).
-- **Target**: The execution target carried by a `Command`. `LOCAL` routes to the
-  `SamExecutor` (dev/personal only); `CI` routes to the `ActionsDispatcher`
-  (shared-env and prod).
+  locations, and no third: `samconfig.toml` (changed via PR through `gh`) and SSM
+  Parameter Store (operational config, audited writes). GitHub repository and
+  environment administration is **not** a ConfigStore concern — it belongs to the
+  GitHubExecutor.
+- **Target**: Carried by a `Command`, `Target` selects **where the deploy
+  executes**, and is only meaningful for the `deploy` capability. `LOCAL` means the
+  deploy runs on the operator's machine via the `SamExecutor` (dev/personal only);
+  `CI` means the deploy runs in GitHub Actions, triggered via the
+  `GitHubExecutor` (shared-env and prod). A `release` always results in the deploy
+  running in CI, so a release `Plan` records `target = CI` regardless of how the
+  command was invoked; `config` and `bootstrap` do not vary by target.
 - **Repo_Scoped_SSM_Path**: An SSM parameter name of the form
-  `/bdo-market-insights/<stage>/<category>/<key>`. A bare `/bdo/...` path is not
+  `/bdo-market-insights/<stage>/<category>/<key>`, where `<stage>` is one of the
+  environments defined in `samconfig.toml`. A bare `/bdo/...` path is not
   repo-scoped.
 - **Release_Tag**: A git tag matching `^v\d+\.\d+\.\d+$`; its value becomes
   `ApiVersion` (ADR-0037) and drives the tag-triggered pipeline.
@@ -88,10 +105,11 @@ CI/CD workflows).
 
 #### Acceptance Criteria
 
-1. THE Dispatcher SHALL resolve every `Command` into a `Plan` and route that `Plan` to exactly one `Executor` (`SamExecutor`, `ActionsDispatcher`, `GitExecutor`, or `ConfigStore`).
+1. THE Dispatcher SHALL resolve every `Command` into a `Plan` and route that `Plan` to exactly one `Executor` (`SamExecutor`, `GitHubExecutor`, `GitExecutor`, or `ConfigStore`).
 2. THE Wizard SHALL NOT assemble a CloudFormation parameter set; for a `SamExecutor` deploy it SHALL select only `--config-env <stage>` and SHALL NOT compose `--parameter-overrides`.
 3. THE Wizard SHALL be packaged as a console entry point in `pyproject.toml` and SHALL NOT introduce an ops folder of scripts.
 4. WHEN the Dispatcher plans a `Command`, THE Dispatcher SHALL perform planning as a pure, side-effect-free operation.
+5. WHERE a CloudFormation parameter's value is static for a stage, THE Wizard SHALL rely on that stage's `samconfig.toml` environment to declare it and SHALL select only `--config-env <stage>` for a `SamExecutor` deploy, with exactly two parameters excepted as caller-supplied because they are derived at deploy time: `ApiVersion` (from the Release_Tag, ADR-0037) and `MigrationsFingerprint` (a content hash of `migrations/versions/`, ADR-0025).
 
 ### Requirement 3: Config capability
 
@@ -105,6 +123,8 @@ CI/CD workflows).
 4. WHEN `config set` changes operational configuration, THE ConfigStore SHALL write the value to its Repo_Scoped_SSM_Path with an audit record and SHALL NOT write it to any tracked file.
 5. IF a `ConfigStore` write of an operational value fails, THEN THE Wizard SHALL return an error identifying the failed write and SHALL leave the prior value at the targeted Repo_Scoped_SSM_Path unchanged.
 6. WHEN deploy-time configuration or parameters (for example `BdoRegions`) are changed, THE ConfigStore SHALL apply the change to `samconfig.toml` by opening a pull request via `gh` and SHALL NOT flip it in-place at runtime.
+7. WHEN a `Plan` is rendered, THE Wizard SHALL mask secret-shaped and operational values in `PlanStep.command` and in `Plan.effects`, so that neither `--dry-run` nor `--json` output contains such a value.
+8. WHERE `config set` targets a key that is neither a Repo_Scoped_SSM_Path nor already present in the target stage's `samconfig.toml` parameter set, IF that key's name contains any of the substrings `secret`, `password`, `token`, or `key` (case-insensitive, the same substrings as criterion 2), THEN THE Wizard SHALL reject the request with exit code `2` before any executor call, open no pull request, and direct the operator to a Repo_Scoped_SSM_Path, so that a new secret-shaped key is never introduced into a `Plan`, a pull request title, or a tracked file.
 
 ### Requirement 4: Bootstrap capability (one-time bootstrap helper)
 
@@ -112,9 +132,11 @@ CI/CD workflows).
 
 #### Acceptance Criteria
 
-1. THE Wizard SHALL expose the bootstrap capability as a one-time helper that wraps `sam pipeline bootstrap` (provisioning the OIDC deploy role and the artifact bucket) and configures the GitHub Environments and secrets.
+1. THE Wizard SHALL expose the bootstrap capability as a one-time helper in which the SamExecutor wraps `sam pipeline bootstrap` (provisioning the OIDC deploy role and the artifact bucket) and the GitHubExecutor creates or updates the GitHub Environments and sets the Environment secrets.
 2. THE Wizard SHALL label the bootstrap capability in help output and menus as a one-time, out-of-band step so that it is not used on the routine deploy path.
 3. IF a step of the bootstrap helper fails, THEN THE Wizard SHALL stop at the first failing step, report which steps completed and which step failed, and preserve the effects of any completed step without rolling them back.
+4. WHEN the bootstrap helper plans a GitHub Environment secret, THE Wizard SHALL render only the secret's name and SHALL NOT include the secret value in the `Plan`, in `--json` output, or in any tracked file.
+5. IF `bootstrap` targets `prod` without at least one required reviewer, THEN THE Wizard SHALL reject the request with exit code `2` before any executor call, create no GitHub Environment, and name the missing input, so that production cannot be bootstrapped into an unprotected state.
 
 ### Requirement 5: Deploy capability
 
@@ -124,8 +146,9 @@ CI/CD workflows).
 
 1. WHEN `deploy` is invoked with `target=LOCAL` for a dev or personal stage, THE Wizard SHALL route to the SamExecutor and run `sam deploy --config-env <stage>` (or `sam sync` for the dev fast-loop).
 2. IF `deploy` is invoked with `target=LOCAL` and `stage=prod`, THEN THE Wizard SHALL reject the request at validation, exit with code `2`, make no CloudFormation, file, SSM, git, or SAM state change, and return an error naming the offending field and directing the operator to `release`.
-3. WHEN `deploy` is invoked with `target=CI` for a shared-env or prod stage, THE Wizard SHALL route to the ActionsDispatcher and TRIGGER a GitHub Actions run, and SHALL NOT itself execute `sam deploy` for that stage.
+3. WHEN `deploy` is invoked with `target=CI` for a shared-env or prod stage, THE Wizard SHALL route to the GitHubExecutor and TRIGGER a GitHub Actions run, and SHALL NOT itself execute `sam deploy` for that stage.
 4. WHEN a fresh environment is deployed, THE Wizard SHALL reach target state through a single declarative deploy that relies on the stack self-bootstrapping (auto-migrate custom resource per ADR-0025; bootstrap orchestrator auto-run per ADR-0028) and SHALL NOT require any imperative multi-step orchestration on the routine path.
+5. WHEN `deploy` is invoked with `target=LOCAL`, THE SamExecutor SHALL pass `--no-confirm-changeset` to `sam deploy`, so that the deploy runs to completion without waiting on an interactive changeset prompt that the Wizard's captured executor output would keep hidden from the operator.
 
 ### Requirement 6: Production is platform-gated, not code-gated
 
@@ -134,8 +157,12 @@ CI/CD workflows).
 #### Acceptance Criteria
 
 1. THE Wizard SHALL have no code path that runs `sam deploy --config-env prod`; for all commands it can construct, no `Plan` SHALL execute a production `sam deploy` locally.
-2. THE Wizard SHALL reach production only by dispatching an environment-protected GitHub Actions job through the ActionsDispatcher.
+2. THE Wizard SHALL reach production only by dispatching an environment-protected GitHub Actions job through the GitHubExecutor.
 3. THE production GitHub Actions job SHALL run inside a GitHub Environment configured with required reviewers and OIDC keyless deploy (no static AWS credentials).
+4. WHEN the bootstrap helper creates or updates the production GitHub Environment, THE Wizard SHALL configure its required reviewers as part of that step.
+5. WHEN the bootstrap helper creates or updates the production GitHub Environment, THE Wizard SHALL configure a deployment branch and tag policy on that Environment admitting only tags matching `v*` and the `main` branch, so that GitHub refuses a production deploy from any other ref from outside the repository.
+6. IF a production deploy run is triggered for a ref that is neither a tag matching `v*` nor the `main` branch, THEN THE deploy workflow SHALL fail the run in a job that does not reference the GitHub Environment and on which the deploy job declares a `needs:` dependency, so that the rejected ref is named before the deploy job's approval wait begins rather than after it, as defence in depth behind the Environment policy of criterion 5 rather than as the boundary itself.
+7. THE GitHubExecutor SHALL dispatch `deploy.yml` without a `--ref` argument, so that a dispatch from the Wizard always runs the repository's default branch.
 
 ### Requirement 7: Release capability
 
@@ -147,8 +174,8 @@ CI/CD workflows).
 2. IF `release` is invoked with a version that does not match `^v\d+\.\d+\.\d+$`, THEN THE Wizard SHALL reject the request with exit code `2`, SHALL NOT verify preconditions, and SHALL NOT create or push a tag.
 3. IF a release precondition is violated, THEN THE Wizard SHALL report which specific precondition failed, SHALL NOT create or push a tag, and SHALL leave the git working tree, current branch, and existing tags unchanged.
 4. WHEN the release preconditions pass and the action is confirmed, THE GitExecutor SHALL create the `vX.Y.Z` tag and push it to the origin so the tag-triggered pipeline runs.
-5. THE Wizard SHALL confine initiation of a production deploy to the sanctioned pipeline triggers — a pushed Release_Tag, or an authorised `workflow_dispatch` of `deploy.yml` (dispatched either by the Wizard or from the GitHub Actions UI) — and SHALL keep every LOCAL path free of any production deploy initiation.
-6. WHEN `release` dispatches a CI run, THE Wizard SHALL surface the dispatched run's URL and status (via `gh run watch` / `gh run view`).
+5. THE Wizard SHALL confine initiation of a production deploy to the sanctioned pipeline triggers — a pushed Release_Tag, or an authorised `workflow_dispatch` of `deploy.yml` (dispatched either by the Wizard or from the GitHub Actions UI) — and SHALL keep every LOCAL path free of any production deploy execution, so that no `Plan` runs a production deploy on the operator's machine even when the sanctioned trigger (a tag push or a `workflow_dispatch`) is issued locally.
+6. WHEN `release` dispatches a CI run, THE Wizard SHALL surface the dispatched run's URL in every mode, and the front-end SHALL follow the run's status (via `gh run watch` / `gh run view`) after execution has returned — unconditionally for human-readable output, and WHERE `--json` is set only when `--watch` is also supplied.
 
 ### Requirement 8: Purpose-scoped CI/CD workflows
 
@@ -158,8 +185,8 @@ CI/CD workflows).
 
 1. THE deploy workflow SHALL be a dedicated `.github/workflows/deploy.yml`, triggered on `push` of tags matching `v*` and on `workflow_dispatch` with the typed inputs `stage` and `version`, running environment-gated deploy jobs with OIDC keyless deploy.
 2. THE validation workflow `.github/workflows/ci.yml` SHALL remain the branch-protection gate and SHALL preserve its existing validation behaviour — the same checks, triggers, and pass or fail outcomes — while its shared setup steps are replaced by the reusable composite action of criterion 4.
-3. THE ActionsDispatcher SHALL target `deploy.yml` (`gh workflow run deploy.yml -f stage=... -f version=...`), and the `deploy.yml` `workflow_dispatch` typed inputs SHALL be a superset of the inputs the wizard sends, so that the GitHub Actions UI and the wizard dispatch the identical deploy job with identical inputs.
-4. THE shared setup steps (checkout, Python setup, `uv sync`) SHALL be factored into a reusable composite action under `.github/actions/setup/` used by the workflows, so that the workflows cannot drift (ADR-0038).
+3. THE GitHubExecutor SHALL target `deploy.yml` (`gh workflow run deploy.yml -f stage=... -f version=...`), and the `deploy.yml` `workflow_dispatch` typed inputs SHALL be a superset of the inputs the wizard sends, so that the GitHub Actions UI and the wizard dispatch the identical deploy job with identical inputs.
+4. THE shared setup steps (Python setup, `uv` installation, `uv sync`) SHALL be factored into a reusable composite action under `.github/actions/setup/` used by the workflows, so that the workflows cannot drift (ADR-0038); checkout necessarily precedes the composite action — a local action resolves only from the caller's already-checked-out workspace — and carries no configuration, so it stays a step in each calling job and is not a drift risk.
 5. WHERE a new check has neither a distinct trigger nor a distinct permission scope, THE check SHALL be added as a job in `ci.yml` rather than as a new workflow file (ADR-0038).
 
 ### Requirement 9: Naming, config-authority, and dependency constraints
@@ -168,7 +195,7 @@ CI/CD workflows).
 
 #### Acceptance Criteria
 
-1. IF an SSM parameter name to be written is not a Repo_Scoped_SSM_Path matching `/bdo-market-insights/<stage>/<category>/<key>` (including any bare `/bdo/...` path), THEN THE Wizard SHALL reject the write with exit code `2`, write no SSM parameter for that name, leave any existing value unchanged, and emit an error naming the offending name and the required format.
+1. IF an SSM parameter name to be written is not a Repo_Scoped_SSM_Path matching `/bdo-market-insights/<stage>/<category>/<key>` (including any bare `/bdo/...` path), or its `<stage>` segment is not one of the environments defined in `samconfig.toml`, THEN THE Wizard SHALL reject the write with exit code `2`, write no SSM parameter for that name, leave any existing value unchanged, and emit an error naming the offending name and the required format.
 2. THE Wizard SHALL pass SSM key paths — never secret values — into CloudFormation, so CloudFormation resolves them at deploy time (ADR-0024).
 3. THE Wizard SHALL treat `BdoRegions` in `samconfig.toml` as the single active-region toggle (ADR-0036) and SHALL derive `ApiVersion` from the Release_Tag (ADR-0037).
 4. THE Wizard SHALL keep its dev/ops-only dependencies out of the Lambda layer and `bdo_common`.
@@ -184,7 +211,7 @@ CI/CD workflows).
 3. IF a `Command` fails validation (unknown stage, malformed version, non-repo-scoped SSM path, or a LOCAL prod deploy), THEN THE Wizard SHALL exit with code `2` before any executor call, return a `Result` naming the offending field, and make no mutation to any external system so that all target state is preserved unchanged.
 4. IF a mutating `Command` is invoked in CLI_Mode without `--yes`, THEN THE Wizard SHALL exit with code `3`, return a `Result` containing the `Plan` so the caller can inspect the effects and re-invoke with `--yes`, and make no mutation to any external system.
 5. WHEN `--dry-run` is supplied in CLI_Mode or preview is chosen in TUI_Mode, THE Wizard SHALL render the `Plan` and perform no file write, PR, AWS API mutation, SSM write, git mutation, `sam deploy`, or workflow dispatch, leaving all state unchanged.
-6. WHEN a `Command` has `target=CI`, THE Wizard SHALL report the dispatched CI run URL and treat the CI run itself as the authoritative pass or fail.
+6. WHEN a `Command` has `target=CI`, THE Wizard SHALL report the dispatched CI run URL in every mode, the front-end SHALL follow the run's status after execution has returned — unconditionally for human-readable output, and WHERE `--json` is set only when `--watch` is also supplied — and THE Wizard SHALL treat the CI run itself as the authoritative pass or fail.
 7. THE Wizard SHALL map every terminating outcome to exactly one exit code from the set {`0` = success, `1` = executor or action failed, `2` = usage/validation error before any executor call, `3` = confirmation required}.
 
 ## Out of Scope
