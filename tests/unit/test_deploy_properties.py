@@ -735,6 +735,18 @@ _DISPATCH_FLAG: Final = "-f"
 """How ``gh workflow run`` is given one typed ``workflow_dispatch`` input."""
 
 
+def workflow_document(workflow: str) -> dict[object, object]:
+    """``workflow`` parsed from the real file in ``.github/workflows``.
+
+    The one reader of a workflow file in the suite, shared with
+    ``test_deploy_workflow.py`` so there is a single place that knows where the
+    workflows live and how they parse.
+    """
+    document = yaml.safe_load((_WORKFLOW_DIR / workflow).read_text())
+    assert isinstance(document, dict), f"{workflow} is not a YAML mapping"
+    return document
+
+
 def _workflow_triggers(workflow: str) -> dict[str, object]:
     """The ``on:`` block of ``workflow``, read from the real file on disk.
 
@@ -743,7 +755,7 @@ def _workflow_triggers(workflow: str) -> dict[str, object]:
     ``yaml.safe_load`` that is idiosyncratic here, so the reader accommodates it
     rather than the workflow being quoted to suit the test.
     """
-    document = yaml.safe_load((_WORKFLOW_DIR / workflow).read_text())
+    document = workflow_document(workflow)
     triggers = document.get("on", document.get(True))
     assert isinstance(triggers, dict), f"{workflow} declares no on: block"
     return triggers

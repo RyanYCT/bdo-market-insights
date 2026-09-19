@@ -316,7 +316,7 @@ defence-in-depth (ADR-0040, amended).
     boundary — it is editable on the dispatched ref
   - _Requirements: 6.6_
 
-- [ ]* 9.6 Structural test for the guard and the dispatch ref
+- [x]* 9.6 Structural test for the guard and the dispatch ref
   - Parse `deploy.yml` and assert the guard step exists, precedes the
     credential step, and covers the `v*`-tag / `main` cases
   - Assert `run_workflow`'s argv carries no `--ref`, so a dispatch runs the
