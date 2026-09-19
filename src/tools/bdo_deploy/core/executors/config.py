@@ -73,7 +73,6 @@ from __future__ import annotations
 
 import datetime as dt
 import getpass
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Final, Protocol, assert_never, cast
 
@@ -151,8 +150,20 @@ BRANCH_PARAM: Final = "branch"
 BASE_PARAM: Final = "base"
 TITLE_PARAM: Final = "title"
 
-_URL_PATTERN: Final = re.compile(r"https://\S+")
-"""How the opened PR's URL is picked out of ``gh pr create``'s output."""
+PULLS_PATH: Final = "repos/{owner}/{repo}/pulls"
+"""The REST resource a config pull request is POSTed to.
+
+``{owner}`` / ``{repo}`` are left as literal placeholders on purpose: ``gh api``
+substitutes them from the repository the command runs in, which is the repository
+root ``_process`` always uses — so neither is hard-coded or derived here.
+"""
+
+PR_BODY: Final = (
+    "Opened by the deploy control plane: deploy-time configuration lives in "
+    "samconfig.toml and changes through review, never in place."
+)
+"""The pull request's body — fixed and short: the diff is the proposal, and this
+executor has nothing to add to it beyond why the change arrived as a PR at all."""
 
 
 def _str_or_none(value: object) -> object:
@@ -238,6 +249,43 @@ class _SsmParameterResponse(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     parameter: _SsmParameter = Field(default_factory=_SsmParameter, alias="Parameter")
+
+
+class _GhPullRequest(BaseModel):
+    """The ``POST repos/{owner}/{repo}/pulls`` response — the one field read of it.
+
+    Private to this module for the same reason the SSM response models are: this
+    is the *wire shape of GitHub's REST response*, consumed entirely inside this
+    file and reaching no public signature — ``open_config_pr`` returns the domain
+    ``PrRef``.
+
+    ``html_url`` defaults to ``None`` and tolerates a non-string, so a partial or
+    odd payload validates and simply reports no URL. That tolerance is the same one
+    the SSM reads keep, and it matters more here: the pull request has *already
+    been opened* by the time this response is read, so a payload that cannot be
+    read must still be reported as an opened PR (a ``PrRef`` with ``url=None``),
+    never as a failure and never as a traceback (Requirement 10.2).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    html_url: Annotated[str | None, BeforeValidator(_str_or_none)] = None
+
+
+def _opened_pull_request_url(output: str) -> str | None:
+    """The opened PR's ``html_url``, or ``None`` when the response cannot be read.
+
+    ``model_validate_json`` is the boundary check: it makes the two ways this read
+    can fail — a body that does not parse (``gh``'s output is captured together
+    with stderr, so a warning line can accompany the JSON) and a body that parses
+    into something that is not a pull request object — one ``ValidationError``,
+    caught in one place. Nothing is scraped out of the text: the URL is a field of
+    a structured response, not a pattern in human-facing output.
+    """
+    try:
+        return _GhPullRequest.model_validate_json(output).html_url
+    except ValidationError:
+        return None
 
 
 class SsmClient(Protocol):
@@ -681,33 +729,40 @@ class SsmSamconfigStore:
             raise _step_failure(f"the {branch} branch could not be pushed", pushed)
 
     def _create_pull_request(self, *, branch: str, base: str, title: str) -> str | None:
-        """Open the pull request and return its URL if ``gh`` printed one.
+        """POST the pull request through ``gh api`` and read its URL off the response.
 
-        The body is fixed and short: the diff is the proposal, and this executor
-        has nothing to add to it beyond why the change arrived as a PR at all.
+        REST rather than ``gh pr create``: Requirement 3.3 asks only that the pull
+        request be opened *via ``gh``*, and a structured response beats scraping a
+        URL out of human-facing CLI output whose wording is not a contract — it
+        also works where the ``gh pr`` command is unavailable. The four fields the
+        endpoint needs are ``title`` / ``head`` / ``base`` / ``body``, sent as
+        ``-f`` fields because all four are flat strings (the nested bodies
+        ``GitHubCli`` sends go on stdin for exactly the reason these do not).
+
+        The URL is read out of the validated response, and a response that cannot
+        be read yields ``None``: the pull request exists either way, so it is
+        reported as opened without a URL rather than as a failure.
         """
         created = self._run(
             [
                 GH,
-                "pr",
-                "create",
-                "--base",
-                base,
-                "--head",
-                branch,
-                "--title",
-                title,
-                "--body",
-                (
-                    "Opened by the deploy control plane: deploy-time configuration lives in "
-                    "samconfig.toml and changes through review, never in place."
-                ),
+                "api",
+                "--method",
+                "POST",
+                PULLS_PATH,
+                "-f",
+                f"{TITLE_PARAM}={title}",
+                "-f",
+                f"head={branch}",
+                "-f",
+                f"{BASE_PARAM}={base}",
+                "-f",
+                f"body={PR_BODY}",
             ]
         )
         if not created.ok:
             raise _step_failure("the pull request could not be opened", created)
-        found = _URL_PATTERN.search(created.output)
-        return found.group(0) if found is not None else None
+        return _opened_pull_request_url(created.output)
 
     def _restore(self, original: str | None, branch: str) -> None:
         """Undo the attempt: discard the edit, go back, drop the scratch branch.
@@ -929,8 +984,8 @@ def _pr_metadata(stage: str, changes: list[ConfigDiff]) -> tuple[str, str, str]:
     """Default branch / base / title for a PR opened outside ``run_step``.
 
     ``run_step`` passes the planner's own strings instead, so the previewed
-    ``gh pr create`` line and the opened pull request cannot disagree; these are
-    only reached by a direct ``open_config_pr`` call.
+    ``gh api … /pulls`` line and the opened pull request cannot disagree; these
+    are only reached by a direct ``open_config_pr`` call.
     """
     keys = "-".join(change.key for change in changes)
     return f"config/{stage}-{keys}", "main", f"config({stage}): set {keys}"
@@ -977,6 +1032,8 @@ __all__ = [
     "GH",
     "GIT",
     "MASK",
+    "PR_BODY",
+    "PULLS_PATH",
     "SAMCONFIG_FILE",
     "SECRET_NAME_SUBSTRINGS",
     "SECURE_STRING",

@@ -59,6 +59,8 @@ from bdo_deploy.core.errors import (
 )
 from bdo_deploy.core.executors.base import StepExecutor
 from bdo_deploy.core.executors.config import (
+    PR_BODY,
+    PULLS_PATH,
     SAMCONFIG_FILE,
     SECRET_NAME_SUBSTRINGS,
     ConfigStore,
@@ -606,8 +608,16 @@ class Dispatcher:
                     f"set {key} in [{cmd.stage}.deploy.parameters] of samconfig.toml "
                     f"on branch {branch} and open a pull request"
                 ),
+                # Mirrors the ``gh api`` POST the ``ConfigStore`` makes, field for
+                # field — including the fixed ``body``, which is imported rather
+                # than restated so the preview cannot describe a body the executor
+                # does not send.
                 command=(
-                    f'gh pr create --base {RELEASE_BASE_BRANCH} --head {branch} --title "{title}"'
+                    f"gh api --method POST {PULLS_PATH}"
+                    f' -f title="{title}"'
+                    f" -f head={branch}"
+                    f" -f base={RELEASE_BASE_BRANCH}"
+                    f' -f body="{PR_BODY}"'
                 ),
                 executor="config",
                 op=Op.SAMCONFIG_PR,

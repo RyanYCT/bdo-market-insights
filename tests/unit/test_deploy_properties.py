@@ -583,8 +583,8 @@ class TestEveryConfigChangeLandsInOneOfTwoLocations:
 
     Asserted on ``op`` and ``params``, never on the rendered ``command`` string:
     the rendering is display-only and no executor parses it, so a plan that
-    *rendered* ``gh pr create`` while telling the ``ConfigStore`` to do something
-    else would satisfy a string search and violate the property. What the step
+    *rendered* a ``gh api … /pulls`` POST while telling the ``ConfigStore`` to do
+    something else would satisfy a string search and violate the property. What the step
     means is what has to be in one of the two sanctioned places.
     """
 

@@ -43,6 +43,8 @@ from bdo_deploy.core.errors import UsageError
 from bdo_deploy.core.executors._process import run_command
 from bdo_deploy.core.executors.config import (
     MASK,
+    PR_BODY,
+    PULLS_PATH,
     SECURE_STRING,
     SsmClient,
     SsmSamconfigStore,
@@ -84,7 +86,7 @@ class FakeRunner:
     """A ``CommandRunner`` that records every invocation and scripts replies.
 
     Exact-argv lookup first, then a prefix match (for an invocation with a long
-    trailing argument such as ``gh pr create --body …``), then a success with no
+    trailing argument such as ``gh api … -f body=…``), then a success with no
     output — which is what the read-only ``git`` queries mean by "nothing to
     report". So a test only scripts the invocation whose outcome it is about.
     """
@@ -1186,7 +1188,12 @@ ON_FEATURE: Final = CommandResult(ok=True, output="feat/deploy\n")
 PUSH_PR_ARGV: Final = ("git", "push", "--set-upstream", "origin", PR_BRANCH)
 
 
-GH_PR_CREATE: Final = ("gh", "pr", "create")
+GH_PR_POST: Final = ("gh", "api", "--method", "POST", PULLS_PATH)
+"""The ``gh api`` invocation that opens the pull request, as far as its path."""
+
+PR_RESPONSE: Final = json.dumps({"html_url": PR_URL, "number": 7})
+"""What GitHub answers a successful POST with — the structured response the URL is
+read out of, in place of the human-facing output that used to be scraped."""
 
 
 def _regions_change(after: str = "na,eu") -> ConfigDiff:
@@ -1194,15 +1201,24 @@ def _regions_change(after: str = "na,eu") -> ConfigDiff:
     return ConfigDiff(source="samconfig", key="BdoRegions", before="tw", after=after)
 
 
-def _pr_runner(samconfig: Path, **overrides: CommandResult) -> WorktreeRunner:
-    """A recorded git/gh runner: on ``feat/deploy``, clean tree, ``gh`` prints a URL."""
+def _pr_runner(
+    samconfig: Path,
+    *,
+    pr: CommandResult | None = None,
+    **overrides: CommandResult,
+) -> WorktreeRunner:
+    """A recorded git/gh runner: on ``feat/deploy``, clean tree, ``gh`` answers JSON.
+
+    ``pr`` replaces what the ``gh api`` POST answers, which is how the response
+    tolerance is exercised without reaching into the runner's tables.
+    """
     responses: dict[tuple[str, ...], CommandResult] = {BRANCH_ARGV: ON_FEATURE}
     for name, result in overrides.items():
         responses[{"status": STATUS_ARGV, "push": PUSH_PR_ARGV}[name]] = result
     return WorktreeRunner(
         samconfig,
         responses=responses,
-        prefixes={GH_PR_CREATE: CommandResult(ok=True, output=f"{PR_URL}\n")},
+        prefixes={GH_PR_POST: pr or CommandResult(ok=True, output=PR_RESPONSE)},
     )
 
 
@@ -1246,17 +1262,21 @@ class TestOpenConfigPr:
             ["git", "commit", "-m", PR_TITLE],
             list(PUSH_PR_ARGV),
         ]
-        assert runner.argvs[6][:8] == [
+        assert runner.argvs[6] == [
             "gh",
-            "pr",
-            "create",
-            "--base",
-            "main",
-            "--head",
-            PR_BRANCH,
-            "--title",
+            "api",
+            "--method",
+            "POST",
+            PULLS_PATH,
+            "-f",
+            f"title={PR_TITLE}",
+            "-f",
+            f"head={PR_BRANCH}",
+            "-f",
+            "base=main",
+            "-f",
+            f"body={PR_BODY}",
         ]
-        assert runner.argvs[6][8] == PR_TITLE
         assert runner.argvs[-1] == ["git", "checkout", "feat/deploy"]
         assert pr.branch == PR_BRANCH
         assert pr.base == "main"
@@ -1296,7 +1316,7 @@ class TestOpenConfigPr:
             ["git", "checkout", "feat/deploy"],
             ["git", "branch", "--delete", "--force", PR_BRANCH],
         ]
-        assert GH_PR_CREATE not in [tuple(argv[:3]) for argv in runner.argvs]
+        assert GH_PR_POST not in [tuple(argv[:5]) for argv in runner.argvs]
 
     def test_an_ssm_change_is_not_proposed_as_a_pull_request(self, samconfig: Path) -> None:
         runner = _pr_runner(samconfig)
@@ -1623,3 +1643,67 @@ class TestSsmPayloadTolerance:
         assert diff.before is None, "no readable prior value, so no before"
         assert diff.after == MASK
         assert DSN_VALUE not in diff.model_dump_json()
+
+
+class TestPullRequestResponseTolerance:
+    """Requirement 10.2 / 3.3: an unreadable PR response is still an opened PR.
+
+    The third validated boundary, and the one with the least room to fail: the
+    pull request has *already been created* by the time GitHub's response is read,
+    so a payload that cannot be validated must report an opened PR with no URL —
+    never a failure, and never a traceback. Reporting it as a failure would
+    describe a pull request that exists as one that was not opened, and would send
+    the caller down the restore path for a change that is already published.
+    """
+
+    @pytest.mark.parametrize(
+        ("label", "output"),
+        [
+            ("an array where an object belongs", json.dumps([{"html_url": PR_URL}])),
+            ("a bare JSON string", json.dumps(PR_URL)),
+            ("a truncated object", '{"html_url": "https://githu'),
+            (
+                "a warning line beside the JSON",
+                f'warning: gh is out of date\n{{"html_url": "{PR_URL}"}}',
+            ),
+            ("no html_url at all", json.dumps({"number": 7})),
+            ("a non-string html_url", json.dumps({"html_url": 7})),
+        ],
+    )
+    def test_an_unreadable_response_is_an_opened_pr_with_no_url(
+        self, label: str, output: str, samconfig: Path
+    ) -> None:
+        runner = _pr_runner(samconfig, pr=CommandResult(ok=True, output=output))
+
+        pr = _store(runner=runner, samconfig_path=samconfig).open_config_pr(
+            "dev", [_regions_change()]
+        )
+
+        assert pr.url is None, label
+        assert (pr.branch, pr.base, pr.title) == (PR_BRANCH, "main", PR_TITLE)
+        # The attempt completed: the operator is back on their own branch and the
+        # scratch branch was not torn down, because nothing failed.
+        assert runner.argvs[-1] == ["git", "checkout", "feat/deploy"]
+        assert ["git", "branch", "--delete", "--force", PR_BRANCH] not in runner.argvs
+
+    def test_a_failed_post_restores_the_file_and_the_checkout(self, samconfig: Path) -> None:
+        """A POST that failed opened nothing, so the attempt is undone and named."""
+        before = samconfig.read_text(encoding="utf-8")
+        runner = _pr_runner(
+            samconfig, pr=CommandResult(ok=False, output="gh: Validation Failed (HTTP 422)\n")
+        )
+
+        with pytest.raises(UsageError) as excinfo:
+            _store(runner=runner, samconfig_path=samconfig).open_config_pr(
+                "dev", [_regions_change()]
+            )
+
+        assert "could not be opened" in excinfo.value.problem
+        assert "HTTP 422" in excinfo.value.problem, "gh's own output, not a traceback"
+        assert "Traceback" not in str(excinfo.value)
+        assert samconfig.read_text(encoding="utf-8") == before
+        assert runner.argvs[-3:] == [
+            ["git", "checkout", "--", "samconfig.toml"],
+            ["git", "checkout", "feat/deploy"],
+            ["git", "branch", "--delete", "--force", PR_BRANCH],
+        ]

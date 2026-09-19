@@ -380,7 +380,7 @@ defence-in-depth (ADR-0040, amended).
     the tool's output surfaced verbatim and no status or value invented
   - _Requirements: 10.2_
 
-- [ ] 10.8 Open pull requests via `gh api`
+- [x] 10.8 Open pull requests via `gh api`
   - In `core/executors/config.py`, replace `gh pr create` with
     `gh api --method POST repos/{owner}/{repo}/pulls` and read `html_url` from the
     JSON response; delete the URL-scraping regex

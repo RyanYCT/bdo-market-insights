@@ -24,7 +24,7 @@ from bdo_deploy.core.dispatch import (
     Dispatcher,
 )
 from bdo_deploy.core.errors import ConfirmationRequired, UsageError, exit_code_for
-from bdo_deploy.core.executors.config import SAMCONFIG_FILE
+from bdo_deploy.core.executors.config import PR_BODY, SAMCONFIG_FILE
 from bdo_deploy.core.executors.github import SECRET_ENV_PREFIX, RunRef, RunStatus
 from bdo_deploy.core.exit_codes import ExitCode
 from bdo_deploy.core.models import (
@@ -334,8 +334,10 @@ class TestPlanConfigSet:
                     "on branch config/dev-BdoRegions and open a pull request"
                 ),
                 command=(
-                    "gh pr create --base main --head config/dev-BdoRegions "
-                    '--title "config(dev): set BdoRegions=NA,EU"'
+                    "gh api --method POST repos/{owner}/{repo}/pulls "
+                    '-f title="config(dev): set BdoRegions=NA,EU" '
+                    "-f head=config/dev-BdoRegions -f base=main "
+                    f'-f body="{PR_BODY}"'
                 ),
                 executor="config",
                 op=Op.SAMCONFIG_PR,
