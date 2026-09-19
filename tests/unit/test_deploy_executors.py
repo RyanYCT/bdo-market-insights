@@ -1329,3 +1329,297 @@ class TestOpenConfigPr:
         ]
         assert PR_URL in result.output
         assert ["git", "checkout", "-b", "config/dev-regions"] in runner.argvs
+
+
+# =============================================================================
+# F. the two parsed I/O boundaries (task 10.7)
+# =============================================================================
+
+
+class ScriptedSsmClient:
+    """An ``SsmClient`` answering with literal, hand-written response payloads.
+
+    ``moto`` cannot produce a malformed response — that is the point of it — so
+    the shapes a real API, a proxy or a future API version could return are
+    scripted here instead: a parameter missing a field, a ``Parameters`` entry
+    that is not an object, a response that is not a response at all. Writes are
+    recorded rather than performed, so the read path can be starved of a payload
+    without also losing the ability to check the write still happened.
+    """
+
+    def __init__(
+        self,
+        *,
+        pages: Sequence[Any] = (),
+        parameter: Any = None,
+    ) -> None:
+        self._pages = list(pages)
+        self._parameter = parameter
+        self.paths: list[str] = []
+        self.tokens: list[str | None] = []
+        self.puts: list[dict[str, Any]] = []
+
+    def get_parameters_by_path(
+        self,
+        *,
+        Path: str,
+        Recursive: bool,
+        WithDecryption: bool,
+        NextToken: str = "",
+    ) -> Any:
+        self.paths.append(Path)
+        self.tokens.append(NextToken or None)
+        index = len(self.paths) - 1
+        if index >= len(self._pages):
+            raise AssertionError(f"GetParametersByPath was called {index + 1} times")
+        return self._pages[index]
+
+    def get_parameter(self, *, Name: str, WithDecryption: bool) -> Any:
+        if self._parameter is None:
+            raise ClientError(
+                {"Error": {"Code": "ParameterNotFound", "Message": "not found"}},
+                "GetParameter",
+            )
+        return self._parameter
+
+    def put_parameter(
+        self,
+        *,
+        Name: str,
+        Value: str,
+        Type: str,
+        Overwrite: bool,
+        Description: str = "",
+    ) -> dict[str, Any]:
+        self.puts.append({"Name": Name, "Value": Value, "Type": Type})
+        return {}
+
+
+class TestGhPayloadTolerance:
+    """Requirement 10.2: a malformed or partial ``gh --json`` payload invents nothing.
+
+    The boundary is validated by a Pydantic model, and a ``ValidationError`` must
+    never escape it: an unreadable run has to arrive as a reported failure, not as
+    a traceback, and not as a run that quietly passed.
+    """
+
+    def test_a_partial_view_payload_reports_only_what_it_carried(self) -> None:
+        runner = FakeRunner(
+            responses={VIEW_ARGV: CommandResult(ok=True, output=json.dumps({"status": "queued"}))}
+        )
+        status = GitHubCli(runner=runner).view(
+            RunRef(workflow=DEFAULT_WORKFLOW, run_id="42", url=RUN_URL)
+        )
+        assert status.ok is True
+        assert status.status == "queued"
+        assert status.conclusion is None, "an absent conclusion is not a conclusion"
+        assert status.run.url == RUN_URL, "the known URL survives a payload that omits it"
+
+    @pytest.mark.parametrize(
+        ("label", "output"),
+        [
+            ("an array where an object belongs", json.dumps([{"status": "completed"}])),
+            ("a bare JSON string", json.dumps("completed")),
+            ("a truncated object", '{"status": "comple'),
+            # gh's --json output is captured together with stderr, so a warning
+            # line can accompany the JSON; such a body does not parse, and it is
+            # reported as unreadable rather than guessed at.
+            (
+                "a warning line beside the JSON",
+                'warning: gh is out of date\n{"status": "completed"}',
+            ),
+            (
+                "a warning line after the JSON",
+                '{"status": "completed"}\nwarning: gh is out of date',
+            ),
+        ],
+    )
+    def test_an_unvalidatable_view_payload_is_a_failure_not_a_pass(
+        self, label: str, output: str
+    ) -> None:
+        runner = FakeRunner(responses={VIEW_ARGV: CommandResult(ok=True, output=output)})
+        status = GitHubCli(runner=runner).view(RunRef(workflow=DEFAULT_WORKFLOW, run_id="42"))
+        assert status.ok is False, label
+        assert status.status is None
+        assert status.conclusion is None
+        assert status.output == output, "gh's own output, verbatim"
+
+    def test_a_non_string_status_is_no_status(self) -> None:
+        """A field of the wrong type reads as absent, not as a coerced status."""
+        runner = FakeRunner(
+            responses={
+                VIEW_ARGV: CommandResult(ok=True, output=json.dumps({"status": 5, "url": 7}))
+            }
+        )
+        status = GitHubCli(runner=runner).view(RunRef(workflow=DEFAULT_WORKFLOW, run_id="42"))
+        assert (status.status, status.conclusion) == (None, None)
+        assert status.run.url is None
+
+    @pytest.mark.parametrize(
+        ("label", "output"),
+        [
+            ("a non-array payload", json.dumps({"url": RUN_URL, "databaseId": 42})),
+            ("an empty array", json.dumps([])),
+            ("an entry missing both fields", json.dumps([{}])),
+            ("an entry that is not an object", json.dumps(["nope"])),
+        ],
+    )
+    def test_an_unlocatable_run_is_still_a_successful_dispatch(
+        self, label: str, output: str
+    ) -> None:
+        # The run is already moving, so the dispatch succeeded; only its URL is
+        # missing, and the reference still names the workflow to follow.
+        runner = FakeRunner(responses={RUN_LIST_ARGV: CommandResult(ok=True, output=output)})
+        result = GitHubCli(runner=runner).run_workflow(stage="dev")
+        assert result.ok is True, label
+        assert result.run_url is None
+        assert result.run == RunRef(workflow=DEFAULT_WORKFLOW)
+        assert "its URL could not be resolved" in result.output
+
+    @pytest.mark.parametrize(
+        ("database_id", "expected"),
+        [(42, "42"), ("42", "42"), (True, None), (4.5, None), (None, None)],
+    )
+    def test_a_bool_is_never_read_as_a_run_id(
+        self, database_id: object, expected: str | None
+    ) -> None:
+        """``gh`` sends the id as a number, carried as a ``str`` — but never a bool.
+
+        Pydantic's lax mode coerces ``True`` into an ``int | str`` field as ``1``,
+        so a boolean would otherwise become the run id ``"1"``: a real run number
+        invented out of a flag. Only a genuine number or string is an id.
+        """
+        runner = FakeRunner(
+            responses={
+                RUN_LIST_ARGV: CommandResult(
+                    ok=True, output=json.dumps([{"url": RUN_URL, "databaseId": database_id}])
+                )
+            }
+        )
+        result = GitHubCli(runner=runner).run_workflow(stage="dev")
+        assert result.run == RunRef(workflow=DEFAULT_WORKFLOW, run_id=expected, url=RUN_URL)
+
+
+class TestSsmPayloadTolerance:
+    """Requirement 10.2: a malformed or partial SSM response invents no value.
+
+    Same contract as the ``gh`` boundary: the response is validated by a Pydantic
+    model, and a ``ValidationError`` is caught there rather than reaching the
+    operator as a traceback. A read is never worth failing a config view or a
+    legitimate write over.
+    """
+
+    def test_a_parameter_missing_its_value_reads_as_empty_not_absent(
+        self, samconfig: Path
+    ) -> None:
+        # The parameter exists, so the view lists it; dropping the row would
+        # silently narrow the merged view instead of reporting what is there.
+        client = ScriptedSsmClient(
+            pages=[{"Parameters": [{"Name": SSM_DOMAIN, "Type": "String"}]}]
+        )
+        view = _store(client=client, samconfig_path=samconfig).read_merged("dev")
+        assert view.ssm[SSM_DOMAIN] == ""
+
+    def test_a_parameter_missing_its_type_is_read_as_a_string(self, samconfig: Path) -> None:
+        client = ScriptedSsmClient(
+            pages=[{"Parameters": [{"Name": SSM_DOMAIN, "Value": "api.example.test"}]}]
+        )
+        view = _store(client=client, samconfig_path=samconfig).read_merged("dev")
+        assert view.ssm[SSM_DOMAIN] == "api.example.test"
+        assert view.masked == [], "a plain name and no stated type is not a masked value"
+
+    def test_a_secret_shaped_name_is_masked_even_with_no_stated_type(
+        self, samconfig: Path
+    ) -> None:
+        """What the ``String`` default cannot do, the name predicate still does."""
+        client = ScriptedSsmClient(
+            pages=[{"Parameters": [{"Name": SSM_TOKEN, "Value": TOKEN_VALUE}]}]
+        )
+        view = _store(client=client, samconfig_path=samconfig).read_merged("dev")
+        assert isinstance(view.ssm[SSM_TOKEN], SecretStr)
+        assert TOKEN_VALUE not in view.model_dump_json()
+
+    @pytest.mark.parametrize(
+        ("label", "page"),
+        [
+            ("a nameless parameter", {"Parameters": [{"Value": "orphan"}]}),
+            ("a non-string name", {"Parameters": [{"Name": 7, "Value": "orphan"}]}),
+            ("a parameter that is not an object", {"Parameters": ["nope"]}),
+            ("no Parameters key at all", {}),
+            ("a Parameters that is not a list", {"Parameters": "nope"}),
+            ("a response that is not a response", "nope"),
+        ],
+    )
+    def test_an_unreadable_page_yields_no_invented_row(
+        self, label: str, page: Any, samconfig: Path
+    ) -> None:
+        client = ScriptedSsmClient(pages=[page])
+        view = _store(client=client, samconfig_path=samconfig).read_merged("dev")
+        assert view.ssm == {}, label
+        assert view.samconfig["stack_name"] == "bdo-market-dev", "the file side is unaffected"
+
+    def test_an_empty_next_token_ends_the_walk(self, samconfig: Path) -> None:
+        """An empty token is the last page; sending it back would walk it forever."""
+        client = ScriptedSsmClient(
+            pages=[
+                {
+                    "Parameters": [{"Name": SSM_DOMAIN, "Value": "api.example.test"}],
+                    "NextToken": "",
+                }
+            ]
+        )
+        view = _store(client=client, samconfig_path=samconfig).read_merged("dev")
+        assert view.ssm == {SSM_DOMAIN: "api.example.test"}
+        assert client.tokens == [None]
+
+    def test_a_populated_next_token_is_followed(self, samconfig: Path) -> None:
+        client = ScriptedSsmClient(
+            pages=[
+                {
+                    "Parameters": [{"Name": SSM_DOMAIN, "Value": "api.example.test"}],
+                    "NextToken": "p2",
+                },
+                {"Parameters": [{"Name": SSM_TOKEN, "Value": TOKEN_VALUE}]},
+            ]
+        )
+        view = _store(client=client, samconfig_path=samconfig).read_merged("dev")
+        assert set(view.ssm) == {SSM_DOMAIN, SSM_TOKEN}
+        assert client.tokens == [None, "p2"]
+
+    @pytest.mark.parametrize(
+        ("label", "response"),
+        [
+            ("no Parameter key", {}),
+            ("a Parameter that is not an object", {"Parameter": "nope"}),
+            ("a non-string value", {"Parameter": {"Name": SSM_DOMAIN, "Value": 7}}),
+            ("a response that is not a response", "nope"),
+        ],
+    )
+    def test_an_unreadable_prior_parameter_is_no_prior_value(
+        self, label: str, response: Any
+    ) -> None:
+        # The write is what the operator asked for; an unreadable prior read
+        # reports no "before" rather than blocking it or guessing one.
+        client = ScriptedSsmClient(parameter=response)
+        diff = _store(client=client).put_ssm(SSM_DOMAIN, "api.example.test")
+        assert diff.before is None, label
+        assert diff.after == "api.example.test"
+        assert client.puts == [{"Name": SSM_DOMAIN, "Value": "api.example.test", "Type": "String"}]
+
+    def test_an_unstated_prior_type_does_not_downgrade_the_write(self) -> None:
+        """A prior parameter whose type is unreadable is written as a ``String``.
+
+        The same value an absent parameter yields, which is what the default
+        means: there is no ``SecureString`` here to preserve.
+        """
+        client = ScriptedSsmClient(parameter={"Parameter": {"Name": SSM_DOMAIN, "Type": 7}})
+        _store(client=client).put_ssm(SSM_DOMAIN, "api.example.test")
+        assert client.puts[0]["Type"] == "String"
+
+    def test_a_stated_secure_string_still_survives_a_partial_response(self) -> None:
+        client = ScriptedSsmClient(parameter={"Parameter": {"Type": SECURE_STRING}})
+        diff = _store(client=client).put_ssm(SSM_DSN, DSN_VALUE)
+        assert client.puts[0]["Type"] == SECURE_STRING
+        assert diff.before is None, "no readable prior value, so no before"
+        assert diff.after == MASK
+        assert DSN_VALUE not in diff.model_dump_json()

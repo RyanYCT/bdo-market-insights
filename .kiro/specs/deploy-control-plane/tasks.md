@@ -375,7 +375,7 @@ defence-in-depth (ADR-0040, amended).
     underlying output, never a guessed value
   - _Requirements: 10.2_
 
-- [ ]* 10.7 Boundary-model tests
+- [x]* 10.7 Boundary-model tests
   - Feed malformed/partial `gh --json` and SSM payloads and assert `ok=False` with
     the tool's output surfaced verbatim and no status or value invented
   - _Requirements: 10.2_
