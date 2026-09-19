@@ -308,7 +308,7 @@ defence-in-depth (ADR-0040, amended).
     non-prod bootstrap plans no policy
   - _Requirements: 4.1, 6.5_
 
-- [ ] 9.5 Add the ref guard step to `deploy.yml`
+- [x] 9.5 Add the ref guard step to `deploy.yml`
   - Refuse a prod run whose ref is neither a `v*` tag nor `main`, naming the
     rejected ref; place it before `configure-aws-credentials` so it costs seconds
     and leaves AWS untouched

@@ -77,6 +77,44 @@ jobs:
         run: |
           echo "$API_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' \
             || { echo "version must look like v1.2.3, got '$API_VERSION'"; exit 1; }
+      # Defence in depth behind the prod Environment's deployment branch/tag
+      # policy (`tag:v*` + `branch:main`), which `bootstrap` configures and GitHub
+      # enforces outside the repository -- THAT is the boundary (Req 6.5). This
+      # step is explicitly NOT: `workflow_dispatch` runs the workflow definition
+      # from the *selected* ref, so this guard is editable on the very branch being
+      # dispatched. Its whole value is feedback -- naming the rejected ref in
+      # seconds instead of leaving the operator at a bare "branch not allowed to
+      # deploy" at the environment gate (Req 6.6 / ADR-0040 decision 4).
+      #
+      # Scoped to prod: "deploy this branch to dev" stays legitimate, which is the
+      # point of restricting prod alone, so a dev dispatch from a feature branch
+      # must not fail here.
+      #
+      # Placed before `configure-aws-credentials`: it needs nothing, and failing
+      # here costs seconds and leaves AWS untouched -- no role assumed.
+      - name: Check the deploying ref is one prod admits
+        if: ${{ env.STAGE == 'prod' }}
+        env:
+          # The same `<type>:<pattern>` entries, in the same spelling, as
+          # PROD_ALLOWED_REFS in src/tools/bdo_deploy/core/dispatch.py -- the list
+          # sent to the Environment policy. A structural test asserts the two
+          # lists are equal, so the two layers cannot disagree about what they
+          # admit. Matched as globs below, as GitHub matches the policy patterns.
+          ALLOWED_REFS: 'tag:v* branch:main'
+          # One expression covers both triggers: a tag push has
+          # `ref_type == 'tag'` with the tag in `ref_name`, and a dispatch reports
+          # whichever ref was selected.
+          REF: ${{ github.ref_type }}:${{ github.ref_name }}
+        run: |
+          for allowed in $ALLOWED_REFS; do
+            # Unquoted on purpose: $allowed is a glob, matching `tag:v*` against
+            # `tag:v1.2.3` exactly as the Environment policy pattern does.
+            case "$REF" in $allowed) exit 0 ;; esac
+          done
+          echo "prod admits only $ALLOWED_REFS, got '$REF'" >&2
+          echo "the prod Environment's deployment branch/tag policy is the real control;" >&2
+          echo "release from a v* tag on main (see ADR-0040)." >&2
+          exit 1
       # The one validation this workflow owns. ci.yml is still the authoritative
       # validation gate, but Actions cannot express a cross-workflow `needs`, so a
       # tag push starts this workflow without waiting on it. A tagged commit is on
