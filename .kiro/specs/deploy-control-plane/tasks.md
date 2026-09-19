@@ -478,7 +478,7 @@ on a changeset prompt nobody can see.
     time and have no static value
   - _Requirements: 2.2, 2.5_
 
-- [ ] 11.7 Generalise the samconfig reader to the whole parameter set
+- [x] 11.7 Generalise the samconfig reader to the whole parameter set
   - Widen `scripts/samconfig_regions.py` (the existing precedent) into a small
     generic reader exposing a stage's full `parameter_overrides` set — both the
     space-delimited string and the TOML-array forms it already handles — and emit
