@@ -346,7 +346,7 @@ defence-in-depth (ADR-0040, amended).
     and add a generator covering secret-shaped names for the refusal case
   - _Requirements: 3.7, 3.8_
 
-- [ ] 10.3 Move the prod ref check into a pre-gate job
+- [x] 10.3 Move the prod ref check into a pre-gate job
   - In `.github/workflows/deploy.yml`, hoist the ref guard out of the `deploy` job
     into a job declaring no `environment:`; have `deploy` declare `needs:` on it,
     so a disallowed ref is named before the approval wait

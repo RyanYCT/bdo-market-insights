@@ -53,45 +53,38 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  # A PRE-GATE job, deliberately declaring no `environment:`. The job boundary is
+  # load-bearing, not cosmetic: a job that references an Environment with required
+  # reviewers waits for approval before it starts and must satisfy the
+  # Environment's protection rules before running or reading its secrets, so this
+  # check could not run before the approval wait as a step inside `deploy`. Here it
+  # names a disallowed ref *before* the wait begins (Req 6.6 / ADR-0040 decision 4).
+  # Whether a failing pre-gate also short-circuits an approval request already in
+  # flight is not claimed.
+  #
+  # No `actions/checkout`: the body below matches two env values against each other
+  # and touches nothing in the workspace, so a checkout would only add seconds. It
+  # also has no `permissions` to grant -- no OIDC, no repository read.
+  check-prod-ref:
     runs-on: ubuntu-latest
-    # The GitHub Environment IS the gate (Req 6.3): prod carries required
-    # reviewers and the OIDC role ARN as an Environment secret, so the platform
-    # holds the deploy before any step runs. It follows the selected stage rather
-    # than being hardcoded, and every path into this job passes through it --
-    # there is no unprotected route to prod.
-    environment: ${{ github.event_name == 'push' && 'prod' || inputs.stage }}
-    permissions:
-      id-token: write # OIDC keyless deploy -- no static AWS credentials
-      contents: read
+    permissions: {}
     steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-        with:
-          sam: 'true'
-      # A dispatch from the Actions UI does not pass through the wizard's
-      # validation, so reject a malformed explicit version here -- before the
-      # deploy -- rather than shipping it as GET /v1/meta's api_version.
-      - name: Check the explicit version input
-        if: ${{ inputs.version != '' }}
-        run: |
-          echo "$API_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-            || { echo "version must look like v1.2.3, got '$API_VERSION'"; exit 1; }
       # Defence in depth behind the prod Environment's deployment branch/tag
       # policy (`tag:v*` + `branch:main`), which `bootstrap` configures and GitHub
       # enforces outside the repository -- THAT is the boundary (Req 6.5). This
-      # step is explicitly NOT: `workflow_dispatch` runs the workflow definition
+      # job is explicitly NOT: `workflow_dispatch` runs the workflow definition
       # from the *selected* ref, so this guard is editable on the very branch being
       # dispatched. Its whole value is feedback -- naming the rejected ref in
       # seconds instead of leaving the operator at a bare "branch not allowed to
-      # deploy" at the environment gate (Req 6.6 / ADR-0040 decision 4).
+      # deploy" at the environment gate.
       #
       # Scoped to prod: "deploy this branch to dev" stays legitimate, which is the
       # point of restricting prod alone, so a dev dispatch from a feature branch
-      # must not fail here.
-      #
-      # Placed before `configure-aws-credentials`: it needs nothing, and failing
-      # here costs seconds and leaves AWS untouched -- no role assumed.
+      # must not fail here. The condition sits on the STEP rather than on the job:
+      # the `env` context is not available in `jobs.<job_id>.if`, and a job-level
+      # condition would make this job *skip* on dev, which by default skips every
+      # job that `needs:` it -- blocking the dev deploy. A job that always runs and
+      # no-ops on dev keeps `deploy`'s `needs:` satisfied for both stages.
       - name: Check the deploying ref is one prod admits
         if: ${{ env.STAGE == 'prod' }}
         env:
@@ -115,6 +108,36 @@ jobs:
           echo "the prod Environment's deployment branch/tag policy is the real control;" >&2
           echo "release from a v* tag on main (see ADR-0040)." >&2
           exit 1
+
+  deploy:
+    runs-on: ubuntu-latest
+    # The ref pre-gate runs to completion first, so a ref prod does not admit is
+    # named before this job's approval wait rather than after it. On dev the
+    # pre-gate's single step no-ops and the job still succeeds, so this `needs:`
+    # never blocks a dev deploy.
+    needs: check-prod-ref
+    # The GitHub Environment IS the gate (Req 6.3): prod carries required
+    # reviewers and the OIDC role ARN as an Environment secret, so the platform
+    # holds the deploy before any step runs. It follows the selected stage rather
+    # than being hardcoded, and every path into this job passes through it --
+    # there is no unprotected route to prod.
+    environment: ${{ github.event_name == 'push' && 'prod' || inputs.stage }}
+    permissions:
+      id-token: write # OIDC keyless deploy -- no static AWS credentials
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          sam: 'true'
+      # A dispatch from the Actions UI does not pass through the wizard's
+      # validation, so reject a malformed explicit version here -- before the
+      # deploy -- rather than shipping it as GET /v1/meta's api_version.
+      - name: Check the explicit version input
+        if: ${{ inputs.version != '' }}
+        run: |
+          echo "$API_VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "version must look like v1.2.3, got '$API_VERSION'"; exit 1; }
       # The one validation this workflow owns. ci.yml is still the authoritative
       # validation gate, but Actions cannot express a cross-workflow `needs`, so a
       # tag push starts this workflow without waiting on it. A tagged commit is on
