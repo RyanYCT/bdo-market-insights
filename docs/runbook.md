@@ -1136,10 +1136,12 @@ cost. Activation is a gated, explicit step (readiness is delivered without it).
 
 #### Steps (activate)
 1. Add the region to `BdoRegions` for the stage in `samconfig.toml` (the single
-   source of truth — do not hardcode it in `deploy.yml` or the Makefile).
-   ```toml
-   # [prod.deploy.parameters]
-   parameter_overrides = "Stage=prod BdoRegions=tw,na UseRdsProxy=false"
+   source of truth — do not hardcode it in `deploy.yml` or the Makefile). Edit
+   only the `BdoRegions=` entry inside that stage's `parameter_overrides`; the
+   rest of the set (`AutoMigrate`, the SSM key paths, …) stays as committed.
+   ```text
+   # [prod.deploy.parameters].parameter_overrides
+   BdoRegions=tw   ->   BdoRegions=tw,na
    ```
    Or let the control plane open that PR for you:
    ```sh
@@ -1185,9 +1187,9 @@ curl -s -H "x-api-key: <KEY>" \
   ~$2/region.
 
 #### Rollback (deactivate)
-```toml
-# [prod.deploy.parameters] — drop the region
-parameter_overrides = "Stage=prod BdoRegions=tw UseRdsProxy=false"
+```text
+# [prod.deploy.parameters].parameter_overrides — drop the region
+BdoRegions=tw,na   ->   BdoRegions=tw
 ```
 ```sh
 make deploy STAGE=prod

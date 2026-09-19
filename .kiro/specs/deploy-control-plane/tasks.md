@@ -468,7 +468,7 @@ on a changeset prompt nobody can see.
     populations are covered
   - _Requirements: 3.7, 3.8_
 
-- [ ] 11.6 Move the full static parameter set into `samconfig.toml`
+- [x] 11.6 Move the full static parameter set into `samconfig.toml`
   - Extend `[dev.deploy.parameters]` and `[prod.deploy.parameters]`
     `parameter_overrides` with every static parameter `template.yaml` declares and
     the full-state callers pass — `AutoMigrate`, `AutoBootstrap`, `EnableDemoKey`,

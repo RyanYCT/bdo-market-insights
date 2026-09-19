@@ -1191,7 +1191,15 @@ class TestReadMerged:
         assert isinstance(view.ssm[SSM_DSN], SecretStr)
         assert isinstance(view.ssm[SSM_TOKEN], SecretStr)
         assert view.ssm[SSM_DOMAIN] == "api.example.test"
-        assert sorted(view.masked) == sorted([SSM_DSN, SSM_TOKEN])
+        # Scoped to the SSM half (paths), because the samconfig half now
+        # contributes a mask of its own: task 11.6 moved `EnableDemoKey` into both
+        # stages' parameter set, and its *name* contains "key", so Requirement
+        # 3.2's name predicate masks it. A known false positive -- the value is a
+        # public SSM key path, not a secret -- but masking it is what 3.2 says.
+        assert sorted(name for name in view.masked if name.startswith("/")) == sorted(
+            [SSM_DSN, SSM_TOKEN]
+        )
+        assert "EnableDemoKey" in view.masked
 
     def test_a_serialized_view_leaks_neither_plaintext(self, ssm: Any, samconfig: Path) -> None:
         # The mask is in the model, so --json cannot print the value either.
@@ -1415,10 +1423,13 @@ class TestOpenConfigPr:
         _store(runner=runner, samconfig_path=samconfig).open_config_pr("dev", [_regions_change()])
 
         after = samconfig.read_text(encoding="utf-8")
-        assert 'parameter_overrides = "Stage=dev BdoRegions=na,eu UseRdsProxy=false"' in after
+        # Edited in place inside the string, with the rest of the stage's set --
+        # which task 11.6 grew to the full static parameter set -- intact and in
+        # its original order.
+        assert "Stage=dev BdoRegions=na,eu UseRdsProxy=false AutoMigrate=true" in after
         # Not added as a sibling entry, and the other stage is untouched.
         assert "\nBdoRegions" not in after
-        assert 'parameter_overrides = "Stage=prod BdoRegions=tw UseRdsProxy=false"' in after
+        assert "Stage=prod BdoRegions=tw UseRdsProxy=false AutoMigrate=true" in after
 
     def test_the_recorded_git_and_gh_sequence(self, samconfig: Path) -> None:
         runner = _pr_runner(samconfig)
@@ -1807,7 +1818,11 @@ class TestSsmPayloadTolerance:
         )
         view = _store(client=client, samconfig_path=samconfig).read_merged("dev")
         assert view.ssm[SSM_DOMAIN] == "api.example.test"
-        assert view.masked == [], "a plain name and no stated type is not a masked value"
+        # The SSM half only: the samconfig half masks `EnableDemoKey` by name
+        # (Requirement 3.2), independently of any SSM payload.
+        assert [name for name in view.masked if name.startswith("/")] == [], (
+            "a plain name and no stated type is not a masked value"
+        )
 
     def test_a_secret_shaped_name_is_masked_even_with_no_stated_type(
         self, samconfig: Path
