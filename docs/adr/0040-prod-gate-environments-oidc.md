@@ -3,6 +3,8 @@
 ## Status
 
 Accepted. Implements Requirement 6.3 of `.kiro/specs/deploy-control-plane/`.
+Amended by decision 4 below, which closes the arbitrary-ref exposure this ADR
+originally accepted as a consequence (Requirements 6.5–6.7 of the same spec).
 
 ## Context
 
@@ -66,6 +68,32 @@ the target stage. That is a second *call site* of one authoritative script,
 which is the sharing ADR-0038 asks for, not the copy-pasted step logic it
 forbids.
 
+**4. Which refs may deploy prod is itself platform-enforced, with an
+in-workflow guard for legibility only.** This amends the consequence below that
+accepted `workflow_dispatch`'s arbitrary ref.
+
+The `prod` Environment carries a **deployment branch/tag policy** admitting only
+tags matching `v*` and the `main` branch, configured by the `bootstrap`
+capability when it creates or updates the Environment (`deployment_branch_policy`
+with `custom_branch_policies: true`, then one policy per pattern). That is **the
+boundary**, for the same reason the reviewer gate is: GitHub enforces it outside
+the repository, so no commit, branch edit or force-push can remove it — the
+property the rejected `in_ci` check could never have.
+
+`deploy.yml` additionally refuses a prod run whose ref is neither a `v*` tag nor
+`main`, failing in seconds with the ref named. This is **defence in depth, not
+the boundary**, and the distinction is load-bearing: `workflow_dispatch`
+executes the workflow definition *from the selected ref*, so a guard written
+inside `deploy.yml` can be edited away on the very branch being dispatched. Its
+whole value is feedback — a clear message instead of leaving the operator at a
+bare "branch not allowed to deploy" at the environment gate. Nothing about
+safety rests on it.
+
+Stated as a guarantee rather than left accidental: the control plane passes **no
+`--ref`** to `gh workflow run`, so its dispatches run the repository's default
+branch. The exposure was only ever the Actions UI or a hand-typed
+`--ref <branch>`; both are now held by the Environment policy.
+
 Two alternatives were weighed and rejected:
 
 - **Give `ci.yml` a `workflow_call` trigger and have `deploy.yml` `needs` it.**
@@ -92,11 +120,18 @@ Two alternatives were weighed and rejected:
   bypass of branch protection, or a squash-merge commit whose own `push: main`
   run has not finished — can begin deploying before validation completes. For
   prod the reviewer gate is the human backstop; **dev has none**.
-- (−) `workflow_dispatch` accepts an arbitrary ref, so "deploy this branch to
-  dev" is expressible, not an accident of configuration. Prod still requires
-  reviewers whatever ref is dispatched.
-- (−) The reviewer gate lives in repository settings, outside the repo, so it
-  is **not captured in IaC** and must be verified in the GitHub UI (or set via
+- (+) `workflow_dispatch` no longer accepts an arbitrary ref for prod: the
+  Environment's branch/tag policy admits only `v*` tags and `main`, enforced by
+  GitHub outside the repository, with the in-workflow guard giving fast, legible
+  feedback in front of it. "Deploy this branch to dev" stays expressible, which
+  is the point of having the policy on `prod` alone.
+- (−) The in-workflow guard is editable on the ref being dispatched, so it must
+  never be read as the control; the Environment policy is. A reviewer tempted to
+  "simplify" by dropping the policy and keeping the guard would be removing the
+  only enforcement.
+- (−) The reviewer gate and the branch/tag policy live in repository settings,
+  outside the repo, so they are **not captured in IaC** and must be verified in
+  the GitHub UI (or set via
   the `bootstrap` capability). A repo restored from source alone would have no
   gate until it is bootstrapped — the one place this decision trades
   "everything in IaC" for "enforced outside the code".

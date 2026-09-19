@@ -157,6 +157,9 @@ CI/CD workflows).
 2. THE Wizard SHALL reach production only by dispatching an environment-protected GitHub Actions job through the GitHubExecutor.
 3. THE production GitHub Actions job SHALL run inside a GitHub Environment configured with required reviewers and OIDC keyless deploy (no static AWS credentials).
 4. WHEN the bootstrap helper creates or updates the production GitHub Environment, THE Wizard SHALL configure its required reviewers as part of that step.
+5. WHEN the bootstrap helper creates or updates the production GitHub Environment, THE Wizard SHALL configure a deployment branch and tag policy on that Environment admitting only tags matching `v*` and the `main` branch, so that GitHub refuses a production deploy from any other ref from outside the repository.
+6. IF a production deploy run is triggered for a ref that is neither a tag matching `v*` nor the `main` branch, THEN THE deploy workflow SHALL fail the run before assuming any AWS credential and SHALL name the rejected ref, as defence in depth behind the Environment policy of criterion 5 rather than as the boundary itself.
+7. THE GitHubExecutor SHALL dispatch `deploy.yml` without a `--ref` argument, so that a dispatch from the Wizard always runs the repository's default branch.
 
 ### Requirement 7: Release capability
 
@@ -180,7 +183,7 @@ CI/CD workflows).
 1. THE deploy workflow SHALL be a dedicated `.github/workflows/deploy.yml`, triggered on `push` of tags matching `v*` and on `workflow_dispatch` with the typed inputs `stage` and `version`, running environment-gated deploy jobs with OIDC keyless deploy.
 2. THE validation workflow `.github/workflows/ci.yml` SHALL remain the branch-protection gate and SHALL preserve its existing validation behaviour — the same checks, triggers, and pass or fail outcomes — while its shared setup steps are replaced by the reusable composite action of criterion 4.
 3. THE GitHubExecutor SHALL target `deploy.yml` (`gh workflow run deploy.yml -f stage=... -f version=...`), and the `deploy.yml` `workflow_dispatch` typed inputs SHALL be a superset of the inputs the wizard sends, so that the GitHub Actions UI and the wizard dispatch the identical deploy job with identical inputs.
-4. THE shared setup steps (checkout, Python setup, `uv sync`) SHALL be factored into a reusable composite action under `.github/actions/setup/` used by the workflows, so that the workflows cannot drift (ADR-0038).
+4. THE shared setup steps (Python setup, `uv` installation, `uv sync`) SHALL be factored into a reusable composite action under `.github/actions/setup/` used by the workflows, so that the workflows cannot drift (ADR-0038); checkout necessarily precedes the composite action — a local action resolves only from the caller's already-checked-out workspace — and carries no configuration, so it stays a step in each calling job and is not a drift risk.
 5. WHERE a new check has neither a distinct trigger nor a distinct permission scope, THE check SHALL be added as a job in `ci.yml` rather than as a new workflow file (ADR-0038).
 
 ### Requirement 9: Naming, config-authority, and dependency constraints

@@ -135,6 +135,19 @@ GitHub
 deploys are gated by the *platform* (environment protection + OIDC trust), not by
 application code — the control plane structurally cannot run a prod `sam deploy`.
 
+**Which refs may deploy prod, in two layers.** The `prod` Environment carries a
+**deployment branch/tag policy** (`tag:v*` + `branch:main`), configured by
+`bootstrap` and enforced by GitHub outside the repository, so no commit or branch
+edit can remove it — that is the boundary (Requirement 6.5). `deploy.yml`
+additionally **refuses a prod run whose ref is neither a `v*` tag nor `main`** in
+a guard step placed before `configure-aws-credentials`, so a wrong ref fails in
+seconds with the ref named rather than stalling at a bare "branch not allowed to
+deploy" at the environment gate (Requirement 6.6). That guard is
+defence-in-depth, explicitly **not** the boundary: `workflow_dispatch` runs the
+workflow definition from the selected ref, so a guard written here is editable on
+the very branch being dispatched. The control plane sends no `--ref`, so a wizard
+dispatch always runs the default branch (Requirement 6.7). Rationale: ADR-0040.
+
 **Shared setup, factored once.** The checkout → `setup-python` → `uv sync`
 sequence common to `ci.yml` and `deploy.yml` is factored into a **reusable
 composite action under `.github/actions/setup/`** consumed by both workflows, so
@@ -335,9 +348,17 @@ class GitHubExecutor(Protocol):
     def view(self, run: RunRef) -> RunStatus: ...         # gh run view / gh api
     # --- repository / environment administration (bootstrap only) ---
     def set_environment(self, *, name: str,
-                        reviewers: list[str] | None = None) -> CommandResult:
+                        reviewers: list[str] | None = None,
+                        allowed_refs: list[str] | None = None) -> CommandResult:
         """Create or update a GitHub Environment (e.g. `prod` with required
-        reviewers). gh api repos/{owner}/{repo}/environments/{name}."""
+        reviewers). gh api repos/{owner}/{repo}/environments/{name}.
+        `allowed_refs` sets the deployment branch/tag policy — entries spelled
+        `branch:main` / `tag:v*`, as `reviewers` entries are `<Type>:<id>` — sent
+        as `deployment_branch_policy.custom_branch_policies: true` on the
+        environment plus one `deployment-branch-policies` entry per pattern
+        (`type: branch` or `type: tag`). For `prod` that is `tag:v*` + `branch:main`
+        (Requirement 6.5); it is the boundary that closes arbitrary-ref dispatch,
+        enforced by GitHub outside the repository (ADR-0040)."""
     def set_environment_secret(self, *, environment: str, name: str,
                                value: str) -> CommandResult:
         """Set an Environment secret (e.g. AWS_DEPLOY_ROLE_ARN).
@@ -396,7 +417,7 @@ class ConfigStore(Protocol):
 | Capability | Executor(s) | Behaviour |
 |---|---|---|
 | **config** | ConfigStore | `config show` renders the merged view (samconfig + SSM). `config set` opens a PR (tracked files) or writes SSM with audit. Also covers deploy-time configuration/parameters (e.g. `BdoRegions`) → changed in `samconfig.toml` via PR. |
-| **bootstrap** | SamExecutor + GitHubExecutor | One-time, clearly labelled: `SamExecutor` wraps `sam pipeline bootstrap` (standard AWS CI/CD bootstrap — OIDC deploy role + artifact bucket); `GitHubExecutor` creates/updates the GitHub Environments (`github.environment_set`) **together with their required reviewers** and sets the Environment secrets (`github.secret_set`). A `prod` bootstrap carrying no required reviewer is refused, so prod cannot be bootstrapped into an unprotected state. GitHub administration is **not** a `ConfigStore` concern — `ConfigStore` stays strictly config-as-data over `samconfig.toml` + SSM. |
+| **bootstrap** | SamExecutor + GitHubExecutor | One-time, clearly labelled: `SamExecutor` wraps `sam pipeline bootstrap` (standard AWS CI/CD bootstrap — OIDC deploy role + artifact bucket); `GitHubExecutor` creates/updates the GitHub Environments (`github.environment_set`) **together with their required reviewers and their deployment branch/tag policy** (`prod`: `tag:v*` + `branch:main`, Requirement 6.5) and sets the Environment secrets (`github.secret_set`). A `prod` bootstrap carrying no required reviewer is refused, so prod cannot be bootstrapped into an unprotected state. GitHub administration is **not** a `ConfigStore` concern — `ConfigStore` stays strictly config-as-data over `samconfig.toml` + SSM. |
 | **deploy** | SamExecutor (LOCAL) / GitHubExecutor (CI) | dev/personal → `sam deploy --config-env dev` or `sam sync`. shared/prod → trigger the CI job. A fresh environment reaches target state via a single declarative deploy — the stack self-bootstraps (auto-migrate custom resource, ADR-0025; bootstrap orchestrator auto-run, ADR-0028). No imperative multi-step orchestration. |
 | **release** | GitExecutor / GitHubExecutor | `git tag` push (`deploy.yml` `push: tags: v*`) or `gh workflow run deploy.yml` (manual `workflow_dispatch`, a `run`/`dispatch` alias). Production is initiated **only by the sanctioned pipeline triggers** — a pushed release tag, or an authorised `workflow_dispatch` of `deploy.yml` (whether dispatched by the control plane or from the GitHub Actions UI). No LOCAL path initiates a production deploy. |
 | **flag** *(planned — deferred, not built in this spec)* | ConfigStore + DynamoDB (planned) | Flip a runtime feature flag without a redeploy. Flag values are stored in a DynamoDB table and read in Lambdas via the Powertools feature-flags provider (a custom `StoreProvider`), or the Powertools parameters `DynamoDBProvider` for plain booleans. Reachable from in-VPC Lambdas through the existing free DynamoDB Gateway endpoint. |

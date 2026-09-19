@@ -275,6 +275,59 @@ completeness — AGENTS.md). Each cites the requirement(s) it defends.
   - Verifies every stated invariant holds end-to-end across the four capabilities
   - _Requirements: 1.5, 3.3, 3.4, 3.6, 6.1, 6.2, 8.3, 10.5_
 
+### Phase 9 — Dispatch-ref hardening
+
+Closes the arbitrary-ref dispatch hole in two layers: the GitHub Environment
+deployment branch/tag policy is the boundary; the `deploy.yml` guard is
+defence-in-depth (ADR-0040, amended).
+
+- [ ] 9.1 Extend `GitHubExecutor.set_environment` with a deployment branch/tag policy
+  - Add `allowed_refs: list[str] | None = None` (entries `branch:main` / `tag:v*`,
+    mirroring the `<Type>:<id>` spelling `reviewers` already uses); `None` leaves
+    an existing policy untouched, as an absent `reviewers` does
+  - Send `deployment_branch_policy` with `custom_branch_policies: true` on the
+    environment, then one `deployment-branch-policies` entry per pattern with
+    `type: branch` or `type: tag`
+  - Read the list out of `step.params` in `run_step`; no secret enters argv
+  - _Requirements: 6.5_
+
+- [ ] 9.2 Plan the policy in the bootstrap planner
+  - Have the `github.environment_set` step for `prod` carry `allowed_refs` of
+    `tag:v*` + `branch:main` in `params`, and name the admitted refs in the
+    step description and in `Plan.effects` (a ref pattern is not secret, so
+    masking is unchanged)
+  - _Requirements: 4.1, 6.5_
+
+- [ ]* 9.3 Executor tests for the policy
+  - Assert the `gh api` argv and the JSON body for the environment and for each
+    per-pattern policy entry; assert an absent `allowed_refs` sends no policy
+  - _Requirements: 6.5_
+
+- [ ]* 9.4 Planner tests for the policy
+  - Assert the planned `params` and `effects` for a `prod` bootstrap, and that a
+    non-prod bootstrap plans no policy
+  - _Requirements: 4.1, 6.5_
+
+- [ ] 9.5 Add the ref guard step to `deploy.yml`
+  - Refuse a prod run whose ref is neither a `v*` tag nor `main`, naming the
+    rejected ref; place it before `configure-aws-credentials` so it costs seconds
+    and leaves AWS untouched
+  - Comment it as defence-in-depth behind the Environment policy, not the
+    boundary — it is editable on the dispatched ref
+  - _Requirements: 6.6_
+
+- [ ]* 9.6 Structural test for the guard and the dispatch ref
+  - Parse `deploy.yml` and assert the guard step exists, precedes the
+    credential step, and covers the `v*`-tag / `main` cases
+  - Assert `run_workflow`'s argv carries no `--ref`, so a dispatch runs the
+    default branch
+  - _Requirements: 6.6, 6.7_
+
+- [ ] 9.7 Checkpoint — Ensure `ruff` / `mypy` / `pytest` pass and the workflow parses; ask the user if questions arise.
+  - Verifies both layers: the platform-enforced Environment policy and the
+    in-workflow guard, with the control plane dispatching no explicit ref
+  - _Requirements: 6.5, 6.6, 6.7_
+
 ## Task Dependency Graph
 
 ```json
@@ -298,7 +351,10 @@ completeness — AGENTS.md). Each cites the requirement(s) it defends.
     { "id": 15, "tasks": ["6.1"] },
     { "id": 16, "tasks": ["6.2", "6.3"] },
     { "id": 17, "tasks": ["7.1", "7.2", "7.3"] },
-    { "id": 18, "tasks": ["8.1", "8.2", "8.3", "8.4", "8.5"] }
+    { "id": 18, "tasks": ["8.1", "8.2", "8.3", "8.4", "8.5"] },
+    { "id": 19, "tasks": ["9.1"] },
+    { "id": 20, "tasks": ["9.2", "9.5"] },
+    { "id": 21, "tasks": ["9.3", "9.4", "9.6"] }
   ]
 }
 ```
