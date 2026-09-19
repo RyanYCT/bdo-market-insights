@@ -414,6 +414,118 @@ defence-in-depth (ADR-0040, amended).
     `gh api` PR path, and the three corrections
   - _Requirements: 1.4, 1.5, 3.3, 3.7, 3.8, 6.6, 10.2_
 
+### Phase 11 — Deploy-path corrections
+
+Four verified gaps between what the design claims and what a control-plane deploy
+actually does: the runner's combined streams break the `gh --json` boundary; the
+secret-shaped refusal fires on existing samconfig keys; `samconfig.toml` does not
+in fact carry the parameter set the design says it owns; and a local deploy waits
+on a changeset prompt nobody can see.
+
+- [ ] 11.1 Split stdout from stderr in the shared runner
+  - In `core/executors/_process.py`, stop joining the two streams into one value:
+    add `CommandResult.stdout` carrying stdout alone and keep `output` as the
+    verbatim stdout+stderr text an operator sees on failure (Requirement 10.2 is
+    unchanged — a failing tool's own output is still surfaced whole)
+  - Populate both on the success, non-zero, and `TimeoutExpired` paths; the
+    missing-executable path has no tool output and sets `stdout` empty
+  - _Requirements: 10.2_
+
+- [ ] 11.2 Read the `gh --json` payload from stdout only
+  - In `core/executors/github.py`, have `_viewed_run` / `_listed_runs` validate
+    `CommandResult.stdout` instead of the combined `output`, so a `gh` warning on
+    stderr no longer makes a well-formed payload unreadable and no longer turns a
+    passing run into a reported failure through `presentation.follow_run`
+  - Keep the tolerance and the docstrings' claim honest: an unreadable payload is
+    still `ok=False` carrying `gh`'s own output (both streams), never a guessed
+    status
+  - _Requirements: 7.6, 10.2, 10.6_
+
+- [ ]* 11.3 Tests for the stream split and the `gh` boundary
+  - Runner: assert `stdout` excludes stderr while `output` contains both, verbatim
+    and in terminal order, across success / failure / timeout
+  - Boundary: a `gh run view --json` payload preceded by a stderr warning line
+    validates and reports the run's real conclusion; a genuinely malformed payload
+    still yields `ok=False` with the tool's output surfaced and no status invented
+  - Regression: a *passing* run followed via `follow_run` stays passing when `gh`
+    writes a warning
+  - _Requirements: 7.6, 10.2, 10.6_
+
+- [ ] 11.4 Allowlist existing samconfig keys in the secret-shaped refusal
+  - In `core/dispatch.py::_plan_config_set`, exempt a key already present in the
+    target stage's `samconfig.toml` parameter set from the `SECRET_NAME_SUBSTRINGS`
+    refusal: an already-committed key is already public, so refusing to change it
+    protects nothing, while a key *not* already there is still refused (exit `2`,
+    no PR, operator directed to a Repo_Scoped_SSM_Path)
+  - Read the allowlist from the stage's samconfig parameter set via the cached
+    read validation already performs; add no new I/O and keep planning pure
+  - _Requirements: 3.7, 3.8_
+
+- [ ]* 11.5 Tests for the allowlist
+  - `IconKeyPrefix` (present in the stage's set) is planned as a PR; an absent
+    secret-shaped key is refused with exit `2`, no PR, and its value absent from
+    `command` / `effects` / PR title; extend the property generators so both
+    populations are covered
+  - _Requirements: 3.7, 3.8_
+
+- [ ] 11.6 Move the full static parameter set into `samconfig.toml`
+  - Extend `[dev.deploy.parameters]` and `[prod.deploy.parameters]`
+    `parameter_overrides` with every static parameter `template.yaml` declares and
+    the full-state callers pass — `AutoMigrate`, `AutoBootstrap`, `EnableDemoKey`,
+    `ApiDomainName`, `IconDomainName`, `HostedZoneId` (SSM key paths, not values,
+    ADR-0024) — so `sam deploy --config-env <stage>` converges the same state
+  - `ApiVersion` and `MigrationsFingerprint` stay out: both are derived at deploy
+    time and have no static value
+  - _Requirements: 2.2, 2.5_
+
+- [ ] 11.7 Generalise the samconfig reader to the whole parameter set
+  - Widen `scripts/samconfig_regions.py` (the existing precedent) into a small
+    generic reader exposing a stage's full `parameter_overrides` set — both the
+    space-delimited string and the TOML-array forms it already handles — and emit
+    it as a `Key=Value` string; keep `regions_for_stage` working for
+    `scripts/validate_regions.py`
+  - _Requirements: 2.5_
+
+- [ ] 11.8 Compose the full-state override string from samconfig
+  - `Makefile`: build `DEPLOY_PARAMS` by reading the stage's set through the
+    reader and appending only `ApiVersion` and `MigrationsFingerprint`, instead of
+    restating the static parameters inline; keep `confirm_changeset = true`
+    behaviour for `make deploy`
+  - `.github/workflows/deploy.yml`: compose its `--parameter-overrides` the same
+    way, replacing the inline restatement
+  - Record why composition is required rather than merging: a CLI
+    `--parameter-overrides` replaces samconfig's list wholesale
+  - _Requirements: 2.5, 8.1_
+
+- [ ]* 11.9 Tests for the composed parameter set
+  - Reader unit tests over both `parameter_overrides` spellings and a missing
+    stage; assert every `template.yaml` parameter is either in the stage's
+    samconfig set or one of the two derived values, so a newly-declared parameter
+    cannot silently fall back to a template default
+  - _Requirements: 2.2, 2.5_
+
+- [ ] 11.10 Pass `--no-confirm-changeset` from `SamExecutor.deploy`
+  - In `core/executors/sam.py`, add the flag to the `sam deploy` argv so a local
+    control-plane deploy does not block on a prompt hidden behind captured output
+    until the 1800 s timeout; the plan-then-`--yes` gate is the confirmation
+  - Update the planned `PlanStep.command` rendering for `sam.deploy` to match, so
+    the preview stays faithful to what runs
+  - _Requirements: 5.1, 5.5_
+
+- [ ]* 11.11 Executor and plan tests for the flag
+  - Assert the recorded `sam deploy` argv carries `--config-env <stage>` and
+    `--no-confirm-changeset` and still composes no `--parameter-overrides`; assert
+    the rendered plan line matches the argv
+  - _Requirements: 2.2, 5.1, 5.5_
+
+- [ ] 11.12 Checkpoint — Ensure `ruff` / `mypy` / `pytest` pass, `deploy.yml`
+      parses, and a dev deploy plan renders the full samconfig set; ask the user
+      if questions arise.
+  - Verifies the four corrections: the stream split at the `gh` boundary, the
+    samconfig allowlist, samconfig as the single source of the static parameter
+    set with two derived exceptions, and the non-interactive local deploy
+  - _Requirements: 2.2, 2.5, 3.7, 3.8, 5.1, 5.5, 7.6, 8.1, 10.2, 10.6_
+
 ## Task Dependency Graph
 
 ```json
@@ -443,7 +555,11 @@ defence-in-depth (ADR-0040, amended).
     { "id": 21, "tasks": ["9.3", "9.4", "9.6"] },
     { "id": 22, "tasks": ["10.1", "10.3", "10.5", "10.6"] },
     { "id": 23, "tasks": ["10.2", "10.4", "10.8", "10.10"] },
-    { "id": 24, "tasks": ["10.7", "10.9", "10.11"] }
+    { "id": 24, "tasks": ["10.7", "10.9", "10.11"] },
+    { "id": 25, "tasks": ["11.1", "11.4", "11.6", "11.10"] },
+    { "id": 26, "tasks": ["11.2", "11.5", "11.7", "11.11"] },
+    { "id": 27, "tasks": ["11.3", "11.8"] },
+    { "id": 28, "tasks": ["11.9"] }
   ]
 }
 ```
@@ -461,6 +577,9 @@ defence-in-depth (ADR-0040, amended).
   Actions workflows (`deploy.yml`, refactored `ci.yml`) and the shared composite
   action.
 - Tasks marked `*` are optional test sub-tasks and can be skipped for a faster MVP.
+- Once Phase 11 lands, `docs/runbook.md`'s *Control plane vs Makefile* caveats
+  need revisiting: the "no full parameter set" row and the changeset-prompt note
+  document gaps Phase 11 closes, leaving only the layer guard and `make verify`.
 - Each task — checkpoints included — references the specific requirements it
   satisfies or verifies; property tests also cite the design property they implement.
 - The wizard dispatches only — no deploy logic is reimplemented and no `scripts/`

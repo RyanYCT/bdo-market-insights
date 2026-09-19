@@ -299,6 +299,19 @@ native way: `sam`, `git` and `gh` steps shell out to those CLIs, while
 `ConfigStore` uses boto3 for SSM as already specified. The typed `params` are what
 make that possible — a step is not a shell string to be re-interpreted.
 
+**The shared runner (`core/executors/_process.py`) captures the two streams
+separately.** `run_command` previously joined stdout and stderr into one
+`CommandResult.output`, which made any `gh` warning on stderr part of the string
+the `gh --json` boundary tried to validate — so a warning turned a *passing* run
+into a reported failure once `follow_run()` folded the unreadable status in.
+The seam therefore sits in the runner, not at each call site: `CommandResult`
+carries **`stdout`** (that stream alone, for callers parsing a machine-readable
+payload) alongside **`output`** (the verbatim stdout+stderr text an operator
+sees, unchanged, so a failing tool's own output is still surfaced whole —
+Requirement 10.2). Splitting once here is what keeps the two concerns from
+being traded off against each other; the tolerance is untouched, so an
+unreadable payload is still `ok=False` with nothing invented.
+
 **Why both fields.** Routing is decided exactly once, in `plan()`, and the same
 `PlanStep` value is consumed both for display and for execution. The previewed
 plan therefore cannot drift from what actually runs, which is what keeps
@@ -315,10 +328,62 @@ class SamExecutor(Protocol):
     def validate(self) -> CommandResult: ...              # sam validate --lint
     def build(self) -> CommandResult: ...                 # sam build
     def deploy(self, config_env: str) -> CommandResult:
-        """sam deploy --config-env <env>. Refuses config_env == 'prod'."""
+        """sam deploy --config-env <env> --no-confirm-changeset.
+        Refuses config_env == 'prod'."""
     def sync(self, config_env: str) -> CommandResult:     # sam sync (dev fast-loop)
         ...
 ```
+
+**Deploy-parameter authority: `samconfig.toml` carries the full *static* set
+(Requirement 2.5).** As configured before Phase 11 the claim above was false:
+`[dev.deploy.parameters]` / `[prod.deploy.parameters]` declared only
+`Stage`/`BdoRegions`/`UseRdsProxy`, while `template.yaml` also declares
+`AutoMigrate`, `AutoBootstrap`, `MigrationsFingerprint`, `ApiVersion`,
+`EnableDemoKey`, `ApiDomainName`, `IconDomainName` and `HostedZoneId` — which
+`make deploy` and `deploy.yml` pass explicitly. A `bdo-deploy deploy --stage dev`,
+which passes no `--parameter-overrides`, therefore silently took template
+defaults for all of them. The correction moves every static parameter into each
+stage's samconfig set, so a control-plane deploy converges the same state.
+
+**Exactly two parameters remain caller-supplied**, because they are *derived at
+deploy time* and have no static value to record: `MigrationsFingerprint` (a
+content hash of `migrations/versions/`, which re-triggers the auto-migrate
+resource, ADR-0025) and `ApiVersion` (the release tag, ADR-0037).
+
+**A CLI `--parameter-overrides` replaces samconfig's list rather than merging
+with it**, so a caller supplying those two must supply the whole set. Verified
+three ways: (1) the SAM CLI loads samconfig values into click's
+`ctx.default_map` (`samcli/cli/cli_config_file.py`), and click consults a default
+only when the option is *absent* from argv — so a supplied option replaces the
+whole value, not per-key; (2) the SAM CLI design doc states a command-line
+parameter overrides one specified in the configuration file
+([sam-config.md](https://github.com/aws/aws-sam-cli/blob/develop/designs/sam-config.md));
+(3) upstream [aws-sam-cli#2380](https://github.com/aws/aws-sam-cli/issues/2380)
+reports exactly this — samconfig entries are dropped when
+`--parameter-overrides` is given — and is still open. The repo already recorded
+it too, in the `DEPLOY_PARAMS` comment and in `scripts/samconfig_regions.py`.
+
+Given that, samconfig is the **single source** of the static set and the two
+full-state callers **compose** their override string from it: `make deploy` and
+`.github/workflows/deploy.yml` read the stage's samconfig set and append the two
+derived values, instead of restating the static ones. `scripts/samconfig_regions.py`
+already reads samconfig for `BdoRegions`, so generalising it into a small reader
+that emits the whole set is the established precedent rather than a new
+mechanism. *Content was rephrased for compliance with licensing restrictions.*
+
+**`deploy` passes `--no-confirm-changeset` (Requirement 5.5).** `samconfig.toml`
+sets `confirm_changeset = true` for both stages and the runner captures executor
+output, so a local control-plane deploy waited on a prompt the operator could not
+see until the 1800 s timeout. The control plane's own plan-then-`--yes` gate *is*
+the confirmation (Requirement 10.4), so SAM's second prompt is redundant — and a
+prompt behind captured output is worse than redundant. `deploy.yml` already passes
+the flag; `make deploy` keeps `confirm_changeset = true`, so its interactive
+behaviour is unchanged.
+
+**Runbook follow-up.** `docs/runbook.md`'s *Control plane vs Makefile* section
+documents both gaps as caveats — "No full parameter set and no verify" and the
+changeset-prompt note. Both need revisiting once Phase 11 lands; only the
+`make verify` and layer-guard differences survive.
 
 ### GitHubExecutor (`core/executors/github.py`)
 
@@ -384,9 +449,13 @@ plan describes.
 --json` / `gh run list --json` responses are an I/O boundary, so they are
 validated with `model_validate` against a small Pydantic model of a `gh` run
 rather than hand-parsed with `dict.get` + `isinstance` (repo standard, AGENTS.md).
-The **tolerant semantics are preserved**: a payload that fails validation is
-reported as `ok=False` carrying `gh`'s own output, never as a guessed status — an
-unreadable status is not a passing status.
+The payload is validated against **`CommandResult.stdout`** — the stream `gh`
+writes JSON to — not against the stdout+stderr join, so a `gh` warning on stderr
+no longer makes a well-formed payload unreadable and no longer reports a passing
+run as failed (see the runner note under *Execution seam*). The **tolerant
+semantics are preserved**: a payload that fails validation is reported as
+`ok=False` carrying `gh`'s own output (`output`, both streams), never as a guessed
+status — an unreadable status is not a passing status.
 
 **Secret values never reach a plan.** For `secret_set` steps only the secret's
 **name** is rendered into `PlanStep.command` / `Plan.effects`. The role ARN value
@@ -541,7 +610,10 @@ class Result(BaseModel):
 
 class CommandResult(BaseModel):
     ok: bool
-    output: str                     # the tool's own output, surfaced verbatim on failure
+    output: str                     # stdout+stderr, verbatim, surfaced on failure
+    stdout: str = ""
+    # stdout alone. A machine-readable payload (`gh --json`) is validated from
+    # this field; `output` stays the operator-facing verbatim text (Req 10.2).
     run_url: str | None = None      # set when a dispatched CI run is created
     run: RunRef | None = None
     # The dispatched run's identity, set alongside run_url by the step that
@@ -625,9 +697,16 @@ rule holds for every diff — planned, previewed, or returned — not only at th
   SSM path (Requirement 3.8). The predicate is the `SECRET_NAME_SUBSTRINGS`
   substring test criterion 3.2 already uses for masking. Masking the preview was
   rejected: the PR title and the committed file would still carry the value, so
-  masking would hide the leak rather than close it. The trade is deliberate — the
-  substring predicate has false positives (`IconKeyPrefix` contains "key"), and a
-  refusal costs one re-run while a committed secret costs a rotation.
+  masking would hide the leak rather than close it.
+- **`samconfig.toml` is the allowlist for that refusal.** The substring predicate
+  has false positives (`IconKeyPrefix` contains "key"), so a key **already present
+  in that stage's `samconfig.toml` parameter set** is by definition an existing
+  deploy-time parameter and is allowed; the refusal applies only to keys not
+  already there. The reasoning is that a key already committed to a tracked file is
+  already public — refusing to *change* it protects nothing — while the refusal
+  still catches the case that matters: **introducing a new secret-shaped key** on
+  the deploy-time path. The allowlist is the stage's parameter set read from
+  samconfig, which planning already reads and caches, so no new I/O is added.
 - **"Planning is pure" is precise, not absolute.** `plan()`'s only I/O is the
   **cached read of `samconfig.toml`** performed when a `Command` is validated (to
   resolve the set of defined environments). It performs no network call, no AWS

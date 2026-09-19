@@ -109,6 +109,7 @@ CI/CD workflows).
 2. THE Wizard SHALL NOT assemble a CloudFormation parameter set; for a `SamExecutor` deploy it SHALL select only `--config-env <stage>` and SHALL NOT compose `--parameter-overrides`.
 3. THE Wizard SHALL be packaged as a console entry point in `pyproject.toml` and SHALL NOT introduce an ops folder of scripts.
 4. WHEN the Dispatcher plans a `Command`, THE Dispatcher SHALL perform planning as a pure, side-effect-free operation.
+5. WHERE a CloudFormation parameter's value is static for a stage, THE Wizard SHALL rely on that stage's `samconfig.toml` environment to declare it and SHALL select only `--config-env <stage>` for a `SamExecutor` deploy, with exactly two parameters excepted as caller-supplied because they are derived at deploy time: `ApiVersion` (from the Release_Tag, ADR-0037) and `MigrationsFingerprint` (a content hash of `migrations/versions/`, ADR-0025).
 
 ### Requirement 3: Config capability
 
@@ -123,7 +124,7 @@ CI/CD workflows).
 5. IF a `ConfigStore` write of an operational value fails, THEN THE Wizard SHALL return an error identifying the failed write and SHALL leave the prior value at the targeted Repo_Scoped_SSM_Path unchanged.
 6. WHEN deploy-time configuration or parameters (for example `BdoRegions`) are changed, THE ConfigStore SHALL apply the change to `samconfig.toml` by opening a pull request via `gh` and SHALL NOT flip it in-place at runtime.
 7. WHEN a `Plan` is rendered, THE Wizard SHALL mask secret-shaped and operational values in `PlanStep.command` and in `Plan.effects`, so that neither `--dry-run` nor `--json` output contains such a value.
-8. WHERE `config set` targets a key that is not a Repo_Scoped_SSM_Path, IF that key's name contains any of the substrings `secret`, `password`, `token`, or `key` (case-insensitive, the same substrings as criterion 2), THEN THE Wizard SHALL reject the request with exit code `2` before any executor call, open no pull request, and direct the operator to a Repo_Scoped_SSM_Path, so that a secret-shaped value is never rendered into a `Plan`, a pull request title, or a tracked file.
+8. WHERE `config set` targets a key that is neither a Repo_Scoped_SSM_Path nor already present in the target stage's `samconfig.toml` parameter set, IF that key's name contains any of the substrings `secret`, `password`, `token`, or `key` (case-insensitive, the same substrings as criterion 2), THEN THE Wizard SHALL reject the request with exit code `2` before any executor call, open no pull request, and direct the operator to a Repo_Scoped_SSM_Path, so that a new secret-shaped key is never introduced into a `Plan`, a pull request title, or a tracked file.
 
 ### Requirement 4: Bootstrap capability (one-time bootstrap helper)
 
@@ -147,6 +148,7 @@ CI/CD workflows).
 2. IF `deploy` is invoked with `target=LOCAL` and `stage=prod`, THEN THE Wizard SHALL reject the request at validation, exit with code `2`, make no CloudFormation, file, SSM, git, or SAM state change, and return an error naming the offending field and directing the operator to `release`.
 3. WHEN `deploy` is invoked with `target=CI` for a shared-env or prod stage, THE Wizard SHALL route to the GitHubExecutor and TRIGGER a GitHub Actions run, and SHALL NOT itself execute `sam deploy` for that stage.
 4. WHEN a fresh environment is deployed, THE Wizard SHALL reach target state through a single declarative deploy that relies on the stack self-bootstrapping (auto-migrate custom resource per ADR-0025; bootstrap orchestrator auto-run per ADR-0028) and SHALL NOT require any imperative multi-step orchestration on the routine path.
+5. WHEN `deploy` is invoked with `target=LOCAL`, THE SamExecutor SHALL pass `--no-confirm-changeset` to `sam deploy`, so that the deploy runs to completion without waiting on an interactive changeset prompt that the Wizard's captured executor output would keep hidden from the operator.
 
 ### Requirement 6: Production is platform-gated, not code-gated
 
