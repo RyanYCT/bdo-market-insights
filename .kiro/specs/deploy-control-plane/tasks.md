@@ -422,7 +422,7 @@ secret-shaped refusal fires on existing samconfig keys; `samconfig.toml` does no
 in fact carry the parameter set the design says it owns; and a local deploy waits
 on a changeset prompt nobody can see.
 
-- [ ] 11.1 Split stdout from stderr in the shared runner
+- [x] 11.1 Split stdout from stderr in the shared runner
   - In `core/executors/_process.py`, stop joining the two streams into one value:
     add `CommandResult.stdout` carrying stdout alone and keep `output` as the
     verbatim stdout+stderr text an operator sees on failure (Requirement 10.2 is

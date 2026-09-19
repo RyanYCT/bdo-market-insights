@@ -13,10 +13,16 @@ Guarantees this module makes, so no caller has to restate them:
   never used, so no value a caller passes can be re-interpreted by a shell.
 - The command runs from the repository root (``core.validation.REPO_ROOT``), the
   directory ``sam``/``git``/``gh`` all expect, so the caller never chooses a cwd.
-- stdout and stderr are captured **together** and returned verbatim in
-  ``CommandResult.output``; ``ok`` is the exit status. Nothing is reformatted and
-  no traceback is produced, which is what Requirement 10.2 asks of executor
-  output.
+- stdout and stderr are both captured and returned verbatim: together in
+  ``CommandResult.output``, the text an operator sees on failure, and stdout
+  **alone** in ``CommandResult.stdout``, for a caller parsing a machine-readable
+  payload. ``ok`` is the exit status. Nothing is reformatted and no traceback is
+  produced, which is what Requirement 10.2 asks of executor output. The split
+  lives here, once, rather than at each call site: a caller that had to separate
+  a payload from a warning line itself would be re-deriving what the runner
+  already knew, and the ``gh --json`` boundary got that wrong — a warning on
+  stderr made a well-formed payload unparseable and reported a passing run as
+  failed.
 - A missing executable and a timeout are reported as the tool's absence or the
   timed-out command, not as a ``FileNotFoundError`` / ``TimeoutExpired``
   traceback.
@@ -75,6 +81,13 @@ def run_command(
     non-zero exit, and a named failure (never a traceback) when the executable is
     missing or the command times out.
 
+    Both streams come back on every path that reached the tool — ``output``
+    combined, ``stdout`` alone — including a timeout, whose partial output is
+    just as worth parsing as a completed one. A missing executable reached no
+    tool, so its ``stdout`` is empty: the message explaining the absence is this
+    module's, not a tool's, and reporting it as the tool's standard output would
+    hand a payload parser a sentence to validate.
+
     ``stdin``, when given, is written to the child process's standard input and
     the stream is then closed. That is the only way to hand a tool a value
     without putting it in argv, which is what makes a secret write possible here
@@ -109,10 +122,12 @@ def run_command(
                 f"{' '.join(argv)}: timed out after {timeout:g}s\n"
                 f"{_partial_output(expired.stdout, expired.stderr)}"
             ),
+            stdout=_as_text(expired.stdout) or "",
         )
     return CommandResult(
         ok=completed.returncode == 0,
         output=_combined(completed.stdout, completed.stderr),
+        stdout=completed.stdout or "",
     )
 
 

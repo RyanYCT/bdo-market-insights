@@ -423,10 +423,28 @@ class CommandResult(BaseModel):
 
     ``output`` is the sanctioned tool's own output, kept verbatim so the
     dispatcher can surface it without reformatting (Requirement 10.2).
+
+    ``stdout`` carries **that stream alone**, for the callers that parse a
+    machine-readable payload out of it. The two fields answer different
+    questions and neither can serve both: an operator reading a failure needs
+    everything the tool said, in the order a terminal showed it, while a
+    ``gh --json`` payload is unreadable the moment a warning line is joined onto
+    it — which is exactly how a warning on stderr used to turn a passing CI run
+    into a reported failure.
     """
 
     ok: bool
     output: str
+    """Everything the tool wrote — stdout and stderr — verbatim and interleaved
+    in the order a terminal shows it. What a human is shown on failure."""
+
+    stdout: str = ""
+    """The tool's standard output alone, for a caller parsing a payload.
+
+    Defaults to empty because that is the truthful value where there is no tool
+    output at all — a missing executable — and because the many callers that
+    only ever report ``output`` have no payload to carry.
+    """
     run_url: str | None = None
     """Set by a github/CI step that dispatched a run (Requirement 10.6)."""
 
