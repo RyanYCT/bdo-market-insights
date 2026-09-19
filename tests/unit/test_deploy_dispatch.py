@@ -20,12 +20,14 @@ from bdo_deploy.core.dispatch import (
     DEPLOY_WORKFLOW,
     MASK,
     MASK_EFFECT,
+    RELEASE_BASE_BRANCH,
     Dispatcher,
 )
 from bdo_deploy.core.errors import ConfirmationRequired, UsageError, exit_code_for
 from bdo_deploy.core.executors.github import SECRET_ENV_PREFIX, RunRef, RunStatus
 from bdo_deploy.core.exit_codes import ExitCode
 from bdo_deploy.core.models import (
+    REVIEWERS_ARG,
     Capability,
     Command,
     CommandResult,
@@ -37,9 +39,12 @@ from bdo_deploy.core.models import (
     PrRef,
     Target,
 )
+from bdo_deploy.core.validation import PROD_STAGE
 
 SSM_KEY = "/bdo-market-insights/dev/domain/api-domain-name"
 RUN_URL = "https://github.com/RyanYCT/bdo-market-insights/actions/runs/42"
+REVIEWER = "User:1234"
+"""One required reviewer — the least a ``prod`` bootstrap is constructible with."""
 
 
 # -- fakes -------------------------------------------------------------------
@@ -391,6 +396,50 @@ class TestPlanBootstrap:
             "one-time, out-of-band step: not part of the routine deploy path",
         ]
         assert plan.requires_confirmation is True
+
+    def test_a_prod_bootstrap_plans_the_admitted_refs(self) -> None:
+        # Requirements 4.1, 6.5: the policy is planned by the step that creates
+        # the Environment, and named in the preview — a ref pattern is not
+        # secret, so it is rendered rather than masked.
+        step = self._environment_step(PROD_STAGE)
+        assert step.params == {
+            "environment": PROD_STAGE,
+            "reviewers": [REVIEWER],
+            "allowed_refs": ["tag:v*", f"branch:{RELEASE_BASE_BRANCH}"],
+        }
+        assert step.description == (
+            f"create or update the {PROD_STAGE} GitHub Environment with required reviewers "
+            f"{REVIEWER}, admitting deploys only from tag v* and branch main"
+        )
+        assert "deployment-branch-policies" in step.command
+        assert "tag v* and branch main" in step.command
+
+    def test_the_admitted_refs_are_an_effect_of_a_prod_bootstrap(self) -> None:
+        plan = _plan(self._bootstrap(PROD_STAGE))
+        assert (
+            f"admits only tag v* and branch main as a {PROD_STAGE} deploy ref, "
+            "enforced by GitHub outside the repository"
+        ) in plan.effects
+
+    def test_a_non_prod_bootstrap_plans_no_policy(self) -> None:
+        # The policy restricts prod alone: "deploy this branch to dev" stays
+        # expressible, and an absent param leaves any existing policy untouched.
+        step = self._environment_step("dev")
+        assert "allowed_refs" not in step.params
+        plan = _plan(self._bootstrap("dev"))
+        assert all("admits only" not in effect for effect in plan.effects)
+
+    @staticmethod
+    def _bootstrap(stage: str) -> Command:
+        return Command(
+            capability=Capability.BOOTSTRAP,
+            stage=stage,
+            args={REVIEWERS_ARG: [REVIEWER]},
+        )
+
+    def _environment_step(self, stage: str) -> PlanStep:
+        plan = _plan(self._bootstrap(stage))
+        return next(step for step in plan.steps if step.op is Op.GITHUB_ENVIRONMENT_SET)
 
 
 class TestPlanDeployLocal:

@@ -303,7 +303,7 @@ defence-in-depth (ADR-0040, amended).
     per-pattern policy entry; assert an absent `allowed_refs` sends no policy
   - _Requirements: 6.5_
 
-- [ ]* 9.4 Planner tests for the policy
+- [x]* 9.4 Planner tests for the policy
   - Assert the planned `params` and `effects` for a `prod` bootstrap, and that a
     non-prod bootstrap plans no policy
   - _Requirements: 4.1, 6.5_
