@@ -524,13 +524,35 @@ on a changeset prompt nobody can see.
     the rendered plan line matches the argv
   - _Requirements: 2.2, 5.1, 5.5_
 
+- [ ] 11.13 Narrow the remaining combined-stream parses to stdout
+  - Same class of bug 11.2 fixed, at four more sites that parse a payload or a
+    precondition out of `CommandResult.output` and should read
+    `CommandResult.stdout`: `core/executors/config.py::_opened_pull_request_url`
+    validates the `gh api POST /pulls` JSON response, where a `gh` warning makes
+    the URL unreadable and the tolerance then reports the PR as opened with no
+    link at all; `config.py::_current_branch` parses `git branch --show-current`,
+    so a git advisory becomes part of the branch name `_restore` later checks out;
+    `config.py::_require_clean_tree` parses `git status --porcelain`, where any
+    stderr line reads as a dirty tree; and `core/executors/git.py`'s release
+    preconditions (`git status --porcelain`, `git branch --show-current` compared
+    against `main`, `git tag --list`, `git ls-remote --tags`), where a stderr line
+    flips a precondition
+  - `output` stays the reporting field everywhere — `_step_failure`,
+    `_unverifiable`, and the pushed/tagged/deleted messages keep surfacing both
+    streams verbatim; only the *parses* narrow (Requirement 10.2 is unchanged)
+  - Tests: each parse ignores a stderr line — a `gh` warning preceding the PR
+    response still yields its `html_url`; a branch name, a clean-tree check, and
+    each of the four release preconditions are unaffected by an advisory on stderr
+  - _Requirements: 3.3, 7.1, 7.3, 10.2_
+
 - [ ] 11.12 Checkpoint — Ensure `ruff` / `mypy` / `pytest` pass, `deploy.yml`
       parses, and a dev deploy plan renders the full samconfig set; ask the user
       if questions arise.
-  - Verifies the four corrections: the stream split at the `gh` boundary, the
-    samconfig allowlist, samconfig as the single source of the static parameter
-    set with two derived exceptions, and the non-interactive local deploy
-  - _Requirements: 2.2, 2.5, 3.7, 3.8, 5.1, 5.5, 7.6, 8.1, 10.2, 10.6_
+  - Verifies the five corrections: the stream split across every parse boundary
+    (`gh --json`, the PR response, and the git branch/tree/tag precondition
+    reads), the samconfig allowlist, samconfig as the single source of the static
+    parameter set with two derived exceptions, and the non-interactive local deploy
+  - _Requirements: 2.2, 2.5, 3.3, 3.7, 3.8, 5.1, 5.5, 7.1, 7.3, 7.6, 8.1, 10.2, 10.6_
 
 ## Task Dependency Graph
 
@@ -563,7 +585,7 @@ on a changeset prompt nobody can see.
     { "id": 23, "tasks": ["10.2", "10.4", "10.8", "10.10"] },
     { "id": 24, "tasks": ["10.7", "10.9", "10.11"] },
     { "id": 25, "tasks": ["11.1", "11.4", "11.6", "11.10"] },
-    { "id": 26, "tasks": ["11.2", "11.5", "11.7", "11.11"] },
+    { "id": 26, "tasks": ["11.2", "11.5", "11.7", "11.11", "11.13"] },
     { "id": 27, "tasks": ["11.3", "11.8"] },
     { "id": 28, "tasks": ["11.9"] }
   ]
