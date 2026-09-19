@@ -8,18 +8,23 @@ access, insights evaluation, recovery/teardown, and troubleshooting.
 
 - [Conventions](#conventions)
 - [Decision flow](#decision-flow)
+- [The deploy control plane](#the-deploy-control-plane)
+  - [Command reference](#command-reference)
+  - [Flags, output, exit codes](#flags-output-exit-codes)
+  - [Control plane vs Makefile](#control-plane-vs-makefile)
 - [First-time bring-up](#first-time-bring-up)
   - [First-time role bootstrap](#first-time-role-bootstrap)
   - [Backfill the item catalog (one-time)](#backfill-the-item-catalog-one-time)
   - [Seed the tracked set (one-time)](#seed-the-tracked-set-one-time)
   - [Item icons](#item-icons)
-  - [CI/CD deploy role (GitHub OIDC) bootstrap](#cicd-deploy-role-github-oidc-bootstrap)
+  - [Pipeline bootstrap](#pipeline-bootstrap)
 - [Daily operations](#daily-operations)
   - [Adding or removing tracked items & series](#adding-or-removing-tracked-items--series)
 - [Deployment](#deployment)
   - [Quick reference](#quick-reference)
   - [Deployment notes](#deployment-notes)
-  - [Dev deployment (manual)](#dev-deployment-manual)
+  - [Dev deployment (local)](#dev-deployment-local)
+  - [Configuration changes](#configuration-changes)
   - [Running migrations](#running-migrations)
   - [Prod deployment (CI/CD)](#prod-deployment-cicd)
   - [Rollback](#rollback)
@@ -52,6 +57,15 @@ Each procedure follows the same shape so it can be skimmed under time pressure:
 Commands are parametrized on `STAGE` (`dev` / `prod`); set it once (`STAGE=dev`)
 or substitute inline. All commands assume region `us-east-1`.
 
+Two command families appear throughout, and which one owns a job is stated
+explicitly — see [Control plane vs Makefile](#control-plane-vs-makefile):
+
+- `bdo-deploy …` — the deploy control plane (ADR-0039), the front door for
+  deploy, release, config and pipeline bootstrap. Shown as `uv run bdo-deploy`
+  (the console entry point is installed by `uv sync`; plain `bdo-deploy` works in
+  an activated environment).
+- `make …` — the domain and database operations the control plane does not cover.
+
 ## Decision flow
 
 Start here: pick what you are doing and follow the arrows to the section that
@@ -70,9 +84,10 @@ flowchart TD
     q --> reviewi["Review insights on dev<br/>→ Market Insights: dev evaluation"]
     q --> broken["Something is broken<br/>→ Troubleshooting"]
 
-    shipping -->|"prod"| pr["Prod deployment (CI/CD)<br/>→ Post-deploy verification (prod)"]
-    shipping -->|"dev · stack exists"| dv["Dev deployment (manual)<br/>+ migrations if schema changed<br/>→ Post-deploy verification (dev)"]
+    shipping -->|"prod"| pr["bdo-deploy release vX.Y.Z<br/>→ Prod deployment (CI/CD)"]
+    shipping -->|"dev · stack exists"| dv["bdo-deploy deploy --stage dev<br/>+ migrations if schema changed<br/>→ Dev deployment (local)"]
     shipping -->|"dev · no stack yet"| standup
+    q --> cfg["Read or change deploy config<br/>→ Configuration changes"]
 
     reset -->|"just delete it"| cl["Delete a whole stack"]
     reset -->|"stuck in ROLLBACK_COMPLETE<br/>or 'already exists' on create"| rc
@@ -81,12 +96,127 @@ flowchart TD
     rc["Recreating a stack from scratch<br/>clear orphans → then First-time bring-up"]
 ```
 
+## The deploy control plane
+
+`bdo-deploy` is a **thin control plane** (ADR-0039): it translates intent into a
+typed command and dispatches to the SAM CLI, GitHub Actions (`gh`) and `git`. It
+reimplements no deploy logic and never composes a CloudFormation parameter set —
+`samconfig.toml` environments own that; the tool only selects `--config-env`.
+
+**Two front-ends, one core.** A subcommand runs non-interactive **CLI mode**;
+`uv run bdo-deploy --tui` (or no subcommand on a terminal) launches the **TUI**.
+Both build the same command and route it through the same dispatcher, so they
+behave identically (ADR-0041). Nothing is ever prompted for.
+
+### Command reference
+
+| Intent | Command |
+|---|---|
+| Deploy dev locally | `uv run bdo-deploy deploy --stage dev --yes` |
+| Dev fast-loop (code only) | `uv run bdo-deploy deploy --stage dev --sync --yes` |
+| Deploy a stage via CI | `uv run bdo-deploy deploy --stage <env> --target ci --yes` |
+| Cut a release (tag + push) | `uv run bdo-deploy release vX.Y.Z --yes` |
+| Re-deploy an existing version | `uv run bdo-deploy release vX.Y.Z --stage prod --dispatch --yes` |
+| Show merged config | `uv run bdo-deploy config show --stage <env>` |
+| Change one config value | `uv run bdo-deploy config set <key> <value> --stage <env> --yes` |
+| One-time pipeline bootstrap | `uv run bdo-deploy bootstrap --stage <env> --reviewer User:<id> --yes` |
+
+What each capability dispatches to:
+
+- **deploy** — `--target local` (the default) runs `sam build` then
+  `sam deploy --config-env <stage>`; `--sync` runs `sam sync --config-env <stage>`
+  instead, the dev fast-loop. `--target ci` dispatches `deploy.yml` rather than
+  deploying locally (and refuses `--sync`, which is local-only). **A local prod
+  deploy is unconstructable**: `deploy --stage prod` (local) exits `2` and points
+  at `release`. The stack self-bootstraps during the deploy — migrations
+  (ADR-0025) and the first-create data bootstrap (ADR-0028) — so a routine deploy
+  is one declarative step.
+- **release** — verifies the preconditions (clean working tree, on `main`, the tag
+  absent both locally and on the origin), then creates `vX.Y.Z` and pushes it, and
+  the pushed tag triggers `deploy.yml`. `--dispatch` skips tagging and dispatches
+  `deploy.yml` for an existing version instead. `--stage` is ignored on the tagging
+  path: a tag run's scope is `deploy.yml`'s to decide.
+- **config** — `config show` renders the merged `samconfig.toml` + SSM view for a
+  stage with secret-shaped values masked, and mutates nothing. `config set` routes
+  by key: a repo-scoped `/bdo-market-insights/<stage>/<category>/<key>` path
+  becomes an audited SSM write; any other key is a `samconfig.toml` parameter (e.g.
+  `BdoRegions`) and is changed by **opening a pull request**, never edited in
+  place. A secret-shaped key (containing `secret`, `password`, `token` or `key`)
+  bound for `samconfig.toml` is refused with exit `2` — that value would be
+  rendered into the PR title and committed; put it at a repo-scoped SSM path.
+- **bootstrap** — the one-time, out-of-band pipeline bootstrap; see
+  [Pipeline bootstrap](#pipeline-bootstrap). Not part of the routine deploy path.
+
+### Flags, output, exit codes
+
+The contract an agent or automation relies on:
+
+- `--yes` confirms a mutating command. Nothing is prompted for: without it a
+  mutating command exits `3` and returns the plan it refused to run, which is the
+  cue to inspect the effects and re-invoke with `--yes`.
+- `--dry-run` stops after planning and changes nothing anywhere.
+- `--json` emits **exactly one** serialized `Result` as the sole content of stdout;
+  every human-readable line goes to stderr. Secret values are absent from it.
+- `--watch` follows a dispatched CI run to completion and reports the run's own
+  pass/fail. Implied for human output; **required under `--json`**, where a
+  blocking watch would otherwise sit in front of the single `Result`. The run URL
+  is in the `Result` either way, and the run — not the dispatch — is authoritative.
+- `--stage` must name an environment defined in `samconfig.toml` (`dev` / `prod`).
+
+| Exit | Meaning |
+|------|---------|
+| `0` | success |
+| `1` | an executor (`sam` / `gh` / `git`) or the action failed; its output is surfaced verbatim, never a traceback |
+| `2` | usage/validation error **before any executor call** — nothing mutated |
+| `3` | confirmation required: re-invoke with `--yes` |
+
+A machine-readable preview is the exit-`3` path (invoke without `--yes` and read
+`Result.plan`), not `--dry-run`, whose plan is rendered for a human.
+
+### Control plane vs Makefile
+
+Both still exist, and neither has been removed. The split:
+
+| Job | Canonical | Notes |
+|---|---|---|
+| Deploy a stage, release, read/change config, bootstrap the pipeline | **`bdo-deploy`** | The front door; dispatches to SAM / `gh` / `git`. |
+| Full-state deploy with a non-samconfig parameter (`AUTO_MIGRATE=false`, `AutoBootstrap`, `ApiVersion`, `MigrationsFingerprint`) | **`make deploy`** | `DEPLOY_PARAMS` assembles the complete set; the control plane deliberately passes no `--parameter-overrides`. Required for [First-time bring-up](#first-time-bring-up). |
+| Post-deploy smoke test | **`make verify`** | ADR-0029. Not a control-plane capability; run it after a `bdo-deploy deploy`. |
+| Seed a stage's deploy config for the first time | **`make seed-config`** | Writes all four SSM keys at once. Thereafter change one key with `bdo-deploy config set` (audited, path-validated). |
+| DB roles, migrations, break-glass, admin SQL | **`make`** (`db-bootstrap`, `migrate-lambda`, `migrate`, `db-admin`, `break-glass-*`) | Database operations; no control-plane equivalent. |
+| Catalog, tracked set, data bootstrap | **`make`** (`market-catalog`, `track`, `seed*`, `bootstrap`) | Domain operations. Note `make bootstrap` (data seeding, ADR-0028) is **not** `bdo-deploy bootstrap` (pipeline plumbing). |
+| Lint / typecheck / test / openapi / postman / build / clean | **`make`** | Developer tooling. |
+
+`bdo-deploy deploy --stage dev` is the recommended dev deploy: the same
+`sam build` + `sam deploy --config-env dev`, with a previewable plan, a
+machine-readable result and a deterministic exit code. Two things `make deploy`
+does that it does not:
+
+- **No layer guard.** `make deploy` runs `make build` (`sam build` +
+  `verify-layer`) first, so a source-only `CommonLayer` can never reach
+  `sam deploy`. `bdo-deploy` runs a plain `sam build`. On a native Linux
+  filesystem this is a non-issue; on a Windows-mounted `/mnt/*` path it is the
+  failure the guard exists for (see [Deployment notes](#deployment-notes)).
+- **No full parameter set and no verify.** `sam deploy --config-env dev` passes
+  only `samconfig.toml`'s `[dev.deploy.parameters]` set (`Stage`, `BdoRegions`,
+  `UseRdsProxy`); the rest take their template defaults — notably
+  `MigrationsFingerprint=unset` and `ApiVersion=unknown`. So a dev change that
+  **adds migrations** should go out with `make deploy STAGE=dev` (which computes
+  the fingerprint that re-triggers the auto-migrate resource) or be applied with
+  `make migrate-lambda STAGE=dev`. And run `make verify STAGE=dev` afterwards.
+
+> `samconfig.toml` sets `confirm_changeset = true`, and the control plane captures
+> its executors' output, so a SAM changeset prompt is not visible when deploying
+> through `bdo-deploy`. If a local deploy appears to hang with no output, that is
+> the likely cause — deploy that change with `make deploy STAGE=dev` (where the
+> prompt is answerable) or use `--sync` for a code-only fast-loop.
+
 ## First-time bring-up
 
 - **Purpose:** Stand up a stack from empty (a new account, or after a full
 teardown).
 - **When:** New environment, or after [Recreating a stack from scratch](#recreating-a-stack-from-scratch) (do the orphan-clearing there first).
-- **Preconditions:** deploy config seeded (step 1); for prod, the [CI/CD deploy role](#cicd-deploy-role-github-oidc-bootstrap) exists.
+- **Preconditions:** deploy config seeded (step 1); for prod, the [pipeline bootstrap](#pipeline-bootstrap) has run.
 - **Risk:** low
 - **Reversible:** yes (see [Delete a whole stack](#delete-a-whole-stack-destructive))
 
@@ -124,9 +254,12 @@ teardown).
 - The first `make deploy` may wait several minutes on the initial
   ~tens-of-thousands-item catalog sync. Raise `VERIFY_WAIT`, or pass
   `VERIFY=false` and run `make verify` separately, if you'd rather not block.
-- For **prod**, also run the one-time
-  [CI/CD deploy role bootstrap](#cicd-deploy-role-github-oidc-bootstrap) so
-  tagged releases can deploy.
+- For **prod**, also run the one-time [pipeline bootstrap](#pipeline-bootstrap)
+  so tagged releases can deploy.
+- These three steps use `make deploy` deliberately: `AUTO_MIGRATE=false` and
+  `VERIFY=false` are Makefile parameters, and the control plane passes no
+  `--parameter-overrides` (see [Control plane vs Makefile](#control-plane-vs-makefile)).
+  Once the stack exists, routine deploys go through `bdo-deploy deploy`.
 
 ### First-time role bootstrap
 
@@ -304,116 +437,77 @@ flowchart LR
 - The materializer fetches from the Pearl Abyss CDN, not arsha, so it is
   unaffected by arsha outages.
 
-### CI/CD deploy role (GitHub OIDC) bootstrap
+### Pipeline bootstrap
 
-- **Purpose:** Create the IAM role GitHub Actions assumes (via OIDC) to deploy prod — no long-lived keys in CI.
-- **When:** Once per account, before the first tagged prod release.
-- **Preconditions:** IAM permissions to create OIDC providers, roles, and policies; `gh` CLI authenticated.
-- **Risk:** medium (IAM)
-- **Reversible:** yes (delete the role/provider)
+- **Purpose:** Stand up a stage's deploy plumbing: the OIDC deploy role GitHub Actions assumes (no long-lived keys in CI), the SAM artifact bucket, and the stage's GitHub Environment with its protection rules and role-ARN secret.
+- **When:** Once per stage, before its first CI deploy (for prod, before the first tagged release).
+- **Preconditions:** IAM permissions to create OIDC providers, roles and policies; `gh` authenticated with repo admin rights; `BDO_DEPLOY_SECRET_AWS_DEPLOY_ROLE_ARN` exported.
+- **Risk:** medium (IAM + environment protection)
+- **Reversible:** yes (delete the role/provider/environment)
 
-Until this role and the `AWS_DEPLOY_ROLE_ARN` repo secret exist, the CI `deploy`
-job fails at `configure-aws-credentials` with *"Could not load credentials from
-any providers"*.
+This replaces the hand-rolled OIDC-role procedure. One command runs all three
+steps; it is a **one-time, out-of-band** step, not part of the routine deploy path.
+Until it has run, a CI deploy fails at `configure-aws-credentials` with *"Could not
+load credentials from any providers"*.
 
 #### Steps
-1. Resolve the account id (used throughout).
+1. Preview the plan (nothing is executed, and the role ARN value never appears in
+   it — only the name of the variable it is read from).
    ```sh
-   ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+   uv run bdo-deploy bootstrap --stage prod --reviewer User:<id> --dry-run
    ```
-2. Create the GitHub OIDC identity provider (skip if it already exists).
+2. Export the role ARN the Environment secret is set from, then run it. The value
+   is read from `BDO_DEPLOY_SECRET_AWS_DEPLOY_ROLE_ARN` in the environment — never
+   from a flag (it would be visible in the process list) and never from a tracked
+   file. `sam pipeline bootstrap` prints the role it creates.
    ```sh
-   aws iam create-open-id-connect-provider \
-     --url https://token.actions.githubusercontent.com \
-     --client-id-list sts.amazonaws.com \
-     --thumbprint-list 1b511abead59c6ce207077c0bf0e0043b1382612   # no longer validated, but the CLI requires a value
+   export BDO_DEPLOY_SECRET_AWS_DEPLOY_ROLE_ARN="<the OIDC deploy role ARN>"
+   uv run bdo-deploy bootstrap --stage prod --reviewer User:<id> --yes
    ```
-3. Create the role with a trust policy scoped to this repo's `v*` tags only (the
-   deploy job runs only on tag pushes).
+   `--reviewer` takes `<Type>:<id>` (`User:1234`, `Team:56`) and is repeatable. A
+   **prod bootstrap with no reviewer is refused** (exit `2`, nothing created), so
+   production cannot be bootstrapped into an unprotected state.
+3. Repeat for `dev` (no reviewer required).
    ```sh
-   cat > trust.json <<JSON
-   {
-     "Version": "2012-10-17",
-     "Statement": [{
-       "Effect": "Allow",
-       "Principal": {"Federated": "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"},
-       "Action": "sts:AssumeRoleWithWebIdentity",
-       "Condition": {
-         "StringEquals": {"token.actions.githubusercontent.com:aud": "sts.amazonaws.com"},
-         "StringLike":   {"token.actions.githubusercontent.com:sub": "repo:RyanYCT/bdo-market-insights:ref:refs/tags/v*"}
-       }
-     }]
-   }
-   JSON
-   aws iam create-role --role-name bdo-github-deploy \
-     --assume-role-policy-document file://trust.json
+   uv run bdo-deploy bootstrap --stage dev --yes
    ```
-4. Attach permissions. `sam deploy` **is** the CloudFormation actor (no separate
-   service role), so this role provisions every resource the stacks manage:
-   `PowerUserAccess` + an inline policy for the IAM writes PowerUser omits, scoped
-   to `bdo-*` so it can't mint arbitrary privileged roles.
-   ```sh
-   aws iam attach-role-policy --role-name bdo-github-deploy \
-     --policy-arn arn:aws:iam::aws:policy/PowerUserAccess
 
-   cat > deploy-iam.json <<JSON
-   {
-     "Version": "2012-10-17",
-     "Statement": [
-       {
-         "Sid": "ManageStackRoles",
-         "Effect": "Allow",
-         "Action": [
-           "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:TagRole", "iam:UntagRole",
-           "iam:AttachRolePolicy", "iam:DetachRolePolicy",
-           "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy",
-           "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:UpdateAssumeRolePolicy",
-           "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile",
-           "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile"
-         ],
-         "Resource": [
-           "arn:aws:iam::${ACCOUNT_ID}:role/bdo-*",
-           "arn:aws:iam::${ACCOUNT_ID}:instance-profile/bdo-*"
-         ]
-       },
-       {
-         "Sid": "PassRoleToServices",
-         "Effect": "Allow",
-         "Action": "iam:PassRole",
-         "Resource": "arn:aws:iam::${ACCOUNT_ID}:role/bdo-*",
-         "Condition": {"StringEquals": {"iam:PassedToService": [
-           "lambda.amazonaws.com", "states.amazonaws.com",
-           "events.amazonaws.com", "ec2.amazonaws.com"
-         ]}}
-       }
-     ]
-   }
-   JSON
-   aws iam put-role-policy --role-name bdo-github-deploy \
-     --policy-name bdo-deploy-iam --policy-document file://deploy-iam.json
-   ```
-5. Give GitHub the role ARN.
-   ```sh
-   gh secret set AWS_DEPLOY_ROLE_ARN \
-     --body "arn:aws:iam::${ACCOUNT_ID}:role/bdo-github-deploy"
-   ```
-6. (Optional) if prod serves a custom domain, seed its config into SSM once
-   (ADR-0024). Skip if not using a domain (keys default to `none`). See
-   [Custom API domain](#custom-api-domain) / [Custom icons domain](#custom-icons-domain).
-   ```sh
-   make seed-config STAGE=prod API_DOMAIN_NAME=api.example.com \
-       ICON_DOMAIN_NAME=cdn.example.com PARENT_DOMAIN=example.com ENABLE_DEMO_KEY=true
-   ```
+#### What it does, in order
+1. `sam pipeline bootstrap --stage <stage>` — the OIDC deploy role and the
+   artifact bucket.
+2. Creates or updates the `<stage>` GitHub Environment **with its required
+   reviewers and, for prod, its deployment branch/tag policy** — `tag:v*` +
+   `branch:main`. That policy is the real boundary on which refs may deploy prod:
+   GitHub enforces it from outside the repository, so no commit, rebase or force
+   push can remove it (ADR-0040).
+3. Sets the `AWS_DEPLOY_ROLE_ARN` **Environment** secret (not a repo secret), so a
+   job that has not passed prod's reviewers cannot read prod's credentials path.
+
+#### Verify
+```sh
+gh api repos/RyanYCT/bdo-market-insights/environments/prod \
+  --jq '{name, reviewers: .protection_rules, policy: .deployment_branch_policy}'
+gh api repos/RyanYCT/bdo-market-insights/environments/prod/deployment-branch-policies \
+  --jq '.branch_policies[] | {name, type}'
+```
+Expected: the reviewers you passed, `custom_branch_policies: true`, and the two
+patterns `v*` (tag) and `main` (branch).
 
 #### Notes
-- CloudFormation-generated resource roles are prefixed with the stack name
-  (`bdo-market-<stage>-…`), so they match the `bdo-*` scope. If a deploy hits
-  `AccessDenied` on `iam:CreateRole` for a non-`bdo-*` name, widen that one
-  Resource rather than opening IAM up. The OIDC trust already limits *who* can
-  assume the role; tighten to least-privilege later by replaying CloudTrail.
+- **Fail-forward, not transactional:** on a failure the helper stops at the first
+  failing step and reports which steps completed; completed effects are **not**
+  rolled back. Fix the cause and re-run — the steps are create-or-update.
+- The bootstrapped role is the CloudFormation actor (`sam deploy` provisions every
+  resource the stacks manage), so it needs permissions for them. If a deploy hits
+  `AccessDenied` on `iam:CreateRole`, widen that one action against the `bdo-*`
+  name rather than opening IAM up; CloudFormation-generated resource roles are
+  prefixed with the stack name (`bdo-market-<stage>-…`).
 - **First prod deploy only:** the RDS roles must be bootstrapped
-  ([First-time role bootstrap](#first-time-role-bootstrap)) before the
-  auto-migrate custom resource can run as `lambda_migrator`.
+  ([First-time role bootstrap](#first-time-role-bootstrap)) before the auto-migrate
+  custom resource can run as `lambda_migrator`.
+- If prod serves a custom domain, seed its config into SSM once (ADR-0024) — see
+  [Configuration changes](#configuration-changes). Skip if not using a domain
+  (keys default to `none`).
 
 ## Daily operations
 
@@ -490,23 +584,47 @@ and retry behaviour.
 
 | Environment | Method |
 |-------------|--------|
-| Dev | `make deploy STAGE=dev` (manual; CI deploy is tag-only) |
-| Prod | Push a `v*` tag to trigger CI deploy |
-| Rollback | Deploy the previous tag |
+| Dev | `uv run bdo-deploy deploy --stage dev --yes` — or `make deploy STAGE=dev` for the full parameter set |
+| Prod | `uv run bdo-deploy release vX.Y.Z --yes` (tag → `deploy.yml`, gated) |
+| Rollback | Re-dispatch the previous tag |
 
-`make deploy` converges the whole environment: `build → sam deploy` (which runs
-migrations and starts the first-create data bootstrap) `→ verify`. Other
-one-command operations:
+Full command list: [Command reference](#command-reference). There is **no local
+prod deploy** — the control plane cannot construct one (exit `2`), and prod is
+reached only through the environment-gated `deploy.yml` run (ADR-0040). Either
+deploy path converges the environment: `sam deploy` applies migrations (ADR-0025)
+and starts the first-create data bootstrap (ADR-0028). Other one-command
+operations:
 
 - `make verify STAGE=<env>` — post-deploy smoke test (ADR-0029); also runs at the
-  end of `make deploy` (`VERIFY=false` to skip).
-- `make bootstrap STAGE=<env>` — re-run the data seeding (catalog → tracked set →
-  icons); idempotent.
+  end of `make deploy` (`VERIFY=false` to skip). Run it yourself after a
+  `bdo-deploy deploy`, which does not.
+- `make bootstrap STAGE=<env>` — re-run the **data** seeding (catalog → tracked set
+  → icons); idempotent. Unrelated to `bdo-deploy bootstrap`.
 - `make db-admin STAGE=<env> SQL='…'` — ad-hoc read-only SQL (ADR-0026).
+
+#### Workflows
+
+- **`ci.yml`** is the authoritative **validation** gate and the branch-protection
+  check set: 8 jobs (`lint`, `typecheck`, `test`, `integration`, `audit`, `scan`,
+  `validate`, `openapi`), each consuming the shared `./.github/actions/setup`
+  composite action so they cannot drift (ADR-0038). It carries **no** deploy job.
+- **`deploy.yml`** is the CD workflow: triggered on `push` of a `v*` tag and on
+  `workflow_dispatch` with typed `stage` / `version` inputs (a superset of what the
+  control plane sends, so the Actions UI and `bdo-deploy` reach the identical job).
+  A `check-prod-ref` pre-gate job — declaring no `environment:`, so it runs *before*
+  any approval wait — fails a prod run whose ref is neither a `v*` tag nor `main`;
+  the `deploy` job `needs:` it, is gated on the stage's GitHub Environment, and
+  assumes AWS credentials keylessly via OIDC.
+- The deploy is **deliberately not gated on the full validation suite** (ADR-0040):
+  Actions has no cross-workflow `needs`, and a tagged commit reached `main` under
+  branch protection and is therefore already validated. The one check that
+  genuinely protects a deploy runs inside `deploy.yml` itself —
+  `scripts/validate_regions.py`, scoped to the target stage, a second call site of
+  one authoritative script rather than duplicated logic.
 
 ### Deployment notes
 
-Four things apply to every `make deploy`:
+Four things apply to every deploy:
 
 - **SAM CLI >= 1.160.0 is required.** The per-region schedule fan-out uses
   `Fn::ForEach` (`AWS::LanguageExtensions`, ADR-0036), and SAM only expands that
@@ -521,9 +639,11 @@ Four things apply to every `make deploy`:
   function at init with `No module named 'aws_lambda_powertools'`). On `/mnt/*`,
   `pip --target` can silently vendor nothing.
 - **Deploy config (domains, hosted zone, demo key) lives in SSM** (ADR-0024).
-  Seed it once per stage before the first deploy (`make seed-config STAGE=<env>`)
-  and `make deploy` resolves it automatically — a full-state deploy can no longer
-  drop the custom domain by forgetting a flag.
+  Seed it once per stage before the first deploy (`make seed-config STAGE=<env>`);
+  `make deploy` and the CI deploy pass the SSM **key paths** and CloudFormation
+  resolves them at deploy — a full-state deploy can no longer drop the custom
+  domain by forgetting a flag. Inspect and change them afterwards with
+  [`bdo-deploy config`](#configuration-changes).
   ```bash
   # no custom domain (dev):
   make seed-config STAGE=dev
@@ -531,9 +651,12 @@ Four things apply to every `make deploy`:
   make seed-config STAGE=prod API_DOMAIN_NAME=api.example.com \
       ICON_DOMAIN_NAME=cdn.example.com PARENT_DOMAIN=example.com ENABLE_DEMO_KEY=true
   ```
-- **`make deploy` re-declares the full stack state.** Non-SSM parameters not
-  passed revert to their template default; `DEPLOY_PARAMS` in the Makefile
-  assembles the complete set.
+- **A deploy re-declares the full stack state.** Non-SSM parameters not passed
+  revert to their template default. `DEPLOY_PARAMS` in the Makefile (and the
+  `--parameter-overrides` line in `deploy.yml`) assembles the complete set;
+  `bdo-deploy` deliberately passes none, so a local control-plane deploy uses only
+  `samconfig.toml`'s `[<stage>.deploy.parameters]` — see
+  [Control plane vs Makefile](#control-plane-vs-makefile).
 
 > **Deployment artifacts are isolated per stage.** `samconfig.toml` gives each
 > stage its own `s3_prefix` (`bdo-market-insights/dev` vs `…/prod`), so their
@@ -541,7 +664,7 @@ Four things apply to every `make deploy`:
 > on one stage therefore cannot orphan another stage's artifacts. The shared SAM
 > deployment bucket itself is not part of any stack and is not deleted with it.
 
-### Dev deployment (manual)
+### Dev deployment (local)
 
 - **Purpose:** Test changes on dev before promoting to prod.
 - **When:** The dev stack already exists (setting up from empty? see [First-time bring-up](#first-time-bring-up)).
@@ -556,16 +679,27 @@ Four things apply to every `make deploy`:
 - [ ] Local `make test` passes (including integration if `TEST_DATABASE_URL` is set).
 
 #### Steps
-1. Build and deploy the dev stack (streams stack events; blocks until settled;
-   prompts for changeset confirmation).
-   ```bash
-   make deploy STAGE=dev
+1. Preview what the deploy will do (optional; nothing is executed).
+   ```sh
+   uv run bdo-deploy deploy --stage dev --dry-run
    ```
-   Expected: settles on `CREATE_COMPLETE` / `UPDATE_COMPLETE`.
-2. Apply migrations **only if** your change includes `migrations/versions/*` (the
-   auto-migrate custom resource runs them on deploy; this is the manual trigger).
+2. Deploy the dev stack — `sam build` then `sam deploy --config-env dev`
+   (blocks until CloudFormation settles).
+   ```sh
+   uv run bdo-deploy deploy --stage dev --yes
+   ```
+   Expected: exit `0`; the stack settles on `CREATE_COMPLETE` /
+   `UPDATE_COMPLETE`. Without `--yes` it exits `3` and prints the plan instead.
+   For a code-only iteration, `--sync` runs the `sam sync` fast-loop instead of a
+   full CloudFormation deploy.
+3. If the change touches `migrations/versions/*` (or needs `AUTO_MIGRATE=false` or
+   a stamped `ApiVersion`), use the full-parameter-set deploy — the control plane
+   passes no `--parameter-overrides`, so `MigrationsFingerprint` stays `unset` and
+   the auto-migrate custom resource is not re-triggered — or apply the migrations
+   directly.
    ```bash
-   make migrate-lambda STAGE=dev
+   make deploy STAGE=dev            # computes the fingerprint; auto-migrates
+   make migrate-lambda STAGE=dev    # ...or the manual migration trigger
    ```
    See [Running migrations](#running-migrations). First time on a fresh database?
    Do the [First-time role bootstrap](#first-time-role-bootstrap) instead — the
@@ -631,6 +765,51 @@ aws dynamodb query --table-name bdo-${STAGE}-items --index-name tracked-index \
 ```
 Expected: `Count >= 1`.
 
+### Configuration changes
+
+- **Purpose:** Read the merged config for a stage, and change one value in its sanctioned location.
+- **When:** Inspecting what a stage is configured with; flipping an operational key (domain, demo key); changing a deploy-time parameter (`BdoRegions`).
+- **Preconditions:** for an SSM write, IAM for `ssm:PutParameter`; for a `samconfig.toml` change, `gh` authenticated.
+- **Risk:** low (SSM) / low (PR — nothing changes until merged and deployed)
+- **Reversible:** yes (set the previous value / close the PR)
+
+Config has exactly two sanctioned homes and no third: **`samconfig.toml`** for
+deploy-time parameters (version-controlled, changed through review) and **SSM
+Parameter Store** for operational config (ADR-0024, audited writes).
+
+#### Steps
+1. Read the merged view for a stage. Secret-shaped values (a SecureString, or a
+   key containing `secret` / `password` / `token` / `key`) are masked, and nothing
+   is mutated.
+   ```sh
+   uv run bdo-deploy config show --stage prod
+   ```
+2. Change an operational value — a repo-scoped
+   `/bdo-market-insights/<stage>/<category>/<key>` path becomes an audited
+   `PutParameter`. A path that is not repo-scoped (or whose stage segment is not a
+   `samconfig.toml` environment) is refused with exit `2` before any write.
+   ```sh
+   uv run bdo-deploy config set /bdo-market-insights/prod/domain/api-domain-name \
+     api.example.com --stage prod --yes
+   ```
+   Then redeploy the stage for CloudFormation to resolve the new value.
+3. Change a deploy-time parameter — any non-path key is a `samconfig.toml`
+   parameter and is changed by **opening a pull request**, never edited in place.
+   Nothing changes in the deployed stack until it is merged and deployed.
+   ```sh
+   uv run bdo-deploy config set BdoRegions tw,na --stage prod --yes
+   ```
+
+#### Notes
+- A **secret-shaped key bound for `samconfig.toml` is refused** (exit `2`, no
+  branch, no PR): `key=value` would be rendered into the PR title and committed.
+  Put the value at a repo-scoped SSM path instead.
+- `make seed-config STAGE=<env>` remains canonical for the **first-time** seed of a
+  stage: it writes all four keys at once (and looks the hosted zone up from
+  `PARENT_DOMAIN`). Because it overwrites *all* of them, use `config set` — or the
+  targeted `aws ssm put-parameter` invocations shown under
+  [Feature toggles](#feature-toggles) — to change one key thereafter.
+
 ### Running migrations
 
 - **Purpose:** Apply schema migrations from inside the VPC — no bastion or tunnel.
@@ -656,9 +835,9 @@ Expected: `Count >= 1`.
 
 - **Purpose:** Release to production. All CI checks run automatically before merge; the deploy job runs only on a `v*` tag.
 - **When:** Changes are merged to `main` and validated on dev.
-- **Preconditions:** the [CI/CD deploy role](#cicd-deploy-role-github-oidc-bootstrap) exists; RDS roles bootstrapped.
+- **Preconditions:** the [pipeline bootstrap](#pipeline-bootstrap) has run for prod; RDS roles bootstrapped; you are on a clean `main`.
 - **Risk:** medium
-- **Reversible:** [Rollback](#rollback) (deploy the previous tag)
+- **Reversible:** [Rollback](#rollback) (release the previous tag)
 
 #### Pre-release checklist
 - [ ] Changes merged to `main` and all CI checks passed.
@@ -668,23 +847,36 @@ Expected: `Count >= 1`.
 - [ ] Final diff reviewed: `git diff main~1 main`.
 
 #### Steps
-1. Create and push a version tag (semver `vX.Y.Z`) — this triggers the
-   `deploy.yml` deploy job, which waits on the `prod` environment's required
-   reviewers and then invokes the migrator.
-   ```bash
-   git tag v1.2.0
-   git push origin v1.2.0
+1. Cut the release. `release` verifies the preconditions — clean working tree, on
+   `main`, and the tag absent both locally and on the origin — then creates
+   `vX.Y.Z` and pushes it; the pushed tag triggers `deploy.yml`. The tag is also
+   the source of `ApiVersion` (ADR-0037). A malformed version, or a failed
+   precondition, exits before any tag is created and names what failed.
+   ```sh
+   uv run bdo-deploy release v1.2.0 --yes
    ```
-2. Monitor the deployment in GitHub Actions.
+   The dispatched run's URL is reported, and the run is followed to completion
+   (add `--watch` if you are also passing `--json`). The prod `deploy` job waits on
+   the `prod` Environment's required reviewers before anything is applied.
+2. To re-deploy a version whose tag already exists, dispatch `deploy.yml` instead
+   of tagging.
+   ```sh
+   uv run bdo-deploy release v1.2.0 --stage prod --dispatch --yes
+   ```
+3. Monitor in GitHub Actions if you did not follow the run.
    ```bash
    # https://github.com/RyanYCT/bdo-market-insights/actions  (or via CLI:)
    gh run list --workflow deploy.yml --limit 1
    gh run view <RUN_ID> --log
    ```
 
+Approving the run in the Actions UI, and dispatching `deploy.yml` from its own
+`workflow_dispatch` form, remain equally sanctioned — the form's typed inputs are
+a superset of what the control plane sends, so both reach the identical job.
+
 #### Verify (prod)
 Resolve `API_URL` / `API_KEY` / `DOCS_URL` and run the API + Swagger checks
-exactly as in [Verify (dev)](#dev-deployment-manual) with `STAGE=prod` (skip the
+exactly as in [Verify (dev)](#dev-deployment-local) with `STAGE=prod` (skip the
 item-registration smoke test). Then the two prod-only checks:
 ```bash
 STAGE=prod
@@ -726,12 +918,13 @@ cat /tmp/migrate.json
    ```bash
    git tag --list 'v*' | sort -V | tail -5
    ```
-2. Deploy it (re-push the previous tag ref; example version shown).
-   ```bash
-   git tag v1.1.9
-   git push origin v1.1.9
-   gh run list --workflow deploy.yml --limit 1
+2. Deploy it. The tag already exists, so `release` would fail its "tag absent"
+   precondition — dispatch `deploy.yml` for that version instead (example version
+   shown).
+   ```sh
+   uv run bdo-deploy release v1.1.9 --stage prod --dispatch --yes
    ```
+   The prod Environment's required reviewers still gate the run.
 3. Re-run [Verify (prod)](#prod-deployment-cicd).
 
 #### Notes
@@ -742,18 +935,26 @@ cat /tmp/migrate.json
 
 ### Breaking changes
 
-For a breaking change (new required field, schema incompatibility, etc.):
-
-1. Create a feature branch and test on dev first.
-2. Communicate the change in the PR and release notes.
-3. Deploy with a minor/major version bump (e.g. `v2.0.0` if breaking).
-4. Update API consumers before removing old behavior.
-5. Consider a canary approach — dev/staging soak before prod.
+For a breaking change (new required field, schema incompatibility, etc.): test on
+dev first, communicate it in the PR and release notes, release with a major bump
+(`v2.0.0`), soak on dev before prod, and update API consumers before removing the
+old behaviour.
 
 ## Feature toggles
 
-Optional, opt-in capabilities, off by default. Each is a plain `make deploy`
-flag; remember the full-state rule in [Deployment notes](#deployment-notes).
+Optional, opt-in capabilities, off by default. Each is an SSM key plus a deploy;
+remember the full-state rule in [Deployment notes](#deployment-notes). The
+`aws ssm put-parameter` invocations below are still correct;
+`uv run bdo-deploy config set <path> <value> --stage <env> --yes` is the audited,
+path-validated equivalent ([Configuration changes](#configuration-changes)).
+
+> **Applying a prod toggle.** The `make deploy STAGE=prod` lines below mean "apply
+> the change to prod". They still work if you hold prod credentials locally, but
+> they bypass the `prod` Environment's reviewers. The recommended path is to
+> re-deploy the current release through CI —
+> `uv run bdo-deploy release <current version> --stage prod --dispatch --yes` — which
+> goes through the gate. The control plane has no local prod deploy at all
+> (ADR-0040).
 
 ### Custom API domain
 
@@ -940,11 +1141,15 @@ cost. Activation is a gated, explicit step (readiness is delivered without it).
    # [prod.deploy.parameters]
    parameter_overrides = "Stage=prod BdoRegions=tw,na UseRdsProxy=false"
    ```
+   Or let the control plane open that PR for you:
+   ```sh
+   uv run bdo-deploy config set BdoRegions tw,na --stage prod --yes
+   ```
 2. Deploy. CI first validates the list (unique + every entry in the enum) via
    `scripts/validate_regions.py`, then a full-state deploy creates the
    per-region rules — no manual EventBridge edits.
    ```sh
-   make deploy STAGE=prod          # or push a release tag for the CI prod deploy
+   make deploy STAGE=prod          # or release/re-dispatch for the gated CI prod deploy
    ```
 
 #### Verify
@@ -1088,7 +1293,7 @@ stack produces an empty digest, so backfill a small synthetic dataset.
    aws stepfunctions start-execution --state-machine-arn "$SM_ARN" --input '{"region":"tw","period":"weekly"}'
    ```
 3. Read the narration back (resolve `API_URL` + `API_KEY` as in
-   [Verify (dev)](#dev-deployment-manual)).
+   [Verify (dev)](#dev-deployment-local)).
    ```sh
    curl -s -H "x-api-key: ${API_KEY}" "${API_URL}/v1/insights?region=tw&period=daily"  | jq .
    curl -s -H "x-api-key: ${API_KEY}" "${API_URL}/v1/insights?region=tw&period=weekly" | jq .
@@ -1302,7 +1507,13 @@ with "already exists"; clear them first, then rebuild the data. Commands show
 | Custom-domain deploy hangs at `CREATE_IN_PROGRESS` on the certificate | ACM is waiting for DNS validation. Confirm the hosted-zone id matches the domain and the zone is authoritative (registrar NS records point to it). Usually minutes. |
 | Custom domain returns 403 "Forbidden" | Base-path mapping / DNS not resolved yet, or the request omits `x-api-key`. Confirm the A-alias resolves and include the key. |
 | Missed ETL runs | Safe to re-execute — writes are idempotent on `(region, item_id, sid, snapshot_at)`. |
-| CI deploy: "Could not load credentials from any providers" | The `AWS_DEPLOY_ROLE_ARN` secret (and its OIDC role) is not set up. See [CI/CD deploy role bootstrap](#cicd-deploy-role-github-oidc-bootstrap). |
+| CI deploy: "Could not load credentials from any providers" | The `AWS_DEPLOY_ROLE_ARN` Environment secret (and its OIDC role) is not set up for that stage. See [Pipeline bootstrap](#pipeline-bootstrap). |
+| `bdo-deploy` exits `3` and prints a plan | Confirmation required: nothing ran. Inspect the effects and re-invoke with `--yes`. |
+| `bdo-deploy deploy --stage prod` exits `2` | A LOCAL prod deploy is unconstructable by design (ADR-0040). Use `bdo-deploy release vX.Y.Z`, or `--target ci`. |
+| `bdo-deploy bootstrap`: "BDO_DEPLOY_SECRET_AWS_DEPLOY_ROLE_ARN" not set | The Environment secret's value is read from that variable, never a flag. Export it and re-run; completed steps are create-or-update, so a re-run is safe. |
+| `deploy.yml` fails in `check-prod-ref` | A prod run was started from a ref other than a `v*` tag or `main`. Release from a `v*` tag on `main`; the prod Environment's branch/tag policy is the real control (ADR-0040). |
+| Prod deploy waits indefinitely at "Review pending" | Expected: the `prod` Environment's required reviewers must approve. Approve in the Actions UI. |
+| `bdo-deploy config set` exits `2` on a secret-shaped key | A key containing `secret`/`password`/`token`/`key` cannot go to `samconfig.toml` (it would be committed). Write it to a repo-scoped `/bdo-market-insights/<stage>/<category>/<key>` SSM path. |
 | `CdnStack` `CREATE_FAILED` (bucket "already exists") on deploy | Only on **prod** (dev's delivery bucket is non-retaining and `DeliveryBucketJanitor` empties it on teardown). The retained `bdo-<stage>-cdn-<account>-<region>` bucket survives an earlier teardown/rollback, so a fresh CREATE collides. Purge + delete it (see [Delete a whole stack](#delete-a-whole-stack-destructive)), then redeploy. |
 
 ### Insights
