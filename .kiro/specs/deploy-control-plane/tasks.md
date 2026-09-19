@@ -502,7 +502,13 @@ on a changeset prompt nobody can see.
     stage; assert every `template.yaml` parameter is either in the stage's
     samconfig set or one of the two derived values, so a newly-declared parameter
     cannot silently fall back to a template default
-  - _Requirements: 2.2, 2.5_
+  - For every `template.yaml` parameter declared
+    `Type: AWS::SSM::Parameter::Value<String>`, assert the value each stage's
+    `samconfig.toml` `parameter_overrides` carries is a repo-scoped SSM key path
+    (starts with `/bdo-market-insights/`) and not a literal value (ADR-0024), so
+    an inlined hostname or hosted-zone id fails the suite rather than reaching a
+    commit or a deploy
+  - _Requirements: 2.2, 2.5, 9.2_
 
 - [ ] 11.10 Pass `--no-confirm-changeset` from `SamExecutor.deploy`
   - In `core/executors/sam.py`, add the flag to the `sam deploy` argv so a local
