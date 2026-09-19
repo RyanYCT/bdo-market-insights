@@ -409,7 +409,7 @@ defence-in-depth (ADR-0040, amended).
     import (e.g. a leaf constants module) and delete the copies
   - _Requirements: 1.4, 1.5_
 
-- [ ] 10.12 Checkpoint — Ensure `ruff` / `mypy` / `pytest` pass and `deploy.yml` parses; ask the user if questions arise.
+- [x] 10.12 Checkpoint — Ensure `ruff` / `mypy` / `pytest` pass and `deploy.yml` parses; ask the user if questions arise.
   - Verifies the refusal path, the pre-gate ref guard, both boundary models, the
     `gh api` PR path, and the three corrections
   - _Requirements: 1.4, 1.5, 3.3, 3.7, 3.8, 6.6, 10.2_

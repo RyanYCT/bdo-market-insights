@@ -2417,3 +2417,53 @@ corrected.
 ### Deferred / open questions
 - The branch/tag policy, like the reviewer gate, lives in repository settings and
   is not captured in IaC; `bootstrap` is what sets it.
+
+## 2026-09-17 — Follow-up: review findings on the deploy control plane (Phase 10)
+
+**Agent:** Kiro
+**Mode:** Spec
+**Branch:** `feat/deploy-control-plane-impl`
+**Phase:** Phase 10 of `.kiro/specs/deploy-control-plane/tasks.md`
+**Commits:** `6d9c461..` — PR #125
+
+A two-axis review of the branch found two defects and four standards gaps.
+
+### Done
+- `config set` on a secret-shaped key bound for `samconfig.toml` is refused
+  (exit `2`, Requirement 3.8). It previously rendered `key=value` into the plan,
+  the effects and the pull-request title, so `--dry-run --json` printed the
+  value. Masking the preview was rejected: the PR title and the committed file
+  would still have carried it. The property test that asserted the old
+  behaviour now asserts the refusal, and the key generator no longer produces
+  secret-shaped names on the branch that plans a pull request.
+- The prod ref check moved into a pre-gate job the deploy job `needs:`. A job
+  referencing an environment with required reviewers waits for approval before
+  it starts, so as a step it could not fail early as its own comment claimed.
+- Pydantic models at the two remaining I/O boundaries — `gh --json` payloads and
+  boto3 SSM responses — replacing `dict.get` + `isinstance`. The tolerance is
+  unchanged and now tested directly: an unreadable payload reports `ok=False`
+  with the tool's own output and invents no status or value.
+- Config pull requests open through `gh api ... /pulls`, reading `html_url` off
+  the response instead of scraping a URL out of CLI output.
+- `core/constants.py` gives the four cloned constants one home; the vacuous half
+  of the dispatch-fidelity property now asserts the superset relation for every
+  input the workflow marks required.
+- 931 tests.
+
+### Decisions
+- The secret-name predicate is a plain substring match, so `IconKeyPrefix` is
+  refused too. Accepted: a refusal costs one re-run, a committed secret costs a
+  rotation — the error message names both exits → no ADR
+- `build_dispatcher()` stays, with an honest docstring: `build_control_plane()`
+  delegates to it, so it is the wiring rather than a dead path → no ADR
+- The guard's `if:` stays on the step, not the job: the `env` context is
+  unavailable in `jobs.<id>.if`, and a skipped job skips its dependents, which
+  would have blocked every dev deploy → no ADR
+
+### Deferred / open questions
+- A benign `gh` warning line alongside `--json` output makes a run report as
+  unreadable, which `follow_run` treats as a failure. Extracting the JSON would
+  be a behaviour change and needs its own decision.
+- If the secret-name predicate's false positives become routine, an allowlist of
+  known-safe `samconfig.toml` parameter names would be preferable to weakening
+  the check.
