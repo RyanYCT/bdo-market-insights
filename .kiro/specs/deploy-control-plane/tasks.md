@@ -510,7 +510,7 @@ on a changeset prompt nobody can see.
     commit or a deploy
   - _Requirements: 2.2, 2.5, 9.2_
 
-- [ ] 11.10 Pass `--no-confirm-changeset` from `SamExecutor.deploy`
+- [x] 11.10 Pass `--no-confirm-changeset` from `SamExecutor.deploy`
   - In `core/executors/sam.py`, add the flag to the `sam deploy` argv so a local
     control-plane deploy does not block on a prompt hidden behind captured output
     until the 1800 s timeout; the plan-then-`--yes` gate is the confirmation

@@ -70,7 +70,11 @@ from bdo_deploy.core.executors.config import (
 )
 from bdo_deploy.core.executors.git import GitExecutor
 from bdo_deploy.core.executors.github import SECRET_ENV_PREFIX, GitHubExecutor
-from bdo_deploy.core.executors.sam import SamExecutor
+from bdo_deploy.core.executors.sam import (
+    CONFIG_ENV_FLAG,
+    NO_CONFIRM_CHANGESET_FLAG,
+    SamExecutor,
+)
 from bdo_deploy.core.models import (
     Capability,
     Command,
@@ -808,7 +812,13 @@ class Dispatcher:
                 ),
                 PlanStep(
                     description=f"deploy the {cmd.stage} stack",
-                    command=f"sam deploy --config-env {cmd.stage}",
+                    # Rendered from the executor's own flag constants, so the
+                    # preview cannot fall behind the argv it previews: the
+                    # changeset prompt is answered up front (Requirement 5.5) and
+                    # the operator should see that in the plan they confirm.
+                    command=(
+                        f"sam deploy {CONFIG_ENV_FLAG} {cmd.stage} {NO_CONFIRM_CHANGESET_FLAG}"
+                    ),
                     executor="sam",
                     op=Op.SAM_DEPLOY,
                     params={"config_env": cmd.stage},

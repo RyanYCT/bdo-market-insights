@@ -1,9 +1,11 @@
 """Adapter over the SAM CLI for LOCAL, non-prod work.
 
-``samconfig.toml`` environments own the parameter set: this executor selects only
-``--config-env`` and **never composes ``--parameter-overrides``** (Requirement
-2.2). There is therefore nothing here that could assemble a CloudFormation
-parameter set by hand, and no place a parameter could be silently overridden.
+``samconfig.toml`` environments own the parameter set: this executor selects the
+stage with ``--config-env`` and **never composes ``--parameter-overrides``**
+(Requirement 2.2). There is therefore nothing here that could assemble a
+CloudFormation parameter set by hand, and no place a parameter could be silently
+overridden. The one other flag it passes, ``--no-confirm-changeset`` on a deploy,
+shapes the *interaction* and not the parameter set (Requirement 5.5).
 
 Two types live here, and the split is deliberate:
 
@@ -36,7 +38,20 @@ SAM: Final = "sam"
 """The sanctioned executable; every invocation below starts with it."""
 
 CONFIG_ENV_FLAG: Final = "--config-env"
-"""The **only** deploy-shaping flag this executor selects (Requirement 2.2)."""
+"""The only *parameter-selecting* flag this executor passes (Requirement 2.2)."""
+
+NO_CONFIRM_CHANGESET_FLAG: Final = "--no-confirm-changeset"
+"""Answers ``sam deploy``'s changeset prompt up front (Requirement 5.5).
+
+``samconfig.toml`` sets ``confirm_changeset = true`` — which is right for
+``make deploy``, where a human sees the prompt — but this executor runs ``sam``
+through the shared runner, which *captures* its output. Without this flag the
+prompt is written to a pipe nobody is reading and the deploy sits there until the
+runner's 1800 s timeout kills it. The confirmation is not lost: the control plane
+asks for it earlier and in its own terms, by rendering the plan and requiring
+``--yes`` before any step runs. Deploy only: ``sam sync`` and
+``sam pipeline bootstrap`` prompt for nothing.
+"""
 
 CONFIG_ENV_PARAM: Final = "config_env"
 STAGE_PARAM: Final = "stage"
@@ -54,7 +69,10 @@ class SamExecutor(StepExecutor, Protocol):
         ...
 
     def deploy(self, config_env: str) -> CommandResult:
-        """``sam deploy --config-env <env>``. Refuses ``config_env == "prod"``."""
+        """``sam deploy --config-env <env> --no-confirm-changeset``.
+
+        Refuses ``config_env == "prod"``.
+        """
         ...
 
     def sync(self, config_env: str) -> CommandResult:
@@ -91,12 +109,18 @@ class SamCli:
     def deploy(self, config_env: str) -> CommandResult:
         """Deploy the ``config_env`` stack from its ``samconfig.toml`` parameter set.
 
+        ``--no-confirm-changeset`` is passed because the runner captures output,
+        so the prompt ``confirm_changeset = true`` would raise is invisible and
+        unanswerable (Requirement 5.5); the plan-then-``--yes`` gate is the
+        confirmation. Still no ``--parameter-overrides``: the flag shapes the
+        interaction, not the parameter set (Requirement 2.2).
+
         Raises ``UsageError`` for ``config_env == "prod"`` before invoking
         anything, so no production CloudFormation call is ever made from here
         (Requirement 6.1).
         """
         self._refuse_prod(config_env)
-        return self._run([SAM, "deploy", CONFIG_ENV_FLAG, config_env])
+        return self._run([SAM, "deploy", CONFIG_ENV_FLAG, config_env, NO_CONFIRM_CHANGESET_FLAG])
 
     def sync(self, config_env: str) -> CommandResult:
         """Sync code into the ``config_env`` stack in place (dev fast-loop)."""
@@ -172,4 +196,4 @@ if TYPE_CHECKING:  # pragma: no cover - a type-check-time assertion, not runtime
     _satisfies_protocol: SamExecutor = SamCli()
 
 
-__all__ = ["CONFIG_ENV_FLAG", "SAM", "SamCli", "SamExecutor"]
+__all__ = ["CONFIG_ENV_FLAG", "NO_CONFIRM_CHANGESET_FLAG", "SAM", "SamCli", "SamExecutor"]
