@@ -298,7 +298,7 @@ defence-in-depth (ADR-0040, amended).
     masking is unchanged)
   - _Requirements: 4.1, 6.5_
 
-- [ ]* 9.3 Executor tests for the policy
+- [x]* 9.3 Executor tests for the policy
   - Assert the `gh api` argv and the JSON body for the environment and for each
     per-pattern policy entry; assert an absent `allowed_refs` sends no policy
   - _Requirements: 6.5_

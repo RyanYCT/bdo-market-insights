@@ -16,8 +16,9 @@ Five sections, one per unit:
   prod refusal that invokes nothing.
 - ``Git`` — the four read-only precondition queries, each precondition blocking
   by name without creating a tag, and the failed push that deletes its own tag.
-- ``GitHubCli`` — the dispatch argv and run-URL resolution, and the secret write
-  whose value is on stdin and in no argument.
+- ``GitHubCli`` — the dispatch argv and run-URL resolution, the Environment's
+  deployment branch/tag policy as the two ordered calls GitHub needs, and the
+  secret write whose value is on stdin and in no argument.
 - ``SsmSamconfigStore`` — masked merged reads, audited SSM writes refused before
   AWS, and a comment-preserving samconfig edit proposed as a pull request.
 
@@ -63,6 +64,10 @@ SECRET: Final = "sup3r-s3cret-value"
 VERSION: Final = "v1.4.0"
 RUN_URL: Final = "https://github.com/RyanYCT/bdo-market-insights/actions/runs/42"
 DEPLOY_ROLE_SECRET: Final = "AWS_DEPLOY_ROLE_ARN"
+
+ENVIRONMENT_PATH: Final = "repos/{owner}/{repo}/environments/prod"
+POLICY_PATH: Final = f"{ENVIRONMENT_PATH}/deployment-branch-policies"
+"""The two ``gh api`` paths the ``prod`` Environment's protection is written to."""
 
 SSM_DSN: Final = "/bdo-market-insights/dev/db/dsn"
 SSM_TOKEN: Final = "/bdo-market-insights/dev/api/token"  # noqa: S105
@@ -790,6 +795,86 @@ class TestGitHubEnvironment:
         assert runner.argvs == [
             ["gh", "api", "--method", "PUT", "repos/{owner}/{repo}/environments/dev"]
         ]
+
+
+class TestGitHubBranchPolicy:
+    """Requirement 6.5: which refs may deploy prod, as the two calls GitHub needs.
+
+    The mode goes on the Environment and each admitted pattern is its own
+    resource, so the assertions are about **both** halves and their order: the
+    per-pattern endpoint rejects an entry until ``custom_branch_policies`` is on.
+    """
+
+    def test_the_mode_precedes_one_entry_per_pattern(self) -> None:
+        runner = FakeRunner()
+        GitHubCli(runner=runner).set_environment(
+            name="prod", allowed_refs=["tag:v*", "branch:main"]
+        )
+        assert runner.argvs == [
+            ["gh", "api", "--method", "PUT", ENVIRONMENT_PATH, "--input", "-"],
+            ["gh", "api", "--method", "POST", POLICY_PATH, "--input", "-"],
+            ["gh", "api", "--method", "POST", POLICY_PATH, "--input", "-"],
+        ]
+        assert runner.stdins == [
+            json.dumps(
+                {
+                    "deployment_branch_policy": {
+                        "protected_branches": False,
+                        "custom_branch_policies": True,
+                    }
+                }
+            ),
+            json.dumps({"name": "v*", "type": "tag"}),
+            json.dumps({"name": "main", "type": "branch"}),
+        ]
+
+    def test_the_policy_travels_with_the_reviewers_in_one_body(self) -> None:
+        runner = FakeRunner()
+        GitHubCli(runner=runner).set_environment(
+            name="prod", reviewers=["User:1234"], allowed_refs=["branch:main"]
+        )
+        assert runner.stdins[0] == json.dumps(
+            {
+                "reviewers": [{"type": "User", "id": "1234"}],
+                "deployment_branch_policy": {
+                    "protected_branches": False,
+                    "custom_branch_policies": True,
+                },
+            }
+        )
+
+    def test_an_absent_allowed_refs_sends_no_policy_at_all(self) -> None:
+        # An absent list leaves an existing policy untouched, as an absent
+        # ``reviewers`` leaves the reviewers untouched — so there is no second
+        # call and the environment body carries no policy key either.
+        runner = FakeRunner()
+        GitHubCli(runner=runner).set_environment(name="prod", reviewers=["User:1234"])
+        assert runner.argvs == [["gh", "api", "--method", "PUT", ENVIRONMENT_PATH, "--input", "-"]]
+        assert "deployment_branch_policy" not in str(runner.stdins[0])
+
+    def test_the_step_carries_the_planned_patterns(self) -> None:
+        runner = FakeRunner()
+        GitHubCli(runner=runner).run_step(
+            _step(
+                Op.GITHUB_ENVIRONMENT_SET,
+                "github",
+                environment="prod",
+                allowed_refs=["tag:v*"],
+            )
+        )
+        assert runner.argvs[1] == ["gh", "api", "--method", "POST", POLICY_PATH, "--input", "-"]
+        assert runner.stdins[1] == json.dumps({"name": "v*", "type": "tag"})
+
+    def test_a_failed_environment_update_adds_no_pattern(self) -> None:
+        # The mode is what makes the per-pattern endpoint answer at all, so a
+        # failed PUT must stop the step rather than leave it POSTing into a 404.
+        refused = CommandResult(ok=False, output="gh: HTTP 403")
+        runner = FakeRunner(default=refused)
+        result = GitHubCli(runner=runner).set_environment(
+            name="prod", allowed_refs=["branch:main"]
+        )
+        assert result == refused
+        assert len(runner.calls) == 1
 
 
 class TestGitHubSecret:
