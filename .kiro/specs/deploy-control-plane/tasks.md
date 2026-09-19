@@ -441,7 +441,7 @@ on a changeset prompt nobody can see.
     status
   - _Requirements: 7.6, 10.2, 10.6_
 
-- [ ]* 11.3 Tests for the stream split and the `gh` boundary
+- [x]* 11.3 Tests for the stream split and the `gh` boundary
   - Runner: assert `stdout` excludes stderr while `output` contains both, verbatim
     and in terminal order, across success / failure / timeout
   - Boundary: a `gh run view --json` payload preceded by a stderr warning line

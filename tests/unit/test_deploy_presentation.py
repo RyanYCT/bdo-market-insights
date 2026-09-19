@@ -5,17 +5,24 @@ asserted is the one thing it decides: **whose verdict the returned ``Result``
 carries**. Requirements 7.6 and 10.6 make the CI run authoritative, so a dispatch
 that went fine and a run that then failed must come back as a failure.
 
-Every test drives it against ``FakeGitHub`` — no ``gh`` process, no network, and
-no blocking watch anywhere in the suite. The rendering functions beside it are
+Most tests drive it against ``FakeGitHub``; the ``gh``-warning regression drives
+the real ``GitHubCli`` over a scripted runner, because the defect it guards lived
+between the runner's streams and the ``--json`` parse, below where a fake
+``RunStatus`` starts. Either way there is no ``gh`` process, no network, and no
+blocking watch anywhere in the suite. The rendering functions beside it are
 covered through the two front-end suites, which is where their output is read.
 """
 
 from __future__ import annotations
 
+import json
+
+from bdo_deploy.core.executors.github import GitHubCli
 from bdo_deploy.core.exit_codes import ExitCode
 from bdo_deploy.core.models import Capability, Result, RunRef
 from bdo_deploy.presentation import follow_run, result_lines
 from tests.unit.test_deploy_cli import RUN_URL, FakeGitHub, dispatched_result
+from tests.unit.test_deploy_executors import VIEW_ARGV, FakeRunner, _gh_payload
 
 RUN = RunRef(workflow="deploy.yml", run_id="42", url=RUN_URL)
 
@@ -33,6 +40,34 @@ class TestFollowRunIsANoOp:
         )
         assert follow_run(github, local) == local
         assert github.watched == [] and github.viewed == []
+
+
+class TestFollowRunAgainstTheRealGhBoundary:
+    """The regression that matters: a warning from ``gh`` must not fail a deploy.
+
+    The one test here drives the **real** ``GitHubCli`` — through a scripted
+    runner, so still no ``gh`` process and no wait — because the defect lived in
+    the seam between the runner's streams and the ``--json`` parse, which a
+    ``RunStatus``-returning fake cannot reach. A warning on stderr used to be
+    joined onto the payload, making a passing run unreadable and therefore, per
+    ``_run_passed``, not a pass (Requirements 7.6, 10.2, 10.6).
+    """
+
+    def test_a_passing_run_stays_passing_when_gh_writes_a_warning(self) -> None:
+        runner = FakeRunner(
+            responses={
+                VIEW_ARGV: _gh_payload(
+                    json.dumps({"status": "completed", "conclusion": "success", "url": RUN_URL}),
+                    stderr="warning: gh version 2.40.0 is out of date\n",
+                )
+            }
+        )
+        followed = follow_run(GitHubCli(runner=runner), dispatched_result(run=RUN))
+        assert followed.ok is True
+        assert followed.exit_code is ExitCode.SUCCESS
+        assert "the run concluded success" in followed.summary
+        assert followed.raw_output is not None
+        assert "warning: gh version" in followed.raw_output, "the warning is still surfaced"
 
 
 class TestFollowRunFoldsTheVerdictIn:

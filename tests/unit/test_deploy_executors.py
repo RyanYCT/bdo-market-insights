@@ -264,6 +264,56 @@ class TestRunCommandOutput:
             run_command([])
 
 
+BOTH_STREAMS: Final = (
+    "import sys; sys.stdout.write('payload line\\n'); sys.stderr.write('warning line\\n');"
+)
+"""A child that writes to both streams — the shape that broke the ``gh`` boundary."""
+
+
+class TestRunCommandStreamSplit:
+    """Requirement 10.2: both streams for the operator, stdout alone for a parser.
+
+    ``output`` is what a human reads on a failure, so it keeps everything the
+    tool said; ``stdout`` is what a caller validates a machine-readable payload
+    out of, so a warning the tool wrote to stderr must not be in it. Every path
+    that reached the tool reports both.
+    """
+
+    def test_a_successful_command_separates_the_streams(self) -> None:
+        result = run_command([sys.executable, "-c", BOTH_STREAMS])
+        assert result.ok is True
+        assert result.stdout == "payload line\n", "stderr is not part of stdout"
+        assert result.output == "payload line\nwarning line\n", "both, in terminal order"
+
+    def test_a_failed_command_separates_the_streams(self) -> None:
+        result = run_command([sys.executable, "-c", f"{BOTH_STREAMS} sys.exit(3)"])
+        assert result.ok is False
+        assert result.stdout == "payload line\n"
+        assert result.output == "payload line\nwarning line\n"
+
+    def test_a_timed_out_command_still_reports_both(self) -> None:
+        """A partial payload is as worth parsing as a completed one."""
+        result = run_command(
+            [
+                sys.executable,
+                "-c",
+                f"{BOTH_STREAMS} sys.stdout.flush(); import time; time.sleep(30)",
+            ],
+            timeout=1.0,
+        )
+        assert result.ok is False
+        assert result.stdout == "payload line\n", "the message about the timeout is not stdout"
+        assert "timed out after 1s" in result.output
+        assert "payload line\n" in result.output
+        assert "warning line\n" in result.output
+
+    def test_a_missing_executable_has_no_tool_output_at_all(self) -> None:
+        """The explanation is this module's own; it is nobody's standard output."""
+        result = run_command(["bdo-deploy-no-such-tool"])
+        assert result.stdout == ""
+        assert result.output.startswith("bdo-deploy-no-such-tool: command not found")
+
+
 class TestRunCommandStdin:
     """``stdin`` is the channel a secret travels on, in one direction only."""
 
@@ -1470,6 +1520,58 @@ class TestGhPayloadTolerance:
         assert status.status is None
         assert status.conclusion is None
         assert status.output == output, "gh's own output, verbatim"
+
+    def test_a_stderr_warning_does_not_make_a_good_payload_unreadable(self) -> None:
+        """Requirements 7.6, 10.6: the run's real conclusion, warning or not.
+
+        ``gh`` writes its own advisories to stderr. While the boundary validated
+        the stdout+stderr join, such a line made a well-formed payload
+        unparseable, so ``view`` reported no status at all — and a *passing* run
+        came back as a failure through ``follow_run``.
+        """
+        runner = FakeRunner(
+            responses={
+                VIEW_ARGV: _gh_payload(
+                    json.dumps({"status": "completed", "conclusion": "success", "url": RUN_URL}),
+                    stderr="warning: gh version 2.40.0 is out of date\n",
+                )
+            }
+        )
+        status = GitHubCli(runner=runner).view(RunRef(workflow=DEFAULT_WORKFLOW, run_id="42"))
+        assert status.ok is True
+        assert (status.status, status.conclusion) == ("completed", "success")
+        assert status.run.url == RUN_URL
+        assert "warning: gh version" in status.output, (
+            "the warning still reaches the operator in gh's own output"
+        )
+
+    def test_a_stderr_warning_does_not_hide_the_dispatched_run(self) -> None:
+        """The run-URL query is the same boundary, so it reads the same stream."""
+        runner = FakeRunner(
+            responses={
+                RUN_LIST_ARGV: _gh_payload(
+                    json.dumps([{"url": RUN_URL, "databaseId": 42}]),
+                    stderr="warning: gh version 2.40.0 is out of date\n",
+                )
+            }
+        )
+        result = GitHubCli(runner=runner).run_workflow(stage="dev")
+        assert result.run == RunRef(workflow=DEFAULT_WORKFLOW, run_id="42", url=RUN_URL)
+        assert result.run_url == RUN_URL
+
+    def test_a_malformed_payload_beside_a_warning_is_still_a_failure(self) -> None:
+        """Narrowing the parse did not loosen the tolerance: nothing is invented."""
+        runner = FakeRunner(
+            responses={
+                VIEW_ARGV: _gh_payload('{"status": "comple', stderr="warning: out of date\n")
+            }
+        )
+        status = GitHubCli(runner=runner).view(RunRef(workflow=DEFAULT_WORKFLOW, run_id="42"))
+        assert status.ok is False
+        assert (status.status, status.conclusion) == (None, None)
+        assert status.output == 'warning: out of date\n{"status": "comple', (
+            "both streams, verbatim, so the operator sees everything gh said"
+        )
 
     def test_a_non_string_status_is_no_status(self) -> None:
         """A field of the wrong type reads as absent, not as a coerced status."""
