@@ -524,7 +524,7 @@ on a changeset prompt nobody can see.
     the rendered plan line matches the argv
   - _Requirements: 2.2, 5.1, 5.5_
 
-- [ ] 11.13 Narrow the remaining combined-stream parses to stdout
+- [x] 11.13 Narrow the remaining combined-stream parses to stdout
   - Same class of bug 11.2 fixed, at four more sites that parse a payload or a
     precondition out of `CommandResult.output` and should read
     `CommandResult.stdout`: `core/executors/config.py::_opened_pull_request_url`

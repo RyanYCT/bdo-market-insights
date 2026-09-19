@@ -129,6 +129,21 @@ class FakeRunner:
         return [argument for argv in self.argvs for argument in argv]
 
 
+def _cli_payload(body: str, *, stderr: str = "", ok: bool = True) -> CommandResult:
+    """A CLI reply shaped the way the real runner reports one.
+
+    ``gh`` prints its ``--json`` payload and its REST response to **stdout**, and
+    ``git status --porcelain`` / ``branch --show-current`` / ``tag --list`` /
+    ``ls-remote`` print their answers there too; warnings and advisories go to
+    stderr. So the runner returns the answer alone in ``stdout`` and both streams,
+    in terminal order, in ``output``. Scripting only ``output`` would hand a parse
+    its payload on a stream the tool never writes it to — which is exactly the bug
+    the narrowed parses fixed, and a fake that keeps making that mistake could not
+    show the fix.
+    """
+    return CommandResult(ok=ok, output=f"{stderr}{body}", stdout=body)
+
+
 class ForbiddenSsmClient:
     """An ``SsmClient`` that fails the test if any AWS call is attempted.
 
@@ -475,16 +490,29 @@ TAG_ARGV: Final = ["git", "tag", VERSION]
 PUSH_ARGV: Final = ["git", "push", "origin", VERSION]
 DELETE_ARGV: Final = ["git", "tag", "--delete", VERSION]
 
-ON_MAIN: Final = CommandResult(ok=True, output="main\n")
+ON_MAIN: Final = _cli_payload("main\n")
+"""``git branch --show-current`` on ``main``, on the stream git prints it to."""
+
+GIT_ADVISORY: Final = "warning: redirecting to https://github.com/RyanYCT/bdo-market-insights/\n"
+"""A line git writes to stderr that says nothing about any precondition."""
 
 
 def _git(**responses: CommandResult) -> tuple[Git, FakeRunner]:
-    """A ``Git`` whose preconditions are clear unless a response overrides one."""
+    """A ``Git`` whose preconditions are clear unless a response overrides one.
+
+    Keyword names map onto the four precondition queries: ``status``, ``branch``,
+    ``tags`` and ``remote``.
+    """
     scripted: dict[tuple[str, ...], CommandResult] = {BRANCH_ARGV: ON_MAIN}
     for name, result in responses.items():
-        scripted[{"status": STATUS_ARGV, "branch": BRANCH_ARGV, "tags": TAG_LIST_ARGV}[name]] = (
-            result
-        )
+        scripted[
+            {
+                "status": STATUS_ARGV,
+                "branch": BRANCH_ARGV,
+                "tags": TAG_LIST_ARGV,
+                "remote": LS_REMOTE_ARGV,
+            }[name]
+        ] = result
     runner = FakeRunner(responses=scripted)
     return Git(runner=runner), runner
 
@@ -510,9 +538,9 @@ class TestGitPreconditionQueries:
 
     def test_every_precondition_is_reported_in_one_pass(self) -> None:
         git, _ = _git(
-            status=CommandResult(ok=True, output=" M src/app.py\n"),
-            branch=CommandResult(ok=True, output="feature/x\n"),
-            tags=CommandResult(ok=True, output=f"{VERSION}\n"),
+            status=_cli_payload(" M src/app.py\n"),
+            branch=_cli_payload("feature/x\n"),
+            tags=_cli_payload(f"{VERSION}\n"),
         )
         issues = git.release_preconditions(VERSION)
         assert len(issues) == 3
@@ -525,19 +553,19 @@ class TestGitBlockedRelease:
         ("responses", "expected"),
         [
             (
-                {"status": CommandResult(ok=True, output=" M src/app.py\n")},
+                {"status": _cli_payload(" M src/app.py\n")},
                 "the working tree is not clean",
             ),
             (
-                {"branch": CommandResult(ok=True, output="feature/x\n")},
+                {"branch": _cli_payload("feature/x\n")},
                 "the current branch is 'feature/x'",
             ),
             (
-                {"branch": CommandResult(ok=True, output="")},
+                {"branch": _cli_payload("")},
                 "HEAD is detached",
             ),
             (
-                {"tags": CommandResult(ok=True, output=f"{VERSION}\n")},
+                {"tags": _cli_payload(f"{VERSION}\n")},
                 f"the {VERSION} tag already exists locally",
             ),
         ],
@@ -559,7 +587,7 @@ class TestGitBlockedRelease:
         runner = FakeRunner(
             responses={
                 BRANCH_ARGV: ON_MAIN,
-                LS_REMOTE_ARGV: CommandResult(ok=True, output=f"abc123\trefs/tags/{VERSION}\n"),
+                LS_REMOTE_ARGV: _cli_payload(f"abc123\trefs/tags/{VERSION}\n"),
             }
         )
         result = Git(runner=runner).tag_and_push(VERSION)
@@ -570,13 +598,53 @@ class TestGitBlockedRelease:
 
     def test_an_unanswerable_query_is_itself_blocking(self) -> None:
         git, runner = _git(
-            status=CommandResult(ok=False, output="fatal: not a git repository\n"),
+            # A fatal goes to stderr, so it reaches ``output`` and not ``stdout``:
+            # the failure is reported from the reporting field, as it always was.
+            status=_cli_payload("", stderr="fatal: not a git repository\n", ok=False),
         )
         result = git.tag_and_push(VERSION)
         assert result.ok is False
         assert "could not verify that the working tree is clean" in result.output
         assert "fatal: not a git repository" in result.output
         assert TAG_ARGV not in runner.argvs
+
+
+class TestGitPreconditionStreams:
+    """Requirement 10.2: a precondition is read from stdout, not from the join.
+
+    Each of the four queries prints its answer to stdout; git also writes
+    advisories to stderr that say nothing about any precondition. Read off the
+    stdout+stderr join, such a line flipped the check — always towards blocking, so
+    no unsafe release ever got through, but a clean checkout on ``main`` with no
+    such tag was refused with a reason that was not true.
+    """
+
+    @pytest.mark.parametrize(
+        "query",
+        ["status", "branch", "tags", "remote"],
+    )
+    def test_an_advisory_on_stderr_does_not_flip_a_precondition(self, query: str) -> None:
+        answers = {"status": "", "branch": "main\n", "tags": "", "remote": ""}
+        git, _ = _git(**{query: _cli_payload(answers[query], stderr=GIT_ADVISORY)})
+        assert git.release_preconditions(VERSION) == []
+
+    def test_all_four_queries_advising_at_once_still_clears(self) -> None:
+        """The realistic case: one ``git`` run noisy on stderr blocks nothing."""
+        git, runner = _git(
+            status=_cli_payload("", stderr=GIT_ADVISORY),
+            branch=_cli_payload("main\n", stderr=GIT_ADVISORY),
+            tags=_cli_payload("", stderr=GIT_ADVISORY),
+            remote=_cli_payload("", stderr=GIT_ADVISORY),
+        )
+        result = git.tag_and_push(VERSION)
+        assert result.ok is True
+        assert runner.argvs[-2:] == [TAG_ARGV, PUSH_ARGV]
+
+    def test_the_answer_on_stdout_still_blocks(self) -> None:
+        """Narrowing the parse did not weaken it: a real violation still blocks."""
+        git, _ = _git(tags=_cli_payload(f"{VERSION}\n", stderr=GIT_ADVISORY))
+        issues = git.release_preconditions(VERSION)
+        assert [issue for issue in issues if "already exists locally" in issue]
 
 
 class TestGitTagAndPush:
@@ -656,21 +724,10 @@ RUN_LIST_ARGV: Final = (
 )
 
 
-def _gh_payload(body: str, *, stderr: str = "") -> CommandResult:
-    """A ``gh --json`` reply shaped the way the real runner reports one.
-
-    ``gh`` prints the payload to **stdout** and any warning to stderr, so the
-    runner returns the payload alone in ``stdout`` and both streams, in terminal
-    order, in ``output``. Scripting only ``output`` would hand the boundary a
-    payload on a stream ``gh`` never writes JSON to.
-    """
-    return CommandResult(ok=True, output=f"{stderr}{body}", stdout=body)
-
-
 def _run_list(url: str | None = RUN_URL) -> CommandResult:
     """What ``gh run list --json`` prints for the newest run of the workflow."""
     body = [] if url is None else [{"url": url, "databaseId": 42}]
-    return _gh_payload(json.dumps(body))
+    return _cli_payload(json.dumps(body))
 
 
 class TestGitHubDispatch:
@@ -721,7 +778,7 @@ class TestGitHubDispatch:
         [
             CommandResult(ok=False, output="gh: could not list runs\n"),
             _run_list(url=None),
-            _gh_payload("not json at all"),
+            _cli_payload("not json at all"),
         ],
     )
     def test_an_unresolved_url_is_still_a_success(self, listed: CommandResult) -> None:
@@ -801,7 +858,7 @@ class TestGitHubRunStatus:
     def test_view_reports_githubs_own_status_and_conclusion(self) -> None:
         runner = FakeRunner(
             responses={
-                VIEW_ARGV: _gh_payload(
+                VIEW_ARGV: _cli_payload(
                     json.dumps({"status": "completed", "conclusion": "failure", "url": RUN_URL})
                 )
             }
@@ -815,7 +872,7 @@ class TestGitHubRunStatus:
         "viewed",
         [
             CommandResult(ok=False, output="gh: no run found\n"),
-            _gh_payload("not json at all"),
+            _cli_payload("not json at all"),
         ],
     )
     def test_an_unreadable_status_is_not_a_passing_status(self, viewed: CommandResult) -> None:
@@ -1242,7 +1299,13 @@ PR_BRANCH: Final = "config/dev-BdoRegions"
 PR_TITLE: Final = "config(dev): set BdoRegions"
 PR_URL: Final = "https://github.com/RyanYCT/bdo-market-insights/pull/7"
 
-ON_FEATURE: Final = CommandResult(ok=True, output="feat/deploy\n")
+ON_FEATURE: Final = _cli_payload("feat/deploy\n")
+"""``git branch --show-current`` before the config PR, on the stream git uses.
+
+Scripted through ``_cli_payload`` because the branch name this parses is what
+``_restore`` checks out again: with the name only in ``output``, the fake was
+handing the parse a stream git does not print the name to.
+"""
 PUSH_PR_ARGV: Final = ("git", "push", "--set-upstream", "origin", PR_BRANCH)
 
 
@@ -1272,11 +1335,13 @@ def _pr_runner(
     """
     responses: dict[tuple[str, ...], CommandResult] = {BRANCH_ARGV: ON_FEATURE}
     for name, result in overrides.items():
-        responses[{"status": STATUS_ARGV, "push": PUSH_PR_ARGV}[name]] = result
+        responses[{"status": STATUS_ARGV, "branch": BRANCH_ARGV, "push": PUSH_PR_ARGV}[name]] = (
+            result
+        )
     return WorktreeRunner(
         samconfig,
         responses=responses,
-        prefixes={GH_PR_POST: pr or CommandResult(ok=True, output=PR_RESPONSE)},
+        prefixes={GH_PR_POST: pr or _cli_payload(PR_RESPONSE)},
     )
 
 
@@ -1343,7 +1408,7 @@ class TestOpenConfigPr:
 
     def test_a_dirty_tree_is_refused_before_anything_is_touched(self, samconfig: Path) -> None:
         before = samconfig.read_text(encoding="utf-8")
-        runner = _pr_runner(samconfig, status=CommandResult(ok=True, output=" M src/app.py\n"))
+        runner = _pr_runner(samconfig, status=_cli_payload(" M src/app.py\n"))
 
         with pytest.raises(UsageError) as excinfo:
             _store(runner=runner, samconfig_path=samconfig).open_config_pr(
@@ -1407,6 +1472,45 @@ class TestOpenConfigPr:
         ]
         assert PR_URL in result.output
         assert ["git", "checkout", "-b", "config/dev-regions"] in runner.argvs
+
+
+class TestConfigPrGitStreams:
+    """Requirement 10.2: the tree check and the branch name are read from stdout.
+
+    Both of these parses used to read the stdout+stderr join, so a git advisory
+    refused a config PR on a clean tree, and — worse, because it is not merely a
+    refusal — became part of the branch name ``_restore`` and the final
+    ``git checkout`` later aim at.
+    """
+
+    def test_an_advisory_does_not_make_a_clean_tree_look_dirty(self, samconfig: Path) -> None:
+        runner = _pr_runner(samconfig, status=_cli_payload("", stderr=GIT_ADVISORY))
+
+        pr = _store(runner=runner, samconfig_path=samconfig).open_config_pr(
+            "dev", [_regions_change()]
+        )
+
+        assert pr.url == PR_URL
+        assert ["git", "checkout", "-b", PR_BRANCH] in runner.argvs
+
+    def test_an_advisory_is_not_part_of_the_branch_returned_to(self, samconfig: Path) -> None:
+        runner = _pr_runner(samconfig, branch=_cli_payload("feat/deploy\n", stderr=GIT_ADVISORY))
+
+        _store(runner=runner, samconfig_path=samconfig).open_config_pr("dev", [_regions_change()])
+
+        assert runner.argvs[-1] == ["git", "checkout", "feat/deploy"]
+
+    def test_a_dirty_entry_on_stdout_still_refuses(self, samconfig: Path) -> None:
+        """Narrowing the parse did not weaken it: a real dirty tree still refuses."""
+        runner = _pr_runner(samconfig, status=_cli_payload(" M src/app.py\n", stderr=GIT_ADVISORY))
+
+        with pytest.raises(UsageError) as excinfo:
+            _store(runner=runner, samconfig_path=samconfig).open_config_pr(
+                "dev", [_regions_change()]
+            )
+
+        assert excinfo.value.field == "worktree"
+        assert runner.argvs == [list(STATUS_ARGV)]
 
 
 # =============================================================================
@@ -1482,7 +1586,7 @@ class TestGhPayloadTolerance:
     """
 
     def test_a_partial_view_payload_reports_only_what_it_carried(self) -> None:
-        runner = FakeRunner(responses={VIEW_ARGV: _gh_payload(json.dumps({"status": "queued"}))})
+        runner = FakeRunner(responses={VIEW_ARGV: _cli_payload(json.dumps({"status": "queued"}))})
         status = GitHubCli(runner=runner).view(
             RunRef(workflow=DEFAULT_WORKFLOW, run_id="42", url=RUN_URL)
         )
@@ -1514,7 +1618,7 @@ class TestGhPayloadTolerance:
     def test_an_unvalidatable_view_payload_is_a_failure_not_a_pass(
         self, label: str, output: str
     ) -> None:
-        runner = FakeRunner(responses={VIEW_ARGV: _gh_payload(output)})
+        runner = FakeRunner(responses={VIEW_ARGV: _cli_payload(output)})
         status = GitHubCli(runner=runner).view(RunRef(workflow=DEFAULT_WORKFLOW, run_id="42"))
         assert status.ok is False, label
         assert status.status is None
@@ -1531,7 +1635,7 @@ class TestGhPayloadTolerance:
         """
         runner = FakeRunner(
             responses={
-                VIEW_ARGV: _gh_payload(
+                VIEW_ARGV: _cli_payload(
                     json.dumps({"status": "completed", "conclusion": "success", "url": RUN_URL}),
                     stderr="warning: gh version 2.40.0 is out of date\n",
                 )
@@ -1549,7 +1653,7 @@ class TestGhPayloadTolerance:
         """The run-URL query is the same boundary, so it reads the same stream."""
         runner = FakeRunner(
             responses={
-                RUN_LIST_ARGV: _gh_payload(
+                RUN_LIST_ARGV: _cli_payload(
                     json.dumps([{"url": RUN_URL, "databaseId": 42}]),
                     stderr="warning: gh version 2.40.0 is out of date\n",
                 )
@@ -1563,7 +1667,7 @@ class TestGhPayloadTolerance:
         """Narrowing the parse did not loosen the tolerance: nothing is invented."""
         runner = FakeRunner(
             responses={
-                VIEW_ARGV: _gh_payload('{"status": "comple', stderr="warning: out of date\n")
+                VIEW_ARGV: _cli_payload('{"status": "comple', stderr="warning: out of date\n")
             }
         )
         status = GitHubCli(runner=runner).view(RunRef(workflow=DEFAULT_WORKFLOW, run_id="42"))
@@ -1576,7 +1680,7 @@ class TestGhPayloadTolerance:
     def test_a_non_string_status_is_no_status(self) -> None:
         """A field of the wrong type reads as absent, not as a coerced status."""
         runner = FakeRunner(
-            responses={VIEW_ARGV: _gh_payload(json.dumps({"status": 5, "url": 7}))}
+            responses={VIEW_ARGV: _cli_payload(json.dumps({"status": 5, "url": 7}))}
         )
         status = GitHubCli(runner=runner).view(RunRef(workflow=DEFAULT_WORKFLOW, run_id="42"))
         assert (status.status, status.conclusion) == (None, None)
@@ -1596,7 +1700,7 @@ class TestGhPayloadTolerance:
     ) -> None:
         # The run is already moving, so the dispatch succeeded; only its URL is
         # missing, and the reference still names the workflow to follow.
-        runner = FakeRunner(responses={RUN_LIST_ARGV: _gh_payload(output)})
+        runner = FakeRunner(responses={RUN_LIST_ARGV: _cli_payload(output)})
         result = GitHubCli(runner=runner).run_workflow(stage="dev")
         assert result.ok is True, label
         assert result.run_url is None
@@ -1618,7 +1722,7 @@ class TestGhPayloadTolerance:
         """
         runner = FakeRunner(
             responses={
-                RUN_LIST_ARGV: _gh_payload(
+                RUN_LIST_ARGV: _cli_payload(
                     json.dumps([{"url": RUN_URL, "databaseId": database_id}])
                 )
             }
@@ -1769,10 +1873,6 @@ class TestPullRequestResponseTolerance:
             ("an array where an object belongs", json.dumps([{"html_url": PR_URL}])),
             ("a bare JSON string", json.dumps(PR_URL)),
             ("a truncated object", '{"html_url": "https://githu'),
-            (
-                "a warning line beside the JSON",
-                f'warning: gh is out of date\n{{"html_url": "{PR_URL}"}}',
-            ),
             ("no html_url at all", json.dumps({"number": 7})),
             ("a non-string html_url", json.dumps({"html_url": 7})),
         ],
@@ -1780,7 +1880,10 @@ class TestPullRequestResponseTolerance:
     def test_an_unreadable_response_is_an_opened_pr_with_no_url(
         self, label: str, output: str, samconfig: Path
     ) -> None:
-        runner = _pr_runner(samconfig, pr=CommandResult(ok=True, output=output))
+        # Scripted on stdout, where ``gh`` prints the REST response: with the body
+        # only in ``output`` the narrowed parse would see an empty string and this
+        # test would pass for every case, proving nothing about the tolerance.
+        runner = _pr_runner(samconfig, pr=_cli_payload(output))
 
         pr = _store(runner=runner, samconfig_path=samconfig).open_config_pr(
             "dev", [_regions_change()]
@@ -1793,11 +1896,32 @@ class TestPullRequestResponseTolerance:
         assert runner.argvs[-1] == ["git", "checkout", "feat/deploy"]
         assert ["git", "branch", "--delete", "--force", PR_BRANCH] not in runner.argvs
 
+    def test_a_warning_on_stderr_still_yields_the_url(self, samconfig: Path) -> None:
+        """Requirement 10.2: the parse reads stdout, so a ``gh`` warning is not noise.
+
+        Read off the stdout+stderr join, the warning line made a perfectly good
+        response unparseable and the tolerance above then reported the pull request
+        as opened with no link to it — the operator had nothing to review.
+        """
+        runner = _pr_runner(
+            samconfig, pr=_cli_payload(PR_RESPONSE, stderr="warning: gh is out of date\n")
+        )
+
+        pr = _store(runner=runner, samconfig_path=samconfig).open_config_pr(
+            "dev", [_regions_change()]
+        )
+
+        assert pr.url == PR_URL
+        assert (pr.branch, pr.base, pr.title) == (PR_BRANCH, "main", PR_TITLE)
+
     def test_a_failed_post_restores_the_file_and_the_checkout(self, samconfig: Path) -> None:
         """A POST that failed opened nothing, so the attempt is undone and named."""
         before = samconfig.read_text(encoding="utf-8")
         runner = _pr_runner(
-            samconfig, pr=CommandResult(ok=False, output="gh: Validation Failed (HTTP 422)\n")
+            samconfig,
+            # ``gh`` writes the error to stderr, so it reaches ``output`` alone —
+            # which is the field ``_step_failure`` surfaces, unchanged by this task.
+            pr=_cli_payload("", stderr="gh: Validation Failed (HTTP 422)\n", ok=False),
         )
 
         with pytest.raises(UsageError) as excinfo:

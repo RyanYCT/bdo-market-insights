@@ -22,7 +22,7 @@ from bdo_deploy.core.exit_codes import ExitCode
 from bdo_deploy.core.models import Capability, Result, RunRef
 from bdo_deploy.presentation import follow_run, result_lines
 from tests.unit.test_deploy_cli import RUN_URL, FakeGitHub, dispatched_result
-from tests.unit.test_deploy_executors import VIEW_ARGV, FakeRunner, _gh_payload
+from tests.unit.test_deploy_executors import VIEW_ARGV, FakeRunner, _cli_payload
 
 RUN = RunRef(workflow="deploy.yml", run_id="42", url=RUN_URL)
 
@@ -56,7 +56,7 @@ class TestFollowRunAgainstTheRealGhBoundary:
     def test_a_passing_run_stays_passing_when_gh_writes_a_warning(self) -> None:
         runner = FakeRunner(
             responses={
-                VIEW_ARGV: _gh_payload(
+                VIEW_ARGV: _cli_payload(
                     json.dumps({"status": "completed", "conclusion": "success", "url": RUN_URL}),
                     stderr="warning: gh version 2.40.0 is out of date\n",
                 )

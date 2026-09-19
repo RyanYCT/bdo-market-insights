@@ -105,6 +105,13 @@ class Git:
         whole picture in one report instead of fixing them one round-trip at a
         time. Every query is read-only; a query that could not be answered is
         itself blocking — an unverifiable precondition is not a passed one.
+
+        Each check reads its answer from ``CommandResult.stdout``, the stream the
+        query prints to, and reports from ``output``, both streams verbatim
+        (Requirement 10.2). Reading the answer off the join made any advisory git
+        wrote to stderr flip the precondition — always towards blocking, so no
+        unsafe release got through, but a clean checkout on ``main`` could be
+        refused with a reason that was not true.
         """
         return [
             issue
@@ -233,11 +240,16 @@ class Git:
         ``--porcelain`` lists untracked files too, and deliberately so: a release
         is cut from what is committed, and a tree with stray files is not the
         tree the operator thinks they are tagging.
+
+        The answer is read from ``stdout`` — the stream ``--porcelain`` lists
+        entries on — so a git advisory on stderr no longer reads as a dirty tree
+        and no longer blocks a release from a clean checkout. A tree that really is
+        dirty is still quoted from ``output``, both streams verbatim.
         """
         status = self._run([GIT, "status", "--porcelain"])
         if not status.ok:
             return _unverifiable("the working tree is clean", status.output)
-        if status.output.strip():
+        if status.stdout.strip():
             return (
                 "the working tree is not clean; commit or stash the changes first:\n"
                 f"{status.output.rstrip()}"
@@ -248,12 +260,15 @@ class Git:
         """Blocking unless the current branch is exactly ``base_branch``.
 
         ``git branch --show-current`` prints nothing on a detached HEAD, which is
-        reported as such rather than as a mismatch against an empty name.
+        reported as such rather than as a mismatch against an empty name — and it
+        prints the name to ``stdout``, which is what is compared here: read off the
+        stdout+stderr join, a git advisory made a release *on* ``main`` read as a
+        mismatch against a name like ``"warning: …\\nmain"``.
         """
         branch = self._run([GIT, "branch", "--show-current"])
         if not branch.ok:
             return _unverifiable(f"the current branch is {base_branch}", branch.output)
-        current = branch.output.strip()
+        current = branch.stdout.strip()
         if not current:
             return (
                 f"HEAD is detached, so the release is not on {base_branch}; "
@@ -270,13 +285,16 @@ class Git:
         """Blocking if ``version`` already names a local tag.
 
         ``git tag --list <version>`` is an exact-name query that exits ``0`` and
-        prints nothing when the tag is absent, so the absence is read from the
-        output rather than from an exit status that never signals it.
+        prints nothing when the tag is absent, so the absence is read from
+        ``stdout`` rather than from an exit status that never signals it. Read off
+        the stdout+stderr join, a git advisory made an *absent* tag look present
+        and blocked a legitimate release; it could never make a present tag look
+        absent, so the old reading failed closed — but it failed.
         """
         listed = self._run([GIT, "tag", "--list", version])
         if not listed.ok:
             return _unverifiable(f"the {version} tag does not exist locally", listed.output)
-        if listed.output.strip():
+        if listed.stdout.strip():
             return (
                 f"the {version} tag already exists locally; releases are immutable, "
                 "so pick the next version"
@@ -289,6 +307,11 @@ class Git:
         Checked separately from the local tag because the origin is what the
         tag-triggered pipeline watches: a version already published there has
         already been released, whether or not this checkout knows about it.
+
+        ``ls-remote`` prints matching refs to ``stdout`` and its progress and
+        advisory lines to stderr, so the presence of the ref is read from ``stdout``
+        alone — otherwise a "warning: redirecting to …" line reads as a published
+        tag and blocks a release of a version nobody has released.
         """
         ref = f"refs/tags/{version}"
         remote_tags = self._run([GIT, "ls-remote", "--tags", remote, ref])
@@ -296,7 +319,7 @@ class Git:
             return _unverifiable(
                 f"the {version} tag does not exist on {remote}", remote_tags.output
             )
-        if remote_tags.output.strip():
+        if remote_tags.stdout.strip():
             return (
                 f"the {version} tag already exists on {remote}; that version has already "
                 "been released, so pick the next one"

@@ -273,18 +273,23 @@ class _GhPullRequest(BaseModel):
     html_url: Annotated[str | None, BeforeValidator(_str_or_none)] = None
 
 
-def _opened_pull_request_url(output: str) -> str | None:
+def _opened_pull_request_url(stdout: str) -> str | None:
     """The opened PR's ``html_url``, or ``None`` when the response cannot be read.
 
-    ``model_validate_json`` is the boundary check: it makes the two ways this read
-    can fail — a body that does not parse (``gh``'s output is captured together
-    with stderr, so a warning line can accompany the JSON) and a body that parses
-    into something that is not a pull request object — one ``ValidationError``,
-    caught in one place. Nothing is scraped out of the text: the URL is a field of
-    a structured response, not a pattern in human-facing output.
+    The argument is ``CommandResult.stdout`` — the stream ``gh`` writes the REST
+    response to — and **not** the stdout+stderr join ``output`` carries. A warning
+    line on stderr is therefore no longer part of the text being validated: it used
+    to make a well-formed response unparseable, and the tolerance below then
+    reported the pull request as opened with no link to it at all.
+
+    ``model_validate_json`` is the boundary check: it makes both remaining ways
+    this read can fail — a body that does not parse, and a body that parses into
+    something that is not a pull request object — one ``ValidationError``, caught
+    in one place. Nothing is scraped out of the text: the URL is a field of a
+    structured response, not a pattern in human-facing output.
     """
     try:
-        return _GhPullRequest.model_validate_json(output).html_url
+        return _GhPullRequest.model_validate_json(stdout).html_url
     except ValidationError:
         return None
 
@@ -696,11 +701,17 @@ class SsmSamconfigStore:
     # -- the git / gh side of a config PR -----------------------------------
 
     def _require_clean_tree(self) -> None:
-        """Refuse to start when the working tree has changes of its own."""
+        """Refuse to start when the working tree has changes of its own.
+
+        The dirty/clean answer is read from ``stdout`` — the stream ``--porcelain``
+        lists entries on — so a git advisory on stderr no longer reads as a dirty
+        tree and no longer refuses a config PR on a clean checkout. A query that
+        *failed* is still reported with both streams through ``_step_failure``.
+        """
         status = self._run([GIT, "status", "--porcelain"])
         if not status.ok:
             raise _step_failure("the working tree state could not be read", status)
-        if status.output.strip():
+        if status.stdout.strip():
             raise UsageError(
                 field="worktree",
                 value="dirty",
@@ -712,9 +723,14 @@ class SsmSamconfigStore:
             )
 
     def _current_branch(self) -> str | None:
-        """The branch to return to afterwards, or ``None`` on a detached HEAD."""
+        """The branch to return to afterwards, or ``None`` on a detached HEAD.
+
+        Parsed from ``stdout``, because this name is what ``_restore`` later checks
+        out: read off the stdout+stderr join, a git advisory became part of the
+        branch name and the restore aimed at a branch that does not exist.
+        """
         branch = self._run([GIT, "branch", "--show-current"])
-        current = branch.output.strip()
+        current = branch.stdout.strip()
         return current if branch.ok and current else None
 
     def _commit_and_push(self, branch: str, title: str) -> None:
@@ -740,9 +756,12 @@ class SsmSamconfigStore:
         ``-f`` fields because all four are flat strings (the nested bodies
         ``GitHubCli`` sends go on stdin for exactly the reason these do not).
 
-        The URL is read out of the validated response, and a response that cannot
-        be read yields ``None``: the pull request exists either way, so it is
-        reported as opened without a URL rather than as a failure.
+        The URL is read out of the validated response — off ``stdout`` alone, so a
+        warning ``gh`` wrote to stderr is not part of what is parsed — and a
+        response that cannot be read yields ``None``: the pull request exists
+        either way, so it is reported as opened without a URL rather than as a
+        failure. A *failed* POST is still reported with both streams verbatim,
+        which is what ``_step_failure`` reads ``output`` for (Requirement 10.2).
         """
         created = self._run(
             [
@@ -763,7 +782,7 @@ class SsmSamconfigStore:
         )
         if not created.ok:
             raise _step_failure("the pull request could not be opened", created)
-        return _opened_pull_request_url(created.output)
+        return _opened_pull_request_url(created.stdout)
 
     def _restore(self, original: str | None, branch: str) -> None:
         """Undo the attempt: discard the edit, go back, drop the scratch branch.
