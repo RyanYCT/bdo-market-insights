@@ -497,7 +497,7 @@ on a changeset prompt nobody can see.
     `--parameter-overrides` replaces samconfig's list wholesale
   - _Requirements: 2.5, 8.1_
 
-- [ ]* 11.9 Tests for the composed parameter set
+- [x]* 11.9 Tests for the composed parameter set
   - Reader unit tests over both `parameter_overrides` spellings and a missing
     stage; assert every `template.yaml` parameter is either in the stage's
     samconfig set or one of the two derived values, so a newly-declared parameter
