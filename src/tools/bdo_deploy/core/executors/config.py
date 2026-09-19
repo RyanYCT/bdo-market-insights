@@ -39,6 +39,16 @@ the model rather than in a renderer is what makes ``--json`` safe: the value is
 Reads also pass ``WithDecryption=False``, so a ``SecureString``'s plaintext is
 never even fetched.
 
+**SSM responses are validated, and the validation never raises.** boto3's SSM
+responses are an I/O boundary, so they are validated against a Pydantic model
+rather than hand-parsed with ``dict.get`` + ``isinstance`` (repo standard,
+AGENTS.md). Every ``ValidationError`` is caught there and turned into the tolerant
+outcome the callers already had: an unreadable page ends the walk with the rows
+read so far, and an unreadable prior parameter reports *no* prior value rather
+than a guessed one. Nothing about a *read* is worth failing a legitimate write or
+a config view over, and a ``ValidationError`` escaping would reach the operator as
+a traceback (Requirement 10.2).
+
 **A refused SSM write happens before AWS is called.** ``put_ssm`` runs
 ``validate_ssm_path`` first, so a non-repo-scoped path — or one whose ``<stage>``
 segment is not an environment defined in ``samconfig.toml`` — fails with exit
@@ -65,12 +75,19 @@ import datetime as dt
 import getpass
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, Protocol, assert_never, cast
+from typing import TYPE_CHECKING, Annotated, Any, Final, Protocol, assert_never, cast
 
 import boto3
 import tomlkit
 from botocore.exceptions import BotoCoreError, ClientError
-from pydantic import SecretStr
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+)
 from tomlkit import TOMLDocument
 from tomlkit.items import Table
 
@@ -105,6 +122,17 @@ SECURE_STRING: Final = "SecureString"
 SECRET_NAME_SUBSTRINGS: Final = ("secret", "password", "token", "key")
 """A key name containing any of these (case-insensitive) is masked (Req. 3.2)."""
 
+DEFAULT_PARAMETER_TYPE: Final = "String"
+"""The type a parameter is read as when the response does not state one.
+
+The conservative choice in the *write* direction, which is the one that matters:
+``put_ssm`` reuses the prior type so an existing ``SecureString`` is not
+downgraded, and ``String`` is exactly what an absent parameter means — there is
+no prior ``SecureString`` to preserve. On the read side a value whose type went
+unstated is still masked when its *name* is secret-shaped, so the name predicate
+carries the case type alone would miss.
+"""
+
 MASK: Final = "***"
 """What a masked value is reported as in a ``ConfigDiff``, which is a plain
 ``str`` field: a SecureString diff says *that* it changed without reproducing
@@ -125,6 +153,91 @@ TITLE_PARAM: Final = "title"
 
 _URL_PATTERN: Final = re.compile(r"https://\S+")
 """How the opened PR's URL is picked out of ``gh pr create``'s output."""
+
+
+def _str_or_none(value: object) -> object:
+    """Keep a string field of an SSM response, drop anything else.
+
+    The ``isinstance`` test the hand-parsed reads performed, moved into the model
+    so Pydantic applies it to every such field. A non-string reads as *absent*
+    rather than raising, because that is what the two call sites already do with
+    it: a parameter with no usable name is skipped, and a parameter with no usable
+    value has no "before" to report. A raise would reach the operator as a
+    traceback instead (Requirement 10.2).
+    """
+    return value if isinstance(value, str) else None
+
+
+def _parameter_type_or_default(value: object) -> object:
+    """A parameter's type, defaulting to ``String`` when the response omits it."""
+    return value if isinstance(value, str) and value else DEFAULT_PARAMETER_TYPE
+
+
+def _mappings_only(value: object) -> object:
+    """Drop non-object entries of a ``Parameters`` list, leaving the rest to validate."""
+    return (
+        [entry for entry in value if isinstance(entry, dict)] if isinstance(value, list) else value
+    )
+
+
+SsmString = Annotated[str | None, BeforeValidator(_str_or_none)]
+"""A string field of an SSM response: present as a ``str``, or ``None``."""
+
+
+class _SsmParameter(BaseModel):
+    """One ``Parameter`` of an SSM response — as much of it as this executor reads.
+
+    Private to this module rather than in ``core.models`` for the same reason the
+    ``gh`` payload models are private to their adapter: this is the *wire shape of
+    boto3's SSM response*, consumed entirely inside this file and reaching no
+    public signature. ``read_merged`` returns the domain ``ConfigView`` and
+    ``put_ssm`` a ``ConfigDiff``; a response model beside them would widen the
+    shared vocabulary with a type nothing else can use.
+
+    ``Name`` and ``Value`` are **nullable**, and the domain default each caller
+    wants is applied at the call site rather than here, because the two callers
+    disagree about what an absent ``Value`` means: a row of a merged *view* shows
+    it as the empty string (the parameter exists and is worth listing, so dropping
+    it would silently narrow the view), while ``put_ssm``'s prior read reports it
+    as ``None`` — *no prior value*, which is what makes a first write show no
+    "before". Collapsing those two into one default would make a first write look
+    like an overwrite of an empty string.
+
+    ``Type`` does get its default in the model, since both callers want the same
+    one (``DEFAULT_PARAMETER_TYPE``, whose docstring says why ``String``).
+    """
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    name: SsmString = Field(default=None, alias="Name")
+    value: SsmString = Field(default=None, alias="Value")
+    parameter_type: Annotated[str, BeforeValidator(_parameter_type_or_default)] = Field(
+        default=DEFAULT_PARAMETER_TYPE, alias="Type"
+    )
+
+
+class _SsmParameterPage(BaseModel):
+    """One page of a ``GetParametersByPath`` response.
+
+    ``NextToken`` is carried here too, so the paging loop reads a validated
+    ``str | None`` instead of repeating the ``isinstance`` test the response
+    fields used to need one by one.
+    """
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    parameters: Annotated[list[_SsmParameter], BeforeValidator(_mappings_only)] = Field(
+        default_factory=list, alias="Parameters"
+    )
+    next_token: SsmString = Field(default=None, alias="NextToken")
+
+
+class _SsmParameterResponse(BaseModel):
+    """A ``GetParameter`` response: the one parameter it carries, if any."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    parameter: _SsmParameter = Field(default_factory=_SsmParameter, alias="Parameter")
 
 
 class SsmClient(Protocol):
@@ -471,11 +584,17 @@ class SsmSamconfigStore:
         that nothing is allowed to render. Paging is followed to the end so a
         stage with many parameters is not silently truncated — that is pagination,
         not a hand-rolled retry; boto3 owns retries.
+
+        Each page is validated as a ``_SsmParameterPage``; a page that cannot be
+        validated at all ends the walk with what was read so far rather than
+        raising, on the same principle as everywhere else here — a view is a read,
+        and reporting fewer rows beats a traceback (Requirement 10.2). A parameter
+        with no usable name is skipped, as it was before: it cannot be keyed.
         """
         parameters: dict[str, tuple[str, str]] = {}
         token: str | None = None
         while True:
-            page = (
+            response = (
                 self.client.get_parameters_by_path(
                     Path=prefix, Recursive=True, WithDecryption=False
                 )
@@ -484,17 +603,21 @@ class SsmSamconfigStore:
                     Path=prefix, Recursive=True, WithDecryption=False, NextToken=token
                 )
             )
-            for parameter in page.get("Parameters", []):
-                name = parameter.get("Name")
-                if isinstance(name, str):
-                    parameters[name] = (
-                        str(parameter.get("Value", "")),
-                        str(parameter.get("Type", "String")),
-                    )
-            next_token = page.get("NextToken")
-            if not isinstance(next_token, str) or not next_token:
+            try:
+                page = _SsmParameterPage.model_validate(response)
+            except ValidationError:
                 return parameters
-            token = next_token
+            for parameter in page.parameters:
+                if parameter.name is not None:
+                    parameters[parameter.name] = (
+                        parameter.value if parameter.value is not None else "",
+                        parameter.parameter_type,
+                    )
+            # An absent *or empty* token is the last page; an empty one would
+            # otherwise be sent back as a cursor and walk the same page forever.
+            if not page.next_token:
+                return parameters
+            token = page.next_token
 
     def _read_prior(self, path: str) -> tuple[str | None, str]:
         """The current value and type at ``path``; ``(None, "String")`` if absent.
@@ -505,18 +628,21 @@ class SsmSamconfigStore:
         the write is what the operator asked for, and a diff that cannot state
         the prior value is better than refusing a legitimate write because the
         read was denied.
+
+        A response that cannot be validated is treated the same way, and for the
+        same reason: an unreadable prior parameter is not a prior value, so it
+        reports ``None`` rather than a guessed one — and never a traceback
+        (Requirement 10.2).
         """
         try:
             response = self.client.get_parameter(Name=path, WithDecryption=False)
         except (BotoCoreError, ClientError):
-            return None, "String"
-        parameter = response.get("Parameter", {})
-        value = parameter.get("Value")
-        parameter_type = parameter.get("Type", "String")
-        return (
-            value if isinstance(value, str) else None,
-            parameter_type if isinstance(parameter_type, str) else "String",
-        )
+            return None, DEFAULT_PARAMETER_TYPE
+        try:
+            parameter = _SsmParameterResponse.model_validate(response).parameter
+        except ValidationError:
+            return None, DEFAULT_PARAMETER_TYPE
+        return parameter.value, parameter.parameter_type
 
     # -- the git / gh side of a config PR -----------------------------------
 

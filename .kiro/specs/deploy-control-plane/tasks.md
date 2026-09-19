@@ -368,7 +368,7 @@ defence-in-depth (ADR-0040, amended).
     own output — never a guessed status
   - _Requirements: 10.2_
 
-- [ ] 10.6 Pydantic model at the SSM boundary
+- [x] 10.6 Pydantic model at the SSM boundary
   - Replace the `dict.get` + `isinstance` parsing of boto3 SSM responses in
     `core/executors/config.py` with a Pydantic parameter model validated via
     `model_validate`, preserving the same tolerant failure: `ok=False` with the
