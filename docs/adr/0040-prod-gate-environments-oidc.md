@@ -81,7 +81,21 @@ the repository, so no commit, branch edit or force-push can remove it — the
 property the rejected `in_ci` check could never have.
 
 `deploy.yml` additionally refuses a prod run whose ref is neither a `v*` tag nor
-`main`, failing in seconds with the ref named. This is **defence in depth, not
+`main`, naming the rejected ref. **An earlier version of this decision was wrong
+about when that guard runs**, and the correction changes where it lives. It said
+the guard "fails in seconds instead of stalling at the environment gate" while
+placing it as a step *inside* the `deploy` job. That cannot happen: GitHub
+documents that a job referencing an environment with required reviewers waits for
+approval before it starts, and must satisfy the environment's protection rules
+before running or accessing that environment's secrets. A step inside the deploy
+job therefore runs *after* the approval wait, not before it. The guard is
+consequently hoisted into a **separate pre-gate job that references no
+Environment**, which the deploy job depends on via `needs:`, so a disallowed ref
+is named before the approval wait begins. Whether a failing pre-gate job also
+short-circuits an approval request already in flight was not verified and is not
+claimed here.
+
+This is **defence in depth, not
 the boundary**, and the distinction is load-bearing: `workflow_dispatch`
 executes the workflow definition *from the selected ref*, so a guard written
 inside `deploy.yml` can be edited away on the very branch being dispatched. Its
@@ -122,8 +136,8 @@ Two alternatives were weighed and rejected:
   prod the reviewer gate is the human backstop; **dev has none**.
 - (+) `workflow_dispatch` no longer accepts an arbitrary ref for prod: the
   Environment's branch/tag policy admits only `v*` tags and `main`, enforced by
-  GitHub outside the repository, with the in-workflow guard giving fast, legible
-  feedback in front of it. "Deploy this branch to dev" stays expressible, which
+  GitHub outside the repository, with the in-workflow guard — in a pre-gate job
+  ahead of the protected deploy job — giving legible feedback in front of it. "Deploy this branch to dev" stays expressible, which
   is the point of having the policy on `prod` alone.
 - (−) The in-workflow guard is editable on the ref being dispatched, so it must
   never be read as the control; the Environment policy is. A reviewer tempted to

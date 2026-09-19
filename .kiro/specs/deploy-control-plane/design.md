@@ -140,10 +140,14 @@ application code — the control plane structurally cannot run a prod `sam deplo
 `bootstrap` and enforced by GitHub outside the repository, so no commit or branch
 edit can remove it — that is the boundary (Requirement 6.5). `deploy.yml`
 additionally **refuses a prod run whose ref is neither a `v*` tag nor `main`** in
-a guard step placed before `configure-aws-credentials`, so a wrong ref fails in
-seconds with the ref named rather than stalling at a bare "branch not allowed to
-deploy" at the environment gate (Requirement 6.6). That guard is
-defence-in-depth, explicitly **not** the boundary: `workflow_dispatch` runs the
+a **separate pre-gate job** that declares no `environment:`, with the deploy job
+declaring `needs:` on it (Requirement 6.6). The job boundary is load-bearing: a
+job that references an Environment with required reviewers waits for approval
+before it starts and must satisfy the Environment's protection rules before
+running or reading its secrets, so a guard *step inside* the deploy job could not
+run before the approval wait. Hoisting it into an unprotected pre-gate job is
+what lets a disallowed ref be named before the wait rather than after it. That
+guard is defence-in-depth, explicitly **not** the boundary: `workflow_dispatch` runs the
 workflow definition from the selected ref, so a guard written here is editable on
 the very branch being dispatched. The control plane sends no `--ref`, so a wizard
 dispatch always runs the default branch (Requirement 6.7). Rationale: ADR-0040.
@@ -376,6 +380,14 @@ plan is what preserves dry-run purity (Property 5) — a preview must reach no t
 — and plan equivalence (Property 1), since a blocking watch is not part of what a
 plan describes.
 
+**`gh --json` payloads are parsed by Pydantic, tolerantly.** The `gh run view
+--json` / `gh run list --json` responses are an I/O boundary, so they are
+validated with `model_validate` against a small Pydantic model of a `gh` run
+rather than hand-parsed with `dict.get` + `isinstance` (repo standard, AGENTS.md).
+The **tolerant semantics are preserved**: a payload that fails validation is
+reported as `ok=False` carrying `gh`'s own output, never as a guessed status — an
+unreadable status is not a passing status.
+
 **Secret values never reach a plan.** For `secret_set` steps only the secret's
 **name** is rendered into `PlanStep.command` / `Plan.effects`. The role ARN value
 is account-identifying, so it is supplied at execution and never appears in a
@@ -411,6 +423,20 @@ class ConfigStore(Protocol):
         """PutParameter with audit. Rejects any name that is not a repo-scoped
         /bdo-market-insights/<stage>/<category>/<key> path."""
 ```
+
+**SSM responses are parsed by Pydantic, tolerantly.** boto3 SSM responses are an
+I/O boundary too, so a small Pydantic model of an SSM parameter validated with
+`model_validate` replaces the `dict.get` + `isinstance` hand-parsing, under the
+same rule: an unvalidatable response is reported as `ok=False` with the
+underlying output, never as a guessed value.
+
+**Pull requests are opened through `gh api`, not `gh pr create`.**
+`open_config_pr` POSTs to `repos/{owner}/{repo}/pulls` and reads `html_url` out of
+the JSON response, instead of shelling `gh pr create` and regex-scraping the URL
+from its output. Requirement 3.3 asks only that the PR be opened "via `gh`", which
+REST satisfies. The reason is robustness — a structured response beats scraping
+human-facing CLI output, whose wording is not a contract — and it additionally
+lets the tool work where `gh pr` is unavailable.
 
 ### Capability mapping
 
@@ -591,6 +617,17 @@ rule holds for every diff — planned, previewed, or returned — not only at th
   rendered. Consequently `--dry-run` and `--json` **cannot** print such a value:
   it is absent from the model they serialize, not merely omitted by the
   renderer.
+- **A secret-shaped key is refused on the `samconfig.toml` path, not masked.**
+  `config set` renders `key=value` verbatim on the deploy-time branch — into
+  `PlanStep.command`, `Plan.effects` and the pull-request title — so a
+  secret-shaped key whose target is not a Repo_Scoped_SSM_Path is **rejected at
+  validation** (exit `2`, no executor call, no PR), directing the operator to an
+  SSM path (Requirement 3.8). The predicate is the `SECRET_NAME_SUBSTRINGS`
+  substring test criterion 3.2 already uses for masking. Masking the preview was
+  rejected: the PR title and the committed file would still carry the value, so
+  masking would hide the leak rather than close it. The trade is deliberate — the
+  substring predicate has false positives (`IconKeyPrefix` contains "key"), and a
+  refusal costs one re-run while a committed secret costs a rotation.
 - **"Planning is pure" is precise, not absolute.** `plan()`'s only I/O is the
   **cached read of `samconfig.toml`** performed when a `Command` is validated (to
   resolve the set of defined environments). It performs no network call, no AWS

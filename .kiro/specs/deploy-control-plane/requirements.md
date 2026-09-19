@@ -123,6 +123,7 @@ CI/CD workflows).
 5. IF a `ConfigStore` write of an operational value fails, THEN THE Wizard SHALL return an error identifying the failed write and SHALL leave the prior value at the targeted Repo_Scoped_SSM_Path unchanged.
 6. WHEN deploy-time configuration or parameters (for example `BdoRegions`) are changed, THE ConfigStore SHALL apply the change to `samconfig.toml` by opening a pull request via `gh` and SHALL NOT flip it in-place at runtime.
 7. WHEN a `Plan` is rendered, THE Wizard SHALL mask secret-shaped and operational values in `PlanStep.command` and in `Plan.effects`, so that neither `--dry-run` nor `--json` output contains such a value.
+8. WHERE `config set` targets a key that is not a Repo_Scoped_SSM_Path, IF that key's name contains any of the substrings `secret`, `password`, `token`, or `key` (case-insensitive, the same substrings as criterion 2), THEN THE Wizard SHALL reject the request with exit code `2` before any executor call, open no pull request, and direct the operator to a Repo_Scoped_SSM_Path, so that a secret-shaped value is never rendered into a `Plan`, a pull request title, or a tracked file.
 
 ### Requirement 4: Bootstrap capability (one-time bootstrap helper)
 
@@ -158,7 +159,7 @@ CI/CD workflows).
 3. THE production GitHub Actions job SHALL run inside a GitHub Environment configured with required reviewers and OIDC keyless deploy (no static AWS credentials).
 4. WHEN the bootstrap helper creates or updates the production GitHub Environment, THE Wizard SHALL configure its required reviewers as part of that step.
 5. WHEN the bootstrap helper creates or updates the production GitHub Environment, THE Wizard SHALL configure a deployment branch and tag policy on that Environment admitting only tags matching `v*` and the `main` branch, so that GitHub refuses a production deploy from any other ref from outside the repository.
-6. IF a production deploy run is triggered for a ref that is neither a tag matching `v*` nor the `main` branch, THEN THE deploy workflow SHALL fail the run before assuming any AWS credential and SHALL name the rejected ref, as defence in depth behind the Environment policy of criterion 5 rather than as the boundary itself.
+6. IF a production deploy run is triggered for a ref that is neither a tag matching `v*` nor the `main` branch, THEN THE deploy workflow SHALL fail the run in a job that does not reference the GitHub Environment and on which the deploy job declares a `needs:` dependency, so that the rejected ref is named before the deploy job's approval wait begins rather than after it, as defence in depth behind the Environment policy of criterion 5 rather than as the boundary itself.
 7. THE GitHubExecutor SHALL dispatch `deploy.yml` without a `--ref` argument, so that a dispatch from the Wizard always runs the repository's default branch.
 
 ### Requirement 7: Release capability

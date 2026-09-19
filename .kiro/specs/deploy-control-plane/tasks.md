@@ -328,6 +328,92 @@ defence-in-depth (ADR-0040, amended).
     in-workflow guard, with the control plane dispatching no explicit ref
   - _Requirements: 6.5, 6.6, 6.7_
 
+### Phase 10 — Review follow-ups
+
+- [ ] 10.1 Refuse secret-shaped keys on the deploy-time `config set` path
+  - In `core/dispatch.py::_plan_config_set`, reject a `config set` whose target is
+    not a `Repo_Scoped_SSM_Path` and whose key name matches
+    `SECRET_NAME_SUBSTRINGS` (reuse the predicate from
+    `core/executors/config.py`; do not clone it): exit `2` before any executor
+    call, no PR, error naming the key and directing the operator to an SSM path
+  - _Requirements: 3.7, 3.8_
+
+- [ ]* 10.2 Update the property suite that currently asserts the leak
+  - `tests/unit/test_deploy_properties.py::test_the_ssm_write_masks_its_value_and_the_pull_request_does_not`
+    asserts `value in step.command` on the deploy-time branch; re-assert refusal
+    (exit `2`, no PR, value absent from `command`/`effects`/PR title)
+  - Filter `_param_names` so generated non-SSM keys exclude the secret substrings,
+    and add a generator covering secret-shaped names for the refusal case
+  - _Requirements: 3.7, 3.8_
+
+- [ ] 10.3 Move the prod ref check into a pre-gate job
+  - In `.github/workflows/deploy.yml`, hoist the ref guard out of the `deploy` job
+    into a job declaring no `environment:`; have `deploy` declare `needs:` on it,
+    so a disallowed ref is named before the approval wait
+  - Keep the guard's comment: defence-in-depth behind the Environment policy, not
+    the boundary — it is editable on the dispatched ref
+  - _Requirements: 6.6_
+
+- [ ]* 10.4 Update the workflow structural tests for the new job boundary
+  - `tests/unit/test_deploy_workflow.py` asserts the guard's position *within* the
+    deploy job; assert instead that the guard job exists, references no
+    `environment:`, is listed in the deploy job's `needs:`, and covers the
+    `v*`-tag / `main` cases
+  - _Requirements: 6.6_
+
+- [ ] 10.5 Pydantic model at the `gh` boundary
+  - Replace `_json_object` / `_str_field` / `_id_field` hand-parsing in
+    `core/executors/github.py` with a Pydantic model of a `gh run` view validated
+    via `model_validate`; on validation failure return `ok=False` carrying `gh`'s
+    own output — never a guessed status
+  - _Requirements: 10.2_
+
+- [ ] 10.6 Pydantic model at the SSM boundary
+  - Replace the `dict.get` + `isinstance` parsing of boto3 SSM responses in
+    `core/executors/config.py` with a Pydantic parameter model validated via
+    `model_validate`, preserving the same tolerant failure: `ok=False` with the
+    underlying output, never a guessed value
+  - _Requirements: 10.2_
+
+- [ ]* 10.7 Boundary-model tests
+  - Feed malformed/partial `gh --json` and SSM payloads and assert `ok=False` with
+    the tool's output surfaced verbatim and no status or value invented
+  - _Requirements: 10.2_
+
+- [ ] 10.8 Open pull requests via `gh api`
+  - In `core/executors/config.py`, replace `gh pr create` with
+    `gh api --method POST repos/{owner}/{repo}/pulls` and read `html_url` from the
+    JSON response; delete the URL-scraping regex
+  - Update the planned `PlanStep.command` rendering for `samconfig.pr` to match
+  - _Requirements: 3.3_
+
+- [ ] 10.9 Fix the vacuous Property 4 assertion
+  - `tests/unit/test_deploy_properties.py::test_no_input_the_workflow_insists_on_is_left_unsent`
+    admits it asserts nothing; assert the real superset relation — every input the
+    control plane sends is declared in `deploy.yml`'s `workflow_dispatch` inputs,
+    and every required declared input is sent
+  - _Requirements: 1.4, 1.5_
+
+- [ ] 10.10 Resolve `build_dispatcher()` and the front-end docstrings
+  - `build_dispatcher()` in `core/assembly.py` is production-dead while `cli.py`
+    and `tui.py` docstrings still claim both front-ends call it; either route both
+    front-ends through it or remove it and correct the docstrings to name
+    `build_control_plane()`
+  - _Requirements: 1.4_
+
+- [ ] 10.11 De-duplicate the cloned constants
+  - `RELEASE_BASE_BRANCH` / `GIT_REMOTE` (`core/dispatch.py` and
+    `core/executors/git.py`), `DEPLOY_WORKFLOW` vs `DEFAULT_WORKFLOW`
+    (`core/dispatch.py` / `core/executors/github.py`), and `MASK` are cloned to
+    dodge an import cycle; give them one home the core and the executors both
+    import (e.g. a leaf constants module) and delete the copies
+  - _Requirements: 1.4, 1.5_
+
+- [ ] 10.12 Checkpoint — Ensure `ruff` / `mypy` / `pytest` pass and `deploy.yml` parses; ask the user if questions arise.
+  - Verifies the refusal path, the pre-gate ref guard, both boundary models, the
+    `gh api` PR path, and the three corrections
+  - _Requirements: 1.4, 1.5, 3.3, 3.7, 3.8, 6.6, 10.2_
+
 ## Task Dependency Graph
 
 ```json
@@ -354,7 +440,10 @@ defence-in-depth (ADR-0040, amended).
     { "id": 18, "tasks": ["8.1", "8.2", "8.3", "8.4", "8.5"] },
     { "id": 19, "tasks": ["9.1"] },
     { "id": 20, "tasks": ["9.2", "9.5"] },
-    { "id": 21, "tasks": ["9.3", "9.4", "9.6"] }
+    { "id": 21, "tasks": ["9.3", "9.4", "9.6"] },
+    { "id": 22, "tasks": ["10.1", "10.3", "10.5", "10.6"] },
+    { "id": 23, "tasks": ["10.2", "10.4", "10.8", "10.10"] },
+    { "id": 24, "tasks": ["10.7", "10.9", "10.11"] }
   ]
 }
 ```
