@@ -180,7 +180,7 @@ Both still exist, and neither has been removed. The split:
 | Job | Canonical | Notes |
 |---|---|---|
 | Deploy a stage, release, read/change config, bootstrap the pipeline | **`bdo-deploy`** | The front door; dispatches to SAM / `gh` / `git`. |
-| Full-state deploy with a non-samconfig parameter (`AUTO_MIGRATE=false`, `AutoBootstrap`, `ApiVersion`, `MigrationsFingerprint`) | **`make deploy`** | `DEPLOY_PARAMS` assembles the complete set; the control plane deliberately passes no `--parameter-overrides`. Required for [First-time bring-up](#first-time-bring-up). |
+| Full-state deploy that deviates from the committed set (`AUTO_MIGRATE=false`) or needs a derived parameter (`ApiVersion`, `MigrationsFingerprint`) | **`make deploy`** | `DEPLOY_PARAMS` composes the stage's `samconfig.toml` set through `scripts/samconfig_regions.py` and merges in the two derived values plus any `AUTO_MIGRATE` / `AUTO_BOOTSTRAP` / `USE_RDS_PROXY` / `BDO_REGIONS` override; the control plane deliberately passes no `--parameter-overrides`. Required for [First-time bring-up](#first-time-bring-up). |
 | Post-deploy smoke test | **`make verify`** | ADR-0029. Not a control-plane capability; run it after a `bdo-deploy deploy`. |
 | Seed a stage's deploy config for the first time | **`make seed-config`** | Writes all four SSM keys at once. Thereafter change one key with `bdo-deploy config set` (audited, path-validated). |
 | DB roles, migrations, break-glass, admin SQL | **`make`** (`db-bootstrap`, `migrate-lambda`, `migrate`, `db-admin`, `break-glass-*`) | Database operations; no control-plane equivalent. |
@@ -259,6 +259,9 @@ teardown).
 - These three steps use `make deploy` deliberately: `AUTO_MIGRATE=false` and
   `VERIFY=false` are Makefile parameters, and the control plane passes no
   `--parameter-overrides` (see [Control plane vs Makefile](#control-plane-vs-makefile)).
+  `AUTO_MIGRATE=false` reaches CloudFormation by *replacing* the `AutoMigrate`
+  entry in the set composed from `samconfig.toml` — not by being appended as a
+  duplicate — so the committed `AutoMigrate=true` cannot win over it.
   Once the stack exists, routine deploys go through `bdo-deploy deploy`.
 
 ### First-time role bootstrap

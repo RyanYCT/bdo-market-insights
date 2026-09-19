@@ -486,7 +486,7 @@ on a changeset prompt nobody can see.
     `scripts/validate_regions.py`
   - _Requirements: 2.5_
 
-- [ ] 11.8 Compose the full-state override string from samconfig
+- [x] 11.8 Compose the full-state override string from samconfig
   - `Makefile`: build `DEPLOY_PARAMS` by reading the stage's set through the
     reader and appending only `ApiVersion` and `MigrationsFingerprint`, instead of
     restating the static parameters inline; keep `confirm_changeset = true`

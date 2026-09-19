@@ -165,14 +165,27 @@ jobs:
           # Matches the `region` of every samconfig.toml stage.
           aws-region: us-east-1
       - run: sam build
-      # Deploy the COMPLETE stage state. `sam deploy --parameter-overrides`
-      # replaces the whole parameter set (unspecified params revert to template
-      # defaults), so every one is listed here. Domain, demo-key and hosted-zone
-      # values are resolved from SSM Parameter Store at deploy (ADR-0024): the
-      # overrides pass SSM *key paths*, not values, so nothing account-specific
-      # is committed and a full-state deploy can't drop the custom domain. Seed
-      # the keys once per stage with `make seed-config STAGE=<stage>`. The paths
-      # are stage-scoped, so they follow $STAGE rather than being pinned to prod.
+      # Deploy the COMPLETE stage state, COMPOSED from the stage's samconfig.toml
+      # parameter set plus the only two parameters derived at deploy time. The
+      # static ones -- Stage, BdoRegions, UseRdsProxy, AutoMigrate, AutoBootstrap
+      # and the four SSM-resolved key paths -- are not restated here;
+      # samconfig.toml is their single source (Req 2.5), the same source
+      # `make deploy` and a `sam deploy --config-env <stage>` read.
+      #
+      # Composition rather than merging, because SAM offers no merge: a
+      # command-line `--parameter-overrides` REPLACES samconfig's list wholesale
+      # -- unspecified parameters revert to template.yaml defaults, not to the
+      # values the stage declares (aws-sam-cli#2380). Supplying the two derived
+      # values therefore obliges this step to supply every static one, and
+      # scripts/samconfig_regions.py is what supplies them from the file. It also
+      # applies the two as a merge, so neither can collide with a samconfig entry
+      # and leave SAM to pick between duplicate `Key=` tokens.
+      #
+      # Domain, demo-key and hosted-zone values are resolved from SSM Parameter
+      # Store at deploy (ADR-0024): the set carries SSM *key paths*, not values,
+      # stage-scoped in each samconfig table, so nothing account-specific is
+      # committed and a full-state deploy can't drop the custom domain. Seed the
+      # keys once per stage with `make seed-config STAGE=<stage>`.
       #
       # MigrationsFingerprint is a content hash of migrations/versions; when it
       # changes, the auto-migrate custom resource re-runs `alembic upgrade head`
@@ -183,12 +196,11 @@ jobs:
       - name: Deploy (full stage state)
         run: |
           fingerprint=$(find migrations/versions -type f -name '*.py' -exec sha256sum {} \; | sort | sha256sum | cut -c1-32)
-          # BdoRegions is the single active-region toggle and lives only in
-          # samconfig.toml (Req 1.5 / ADR-0036). A full-state --parameter-overrides
-          # replaces the whole set, so the value is read back from that stage's
-          # config here rather than hardcoded -- keeping one authoritative source.
-          bdo_regions=$(uv run python scripts/samconfig_regions.py "$STAGE")
           # ApiVersion is the release tag on a tag run (resolved in `env` above);
           # it is the single source for GET /v1/meta's api_version (ADR-0037).
+          # MigrationsFingerprint re-triggers the auto-migrate resource when the
+          # migration set changes (ADR-0025). Everything else comes from the file.
+          params=$(uv run python scripts/samconfig_regions.py --parameters "$STAGE" \
+            "ApiVersion=$API_VERSION" "MigrationsFingerprint=$fingerprint")
           sam deploy --config-env "$STAGE" --no-confirm-changeset \
-            --parameter-overrides "Stage=$STAGE BdoRegions=$bdo_regions ApiVersion=$API_VERSION UseRdsProxy=false AutoMigrate=true MigrationsFingerprint=$fingerprint EnableDemoKey=/bdo-market-insights/$STAGE/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/$STAGE/domain/api-domain-name IconDomainName=/bdo-market-insights/$STAGE/domain/icon-domain-name HostedZoneId=/bdo-market-insights/$STAGE/domain/hosted-zone-id"
+            --parameter-overrides "$params"
