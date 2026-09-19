@@ -2,7 +2,7 @@
 
 A **thin** front-end (Requirement 1.4): each subcommand collects intent into a
 typed ``Command``, hands it to the shared ``Dispatcher`` from
-``core.assembly.build_dispatcher()``, and renders the ``Result``. It contains no
+``core.assembly.build_control_plane()``, and renders the ``Result``. It contains no
 routing, no validation and no capability logic — those live in the core, so the
 TUI front-end inherits exactly the same behaviour instead of a second copy that
 could drift.

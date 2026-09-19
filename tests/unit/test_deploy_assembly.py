@@ -2,10 +2,13 @@
 
 Two claims are asserted, both structural:
 
-- **One wiring, two entry points.** ``build_dispatcher()`` still returns the core
-  alone; ``build_control_plane()`` returns it together with the very
-  ``GitHubExecutor`` that core dispatches github steps through, so a dispatch and
-  the watch that follows it cannot end up talking to two different GitHubs.
+- **One wiring, two entry points.** ``build_dispatcher()`` holds the wiring and
+  returns the core alone; ``build_control_plane()`` — the one the front-ends call —
+  delegates to it and returns that core together with the very ``GitHubExecutor``
+  it dispatches github steps through, so a dispatch and the watch that follows it
+  cannot end up talking to two different GitHubs. These tests are the direct
+  caller of ``build_dispatcher()``: they are what keeps the four defaults
+  assertable on their own.
 - **Assembling reaches no tool.** No subprocess, no AWS client, no network — which
   is what makes it safe to build before a ``--dry-run`` is known about
   (Requirement 2.4, design Property 5).

@@ -4,7 +4,7 @@ A **convenience skin, not the system of record.** GitHub's own
 ``workflow_dispatch`` form and the Actions run dashboard remain the canonical
 human trigger/observe surface, so this front-end is deliberately shallow: it
 collects intent into the same typed ``Command`` the CLI builds, hands it to the
-same shared ``Dispatcher`` from ``core.assembly.build_dispatcher()``, and renders
+same shared ``Dispatcher`` from ``core.assembly.build_control_plane()``, and renders
 the ``Plan`` and the ``Result`` with the same vocabulary from ``presentation``
 (Requirement 1.4). No routing, validation or capability logic is restated here —
 if it were, the two front-ends could disagree about the same intent, which is

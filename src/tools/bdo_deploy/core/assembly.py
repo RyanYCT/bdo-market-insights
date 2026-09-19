@@ -10,10 +10,17 @@ drifting from one another. Requirement 1.4 asks that both front-ends route
 through *the same* ``Dispatcher``; a single assembly function is how that stops
 being an aspiration.
 
-Two entry points, one wiring: ``build_dispatcher()`` returns the core alone, and
-``build_control_plane()`` returns it together with the ``GitHubExecutor`` a
-front-end needs to follow a dispatched run (``ControlPlane``, below). The second
-is what the front-ends call.
+Two entry points, one wiring. ``build_control_plane()`` is the **only** one a
+front-end calls: it returns the core together with the ``GitHubExecutor`` a
+front-end needs to follow a dispatched run (``ControlPlane``, below).
+``build_dispatcher()`` returns the core alone and is where the wiring itself
+lives — ``build_control_plane()`` delegates to it, so every dispatcher either
+front-end runs on is built by it — but nothing outside this module calls it in
+production. It stays public as the seam for a caller that wants the core without
+a ``ControlPlane`` around it, which today means the tests: ``build_dispatcher()``
+is what they assert the four defaults through, and inlining it into
+``build_control_plane()`` would move that wiring somewhere it cannot be exercised
+on its own without buying anything.
 
 It is deliberately a **function, not a container**. There is no registry, no
 plugin lookup and no dependency-injection framework: there are exactly four
@@ -33,7 +40,7 @@ subprocess, creates no AWS client and touches no network:
   merely to *plan*, and planning is pure (Requirement 2.4, design Property 5). A
   ``--dry-run`` therefore stops at ``plan()`` having reached nothing at all.
 
-So ``build_dispatcher()`` is safe to call unconditionally at front-end start-up,
+So either entry point is safe to call unconditionally at front-end start-up,
 before it is known whether the command is a dry run.
 
 Every parameter is optional and defaults to the real adapter, which is what keeps
@@ -61,6 +68,12 @@ def build_dispatcher(
     config: ConfigStore | None = None,
 ) -> Dispatcher:
     """Return a ``Dispatcher`` wired to the four concrete executor adapters.
+
+    **This is the wiring, not a front-end entry point.** The front-ends call
+    ``build_control_plane()``, which delegates here — so this function builds
+    every dispatcher that runs in production, while being called directly only by
+    tests and by a programmatic caller that wants the core alone. Naming the four
+    defaults in one function keeps them assertable in isolation.
 
     Each argument overrides one adapter and defaults to the real one, so a caller
     that needs a stand-in for a single tool does not have to restate the wiring

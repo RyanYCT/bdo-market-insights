@@ -520,7 +520,7 @@ class TestDryRun:
     def test_it_is_inert_against_the_real_wiring(self) -> None:
         """No injected dispatcher: the real composition root plans and stops.
 
-        Guards the front-end's default path — ``build_dispatcher()`` — which
+        Guards the front-end's default path — ``build_control_plane()`` — which
         creates no AWS client and runs no subprocess, so planning reaches nothing.
         """
         assert main(["deploy", "--dry-run"]) == ExitCode.SUCCESS

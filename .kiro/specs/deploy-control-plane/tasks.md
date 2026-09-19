@@ -394,7 +394,7 @@ defence-in-depth (ADR-0040, amended).
     and every required declared input is sent
   - _Requirements: 1.4, 1.5_
 
-- [ ] 10.10 Resolve `build_dispatcher()` and the front-end docstrings
+- [x] 10.10 Resolve `build_dispatcher()` and the front-end docstrings
   - `build_dispatcher()` in `core/assembly.py` is production-dead while `cli.py`
     and `tui.py` docstrings still claim both front-ends call it; either route both
     front-ends through it or remove it and correct the docstrings to name
