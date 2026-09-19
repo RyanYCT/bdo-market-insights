@@ -13,13 +13,18 @@ is ever made:
 from __future__ import annotations
 
 import ast
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
 import pytest
+import tomlkit
 from pydantic import SecretStr
 
 from bdo_deploy.core import constants
+from bdo_deploy.core import validation as validation_module
 from bdo_deploy.core.dispatch import (
     DEPLOY_ROLE_SECRET,
     DEPLOY_WORKFLOW,
@@ -33,7 +38,7 @@ from bdo_deploy.core.errors import ConfirmationRequired, UsageError, exit_code_f
 from bdo_deploy.core.executors import config as config_module
 from bdo_deploy.core.executors import git as git_module
 from bdo_deploy.core.executors import github as github_module
-from bdo_deploy.core.executors.config import PR_BODY, SAMCONFIG_FILE
+from bdo_deploy.core.executors.config import PARAMETER_OVERRIDES_KEY, PR_BODY, SAMCONFIG_FILE
 from bdo_deploy.core.executors.github import SECRET_ENV_PREFIX, RunRef, RunStatus
 from bdo_deploy.core.exit_codes import ExitCode
 from bdo_deploy.core.models import (
@@ -49,7 +54,7 @@ from bdo_deploy.core.models import (
     PrRef,
     Target,
 )
-from bdo_deploy.core.validation import PROD_STAGE, SSM_ROOT_SEGMENT
+from bdo_deploy.core.validation import PROD_STAGE, SSM_ROOT_SEGMENT, samconfig_parameter_names
 
 SSM_KEY = "/bdo-market-insights/dev/domain/api-domain-name"
 
@@ -59,6 +64,48 @@ _CONSTANTS_MODULE: Final = "tools/bdo_deploy/core/constants.py"
 RUN_URL = "https://github.com/RyanYCT/bdo-market-insights/actions/runs/42"
 REVIEWER = "User:1234"
 """One required reviewer — the least a ``prod`` bootstrap is constructible with."""
+
+CARRIED_SECRET_KEY: Final = "IconKeyPrefix"
+"""A secret-shaped name that is nonetheless an ordinary deploy-time parameter.
+
+Requirement 3.8's allowlist is about a key the target stage's ``samconfig.toml``
+*already carries*, and no committed key is secret-shaped today — ``Stage``,
+``BdoRegions`` and ``UseRdsProxy`` are the whole set, and task 11.6 is what adds
+``EnableDemoKey``. So the allowed population is exercised against a fixture
+samconfig that carries this name (``samconfig_carrying`` below) rather than by
+waiting for the file to grow one.
+"""
+
+
+@contextmanager
+def samconfig_carrying(stage: str, key: str, value: str = "carried") -> Iterator[Path]:
+    """Point the validation layer at a ``samconfig.toml`` whose ``stage`` carries ``key``.
+
+    A copy of the real file with one entry appended to ``stage``'s
+    ``parameter_overrides``, so everything else about it — the other stage, the
+    stage set itself, the SSM stage segments — stays exactly what the repository
+    commits. Only the named stage gains the key, which is what makes the
+    per-stage half of the allowlist observable.
+
+    The cached parse is dropped on both sides of the swap: it is keyed by path, so
+    a stale entry would otherwise let the fixture leak into a later test (or the
+    real file into this one).
+    """
+    document = tomlkit.parse(validation_module.SAMCONFIG_PATH.read_text(encoding="utf-8"))
+    parameters = document[stage]["deploy"]["parameters"]
+    overrides = str(parameters[PARAMETER_OVERRIDES_KEY])
+    parameters[PARAMETER_OVERRIDES_KEY] = f"{overrides} {key}={value}"
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "samconfig.toml"
+        path.write_text(tomlkit.dumps(document), encoding="utf-8")
+        patch = pytest.MonkeyPatch()
+        validation_module._samconfig_document.cache_clear()
+        patch.setattr(validation_module, "SAMCONFIG_PATH", path)
+        try:
+            yield path
+        finally:
+            patch.undo()
+            validation_module._samconfig_document.cache_clear()
 
 
 # -- fakes -------------------------------------------------------------------
@@ -744,19 +791,25 @@ class TestPlanMasking:
         assert f"/{SSM_ROOT_SEGMENT}/dev/" in str(error)
 
     def test_the_predicates_false_positives_are_refused_legibly(self) -> None:
-        # The accepted trade: the substring test catches a legitimate parameter
-        # name too. A refusal costs one re-run, a committed secret costs a
-        # rotation — but the operator must be able to see *why* it was refused,
-        # so the message names samconfig.toml and the substring that matched.
+        # The residual trade after the allowlist (Requirement 3.8): the substring
+        # test still catches a legitimate parameter name that the stage does not
+        # carry yet — ``IconKeyPrefix`` is in no stage's committed set — and
+        # introducing it here would put key=value in a PR title and a tracked
+        # file. A refusal costs one re-run, a committed secret costs a rotation,
+        # but the operator must be able to see *why* it was refused, so the
+        # message names samconfig.toml and the substring that matched.
+        assert CARRIED_SECRET_KEY not in samconfig_parameter_names("dev"), (
+            "this test states the *absent* case; a carried key is planned, not refused"
+        )
         with pytest.raises(UsageError) as raised:
             _plan(
                 Command(
                     capability=Capability.CONFIG,
-                    args={"action": "set", "key": "IconKeyPrefix", "value": "icons/"},
+                    args={"action": "set", "key": CARRIED_SECRET_KEY, "value": "icons/"},
                 )
             )
         summary = str(raised.value)
-        assert "IconKeyPrefix" in summary
+        assert CARRIED_SECRET_KEY in summary
         assert "'key'" in summary, "the matched substring is what makes the refusal legible"
         assert SAMCONFIG_FILE in summary
 
@@ -774,6 +827,90 @@ class TestPlanMasking:
         assert secret_step.params == {"environment": "dev", "name": DEPLOY_ROLE_SECRET}
         assert "value" not in secret_step.params
         assert secret_step.command == f"gh secret set {DEPLOY_ROLE_SECRET} --env dev"
+
+
+class TestSecretShapedAllowlist:
+    """Requirement 3.8: a key the stage already carries is planned, not refused.
+
+    The refusal exists to stop a *new* secret-shaped key reaching a plan, a pull
+    request title and a tracked file. A key already committed in the stage's
+    ``samconfig.toml`` parameter set is already public, so refusing to change it
+    protects nothing while blocking an ordinary parameter change
+    (``IconKeyPrefix``, whose name merely contains "key").
+    """
+
+    VALUE: Final = "icons/v3-9f3a2c1d"
+
+    def _set(self, stage: str, key: str, value: str) -> Plan:
+        return _plan(
+            Command(
+                capability=Capability.CONFIG,
+                stage=stage,
+                args={"action": "set", "key": key, "value": value},
+            )
+        )
+
+    def test_a_carried_secret_shaped_key_is_planned_as_a_pull_request(self) -> None:
+        with samconfig_carrying("dev", CARRIED_SECRET_KEY):
+            plan = self._set("dev", CARRIED_SECRET_KEY, self.VALUE)
+        branch = f"config/dev-{CARRIED_SECRET_KEY}"
+        title = f"config(dev): set {CARRIED_SECRET_KEY}={self.VALUE}"
+        assert [step.op for step in plan.steps] == [Op.SAMCONFIG_PR]
+        step = plan.steps[0]
+        assert step.executor == "config"
+        assert step.params == {
+            "stage": "dev",
+            "key": CARRIED_SECRET_KEY,
+            "value": self.VALUE,
+            "branch": branch,
+            "base": RELEASE_BASE_BRANCH,
+            "title": title,
+        }
+        assert title in step.command, "the preview is the pull request it opens"
+        assert plan.effects[0] == (
+            f"opens a pull request setting {CARRIED_SECRET_KEY}={self.VALUE!r} in samconfig.toml"
+        )
+
+    def test_an_absent_secret_shaped_key_is_still_refused(self) -> None:
+        # Same fixture samconfig, so the difference is the allowlist and nothing
+        # else: ``IconKeyPrefix`` is carried, ``ApiToken`` is not.
+        with samconfig_carrying("dev", CARRIED_SECRET_KEY), pytest.raises(UsageError) as raised:
+            self._set("dev", "ApiToken", self.VALUE)
+        error = raised.value
+        assert error.exit_code == ExitCode.USAGE_ERROR, "exit 2, before any executor call"
+        assert self.VALUE not in str(error), "the refused value must not be quoted back"
+        assert "ApiToken" in str(error)
+
+    def test_the_allowlist_is_read_per_stage(self) -> None:
+        # The two stages' parameter sets can differ, so a key committed for dev
+        # says nothing about prod: the same command against prod is still refused.
+        with samconfig_carrying("dev", CARRIED_SECRET_KEY):
+            assert self._set("dev", CARRIED_SECRET_KEY, self.VALUE).steps[0].op is Op.SAMCONFIG_PR
+            with pytest.raises(UsageError):
+                self._set("prod", CARRIED_SECRET_KEY, self.VALUE)
+
+    def test_the_allowlist_adds_no_input_output_of_its_own(self) -> None:
+        # Planning stays pure (Requirement 2.4): the allowlist is derived from the
+        # samconfig parse validation already cached, so planning under a cache
+        # that is already warm reads no file at all.
+        with samconfig_carrying("dev", CARRIED_SECRET_KEY) as path:
+            samconfig_parameter_names("dev")  # warm the cache, as Command construction does
+            reads: list[Path] = []
+            original = Path.read_bytes
+
+            def recorded(self: Path) -> bytes:
+                reads.append(self)
+                return original(self)
+
+            patch = pytest.MonkeyPatch()
+            patch.setattr(Path, "read_bytes", recorded)
+            try:
+                plan = self._set("dev", CARRIED_SECRET_KEY, self.VALUE)
+            finally:
+                patch.undo()
+        assert plan.steps[0].op is Op.SAMCONFIG_PR
+        assert path not in reads, "the allowlist must not re-read samconfig.toml while planning"
+        assert reads == [], "planning must read no file at all"
 
 
 class TestSingleExecutorRouting:

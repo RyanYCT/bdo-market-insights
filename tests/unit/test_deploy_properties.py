@@ -58,7 +58,13 @@ from bdo_deploy.core.executors.github import GH, VERSION_PARAM, GitHubCli, GitHu
 from bdo_deploy.core.executors.sam import SamExecutor
 from bdo_deploy.core.exit_codes import ExitCode
 from bdo_deploy.core.models import REVIEWERS_ARG, Capability, Command, Op, Plan, PlanStep, Target
-from bdo_deploy.core.validation import PROD_STAGE, SSM_ROOT_SEGMENT, samconfig_stages
+from bdo_deploy.core.validation import (
+    PROD_STAGE,
+    SSM_ROOT_SEGMENT,
+    samconfig_parameter_names,
+    samconfig_stages,
+)
+from tests.unit.test_deploy_dispatch import CARRIED_SECRET_KEY, samconfig_carrying
 from tests.unit.test_deploy_equivalence import RecordingDispatcher
 from tests.unit.test_deploy_executors import FakeRunner
 from tests.unit.test_deploy_tui import Step, check, choose, drive, set_input, set_select
@@ -81,16 +87,31 @@ _versions = st.tuples(
     st.integers(min_value=0, max_value=99),
 ).map(lambda parts: "v{}.{}.{}".format(*parts))
 
-_param_names = st.from_regex(r"[A-Za-z][A-Za-z0-9]{0,11}", fullmatch=True).filter(
-    lambda name: not is_secret_name(name)
+_CARRIED_PARAM_NAMES: Final[frozenset[str]] = frozenset[str]().union(
+    *(samconfig_parameter_names(stage) for stage in _STAGES)
 )
-"""A ``samconfig.toml`` parameter name — deploy-time config, changed by a PR.
+"""Every key some stage's ``samconfig.toml`` parameter set already carries.
 
-Secret-shaped names are filtered *out* rather than left to chance: on this branch
-they are refused, not planned (Requirement 3.8), so leaving them in would make
-every property that quantifies over a config key intermittently sample the
-refusal path and assert the planned-PR contract against nothing. The refusal has
-its own generator (``_secret_param_names``) and its own property below."""
+Requirement 3.8 splits non-SSM keys three ways — not secret-shaped, secret-shaped
+but already carried, secret-shaped and absent — and the last is the only one
+refused. This set is what tells the two secret-shaped populations apart, read from
+the file rather than listed here so it cannot drift from it: when task 11.6 adds
+``EnableDemoKey`` to both stages, that name moves from the refused population to
+the allowed one by itself."""
+
+_param_names = st.from_regex(r"[A-Za-z][A-Za-z0-9]{0,11}", fullmatch=True).filter(
+    lambda name: not is_secret_name(name) or name in _CARRIED_PARAM_NAMES
+)
+"""A ``samconfig.toml`` parameter name that the planner turns into a PR.
+
+The filter is the *whole* rule Requirement 3.8 states, not just its substring
+half: a secret-shaped name is admitted here when the file already carries it,
+because that is precisely the case the planner plans rather than refuses. Absent
+secret-shaped names are filtered out because leaving them in would make every
+property that quantifies over a config key intermittently sample the refusal path
+and assert the planned-PR contract against nothing. They have their own generator
+(``_absent_secret_param_names``) and their own property below, and the allowed
+half has ``_secret_param_names`` plus a fixture samconfig that carries it."""
 
 _secret_param_names = st.builds(
     lambda prefix, substring, suffix: f"{prefix}{substring.capitalize()}{suffix}",
@@ -98,11 +119,17 @@ _secret_param_names = st.builds(
     st.sampled_from(SECRET_NAME_SUBSTRINGS),
     st.from_regex(r"[A-Za-z0-9]{0,6}", fullmatch=True),
 )
-"""A non-SSM key name the refusal must catch: some ``SECRET_NAME_SUBSTRINGS``
-member embedded in an otherwise ordinary parameter name, with its case flipped so
-the generated names exercise the case-insensitivity too. Deliberately includes the
-false positives the design accepts (``IconKeyPrefix``): they are refused by the
-same rule, and that is the trade, not a defect."""
+"""A non-SSM key name the substring predicate matches: some
+``SECRET_NAME_SUBSTRINGS`` member embedded in an otherwise ordinary parameter
+name, with its case flipped so the generated names exercise the
+case-insensitivity too. Deliberately includes the false positives the predicate
+cannot tell apart (``IconKeyPrefix``) — whether one is refused or planned is the
+allowlist's business, not this generator's."""
+
+_absent_secret_param_names = _secret_param_names.filter(
+    lambda name: name not in _CARRIED_PARAM_NAMES
+)
+"""The population the refusal owns: secret-shaped *and* carried by no stage."""
 
 _path_segments = st.from_regex(r"[a-z][a-z0-9-]{0,9}", fullmatch=True)
 
@@ -682,7 +709,7 @@ class TestEveryConfigChangeLandsInOneOfTwoLocations:
             )
 
     @settings(max_examples=300)
-    @given(stage=_stages, key=_secret_param_names, value=_distinctive_values)
+    @given(stage=_stages, key=_absent_secret_param_names, value=_distinctive_values)
     def test_a_secret_shaped_deploy_time_key_is_refused_rather_than_rendered(
         self, stage: str, key: str, value: str
     ) -> None:
@@ -706,6 +733,11 @@ class TestEveryConfigChangeLandsInOneOfTwoLocations:
         the substring predicate has false positives by design, and an operator who
         hits one has to be able to tell instantly what happened and where the value
         does belong.
+
+        The key space excludes names some stage's parameter set already carries:
+        those are *planned*, not refused (the property below), and reading the
+        exclusion out of ``samconfig.toml`` is what keeps the two populations
+        disjoint as the file grows.
         """
         fields: dict[str, object] = {
             "capability": Capability.CONFIG,
@@ -726,6 +758,60 @@ class TestEveryConfigChangeLandsInOneOfTwoLocations:
         assert SAMCONFIG_FILE in str(error), (
             "the false-positive case needs the tracked file named to be recognisable"
         )
+
+    @settings(max_examples=50, deadline=None)
+    @given(stage=_stages, key=_secret_param_names, value=_config_values)
+    def test_a_secret_shaped_key_the_stage_carries_is_planned_rather_than_refused(
+        self, stage: str, key: str, value: str
+    ) -> None:
+        """The other half of Requirement 3.8, over the same key population.
+
+        Quantified over ``_secret_param_names`` — the *same* names the property
+        above refuses — with the only difference being that the stage's
+        ``samconfig.toml`` carries the key. That is what makes this a property
+        about the allowlist rather than about one hand-picked name: whatever the
+        substring predicate matches, committing it flips the outcome from refusal
+        to a planned pull request, because a committed key is already public and
+        refusing to change it protects nothing.
+
+        The fixture samconfig is how the carried population is reachable at all:
+        no key the repository commits today is secret-shaped (task 11.6 is what
+        adds ``EnableDemoKey``), so without it this half of the rule would go
+        ungenerated.
+        """
+        with samconfig_carrying(stage, key):
+            plan = _planned(
+                {
+                    "capability": Capability.CONFIG,
+                    "stage": stage,
+                    "args": {ACTION_ARG: CONFIG_SET, KEY_ARG: key, VALUE_ARG: value},
+                }
+            )
+        assert plan is not None, f"{key!r} is carried by {stage}, so it must not be refused"
+        step = plan.steps[0]
+        assert step.op is Op.SAMCONFIG_PR
+        assert step.params["key"] == key
+        assert step.params["stage"] == stage
+        assert step.params["title"] == f"config({stage}): set {key}={value}"
+
+    def test_the_carried_population_is_a_real_case_and_not_a_fixture_artefact(self) -> None:
+        """``IconKeyPrefix`` is the reported false positive, pinned end to end.
+
+        The generated property above proves the rule; this names the case that
+        motivated it — an ordinary icon-path parameter refused because its name
+        contains "key" — and states the boundary in one place: carried plans,
+        absent refuses, same key, same stage.
+        """
+        fields: dict[str, object] = {
+            "capability": Capability.CONFIG,
+            "stage": "dev",
+            "args": {ACTION_ARG: CONFIG_SET, KEY_ARG: CARRIED_SECRET_KEY, VALUE_ARG: "icons/v3"},
+        }
+        assert _planned(fields) is None, "absent from the committed set: still refused"
+        with samconfig_carrying("dev", CARRIED_SECRET_KEY):
+            carried = _planned(fields)
+        assert carried is not None
+        assert [step.op for step in carried.steps] == [Op.SAMCONFIG_PR]
 
     @settings(max_examples=300)
     @given(fields=_commands)

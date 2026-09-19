@@ -461,7 +461,7 @@ on a changeset prompt nobody can see.
     read validation already performs; add no new I/O and keep planning pure
   - _Requirements: 3.7, 3.8_
 
-- [ ]* 11.5 Tests for the allowlist
+- [x]* 11.5 Tests for the allowlist
   - `IconKeyPrefix` (present in the stage's set) is planned as a PR; an absent
     secret-shaped key is refused with exit `2`, no PR, and its value absent from
     `command` / `effects` / PR title; extend the property generators so both
