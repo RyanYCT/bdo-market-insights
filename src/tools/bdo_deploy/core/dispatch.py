@@ -49,6 +49,7 @@ from typing import Final, assert_never
 
 from pydantic import SecretStr
 
+from bdo_deploy.core.constants import DEPLOY_WORKFLOW, GIT_REMOTE, MASK, RELEASE_BASE_BRANCH
 from bdo_deploy.core.errors import (
     ConfirmationRequired,
     ControlPlaneError,
@@ -83,11 +84,10 @@ from bdo_deploy.core.models import (
 )
 from bdo_deploy.core.validation import PROD_STAGE, SSM_ROOT_SEGMENT, validate_ssm_path
 
-DEPLOY_WORKFLOW: Final = "deploy.yml"
-"""The dedicated CD workflow every CI deploy is dispatched against (ADR-0038)."""
-
-RELEASE_BASE_BRANCH: Final = "main"
-GIT_REMOTE: Final = "origin"
+# ``DEPLOY_WORKFLOW``, ``RELEASE_BASE_BRANCH`` and ``GIT_REMOTE`` are declared in
+# ``core.constants`` and re-exported here (they are part of this module's public
+# names): the executors need the same three values, and a leaf module both sides
+# can import is what replaced the copy each side used to keep.
 
 RELEASE_TAG_PATTERN: Final = "v*"
 """The tag shape ``deploy.yml``'s ``push`` trigger fires on, hence a release ref."""
@@ -122,8 +122,9 @@ CONFIG_SET: Final = "set"
 DEPLOY_ROLE_SECRET: Final = "AWS_DEPLOY_ROLE_ARN"
 """The environment secret holding the OIDC deploy role ARN."""
 
-MASK: Final = "***"
-"""What a masked value is *rendered* as in ``PlanStep.command`` (Requirement 3.7)."""
+# ``MASK`` — what a masked value is *rendered* as in ``PlanStep.command``
+# (Requirement 3.7) — is declared in ``core.constants`` and re-exported here; the
+# config executor reports the same string in a ``ConfigDiff``.
 
 MASK_EFFECT: Final = "(masked)"
 """What a masked value is *described* as in ``Plan.effects`` (Requirement 3.7)."""
@@ -983,8 +984,10 @@ class Dispatcher:
 __all__ = [
     "DEPLOY_ROLE_SECRET",
     "DEPLOY_WORKFLOW",
+    "GIT_REMOTE",
     "MASK",
     "MASK_EFFECT",
+    "RELEASE_BASE_BRANCH",
     "Dispatcher",
     "Op",
 ]

@@ -401,7 +401,7 @@ defence-in-depth (ADR-0040, amended).
     `build_control_plane()`
   - _Requirements: 1.4_
 
-- [ ] 10.11 De-duplicate the cloned constants
+- [x] 10.11 De-duplicate the cloned constants
   - `RELEASE_BASE_BRANCH` / `GIT_REMOTE` (`core/dispatch.py` and
     `core/executors/git.py`), `DEPLOY_WORKFLOW` vs `DEFAULT_WORKFLOW`
     (`core/dispatch.py` / `core/executors/github.py`), and `MASK` are cloned to

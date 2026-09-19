@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final, Protocol, assert_never
 
+from bdo_deploy.core.constants import GIT_REMOTE, RELEASE_BASE_BRANCH
 from bdo_deploy.core.errors import UsageError
 from bdo_deploy.core.executors._process import CommandRunner, run_command
 from bdo_deploy.core.executors.base import StepExecutor, str_param
@@ -45,19 +46,12 @@ from bdo_deploy.core.models import CommandResult, Op, PlanStep
 GIT: Final = "git"
 """The sanctioned executable; every invocation below starts with it."""
 
-RELEASE_BASE_BRANCH: Final = "main"
-"""The only branch a release may be cut from (Requirement 7.1)."""
-
-GIT_REMOTE: Final = "origin"
-"""The remote a release tag is published to (Requirement 7.4)."""
-
-# ``core.dispatch`` declares the same two values for the planner and imports this
-# module, so importing them from there would be a cycle. They are *defaults* here
-# rather than a second source of truth: a planned step carries ``base_branch`` and
-# ``remote`` in ``params``, and ``run_step`` passes those through, so the
-# constants below are only reached when a caller invokes a domain method
-# directly. Relocating the planner's copies would mean editing ``dispatch.py``,
-# which this task does not own.
+# ``RELEASE_BASE_BRANCH`` and ``GIT_REMOTE`` are declared in ``core.constants``
+# and re-exported here under the names this module already published. They are the
+# same values ``core.dispatch`` plans with, not a second source of truth: a planned
+# step carries ``base_branch`` and ``remote`` in ``params`` and ``run_step`` passes
+# those through, so the defaults below are reached only when a caller invokes a
+# domain method directly.
 
 VERSION_PARAM: Final = "version"
 BASE_BRANCH_PARAM: Final = "base_branch"

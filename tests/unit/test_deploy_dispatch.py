@@ -12,18 +12,27 @@ is ever made:
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+from typing import Final
+
 import pytest
 from pydantic import SecretStr
 
+from bdo_deploy.core import constants
 from bdo_deploy.core.dispatch import (
     DEPLOY_ROLE_SECRET,
     DEPLOY_WORKFLOW,
+    GIT_REMOTE,
     MASK,
     MASK_EFFECT,
     RELEASE_BASE_BRANCH,
     Dispatcher,
 )
 from bdo_deploy.core.errors import ConfirmationRequired, UsageError, exit_code_for
+from bdo_deploy.core.executors import config as config_module
+from bdo_deploy.core.executors import git as git_module
+from bdo_deploy.core.executors import github as github_module
 from bdo_deploy.core.executors.config import PR_BODY, SAMCONFIG_FILE
 from bdo_deploy.core.executors.github import SECRET_ENV_PREFIX, RunRef, RunStatus
 from bdo_deploy.core.exit_codes import ExitCode
@@ -43,6 +52,10 @@ from bdo_deploy.core.models import (
 from bdo_deploy.core.validation import PROD_STAGE, SSM_ROOT_SEGMENT
 
 SSM_KEY = "/bdo-market-insights/dev/domain/api-domain-name"
+
+_SRC: Final = Path(__file__).resolve().parents[2] / "src"
+_CONSTANTS_MODULE: Final = "tools/bdo_deploy/core/constants.py"
+"""Where the values the core and the executors share are declared, and only there."""
 RUN_URL = "https://github.com/RyanYCT/bdo-market-insights/actions/runs/42"
 REVIEWER = "User:1234"
 """One required reviewer — the least a ``prod`` bootstrap is constructible with."""
@@ -1202,3 +1215,63 @@ class TestExecuteEveryRouting:
         assert result.exit_code is ExitCode.EXECUTOR_FAILED
         assert result.raw_output == "executor: refused"
         assert "step 1/" in result.summary
+
+
+class TestTheSharedConstantsHaveOneHome:
+    """The four values the core and its executors both need are declared once.
+
+    ``core.dispatch`` imports every executor module, so an executor cannot import
+    it back; each of these values used to be declared twice to dodge that cycle,
+    with a comment on the executor copy admitting the clone. ``core.constants`` is
+    a leaf both sides import, and these tests are what keeps a copy from coming
+    back — equality alone would not, since two modules declaring the same literal
+    are equal by construction. The literal count is the assertion that bites: a
+    re-cloned value adds a second occurrence of the literal in ``src``.
+    """
+
+    def test_the_planner_and_the_executors_read_the_same_values(self) -> None:
+        assert (DEPLOY_WORKFLOW, RELEASE_BASE_BRANCH, GIT_REMOTE, MASK) == (
+            constants.DEPLOY_WORKFLOW,
+            constants.RELEASE_BASE_BRANCH,
+            constants.GIT_REMOTE,
+            constants.MASK,
+        )
+        assert git_module.RELEASE_BASE_BRANCH == constants.RELEASE_BASE_BRANCH
+        assert git_module.GIT_REMOTE == constants.GIT_REMOTE
+        assert github_module.DEFAULT_WORKFLOW == constants.DEPLOY_WORKFLOW
+        assert config_module.MASK == constants.MASK
+
+    @pytest.mark.parametrize(
+        "name", ["DEPLOY_WORKFLOW", "RELEASE_BASE_BRANCH", "GIT_REMOTE", "MASK"]
+    )
+    def test_each_value_is_written_out_exactly_once_under_src(self, name: str) -> None:
+        declaration = f'{name}: Final = "{getattr(constants, name)}"'
+        declaring = [
+            str(path.relative_to(_SRC))
+            for path in sorted(_SRC.rglob("*.py"))
+            if declaration in path.read_text(encoding="utf-8")
+        ]
+        assert declaring == [_CONSTANTS_MODULE], (
+            f"{name} is declared in {declaring}; it belongs only in core.constants"
+        )
+
+    def test_the_constants_module_imports_nothing_from_the_package(self) -> None:
+        """A leaf is what makes it importable from both sides of the cycle.
+
+        Read off the module's own import statements rather than its text: the
+        docstring names ``bdo_deploy`` modules when it explains which sides import
+        it, and prose is not an import.
+        """
+        tree = ast.parse((_SRC / _CONSTANTS_MODULE).read_text(encoding="utf-8"))
+        imported = {
+            name
+            for node in ast.walk(tree)
+            for name in (
+                [node.module or ""]
+                if isinstance(node, ast.ImportFrom)
+                else [alias.name for alias in node.names]
+                if isinstance(node, ast.Import)
+                else []
+            )
+        }
+        assert not [name for name in imported if name.startswith("bdo_deploy")], imported

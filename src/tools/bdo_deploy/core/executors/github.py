@@ -103,6 +103,7 @@ from typing import TYPE_CHECKING, Annotated, Final, Protocol, assert_never
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, RootModel, ValidationError
 
+from bdo_deploy.core.constants import DEPLOY_WORKFLOW
 from bdo_deploy.core.errors import UsageError
 from bdo_deploy.core.executors._process import CommandRunner, run_command
 from bdo_deploy.core.executors.base import (
@@ -115,14 +116,14 @@ from bdo_deploy.core.models import CommandResult, Op, PlanStep, RunRef, RunStatu
 GH: Final = "gh"
 """The sanctioned executable; every invocation below starts with it."""
 
-DEFAULT_WORKFLOW: Final = "deploy.yml"
+DEFAULT_WORKFLOW: Final = DEPLOY_WORKFLOW
 """The dedicated CD workflow a dispatch targets (ADR-0038, Requirement 8.3).
 
-``core.dispatch`` declares the same value for the planner and imports this
-module, so importing it from there would be a cycle. It is a *default* here
-rather than a second source of truth: a planned step carries ``workflow`` in
-``params`` and ``run_step`` passes that through, so this constant is only reached
-when a caller invokes ``run_workflow`` directly.
+``core.constants.DEPLOY_WORKFLOW`` under the name this module already published:
+the same value ``core.dispatch`` plans with, not a second source of truth. It is a
+*default* here because a planned step carries ``workflow`` in ``params`` and
+``run_step`` passes that through, so this name is reached only when a caller
+invokes ``run_workflow`` directly.
 """
 
 SECRET_ENV_PREFIX: Final = "BDO_DEPLOY_SECRET_"

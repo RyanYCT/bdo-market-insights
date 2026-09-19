@@ -90,6 +90,7 @@ from pydantic import (
 from tomlkit import TOMLDocument
 from tomlkit.items import Table
 
+from bdo_deploy.core.constants import MASK
 from bdo_deploy.core.errors import UsageError
 from bdo_deploy.core.executors._process import CommandRunner, run_command
 from bdo_deploy.core.executors.base import StepExecutor, str_param
@@ -132,10 +133,10 @@ unstated is still masked when its *name* is secret-shaped, so the name predicate
 carries the case type alone would miss.
 """
 
-MASK: Final = "***"
-"""What a masked value is reported as in a ``ConfigDiff``, which is a plain
-``str`` field: a SecureString diff says *that* it changed without reproducing
-either version of the value."""
+# ``MASK`` is declared in ``core.constants`` and re-exported here: what a masked
+# value is reported as in a ``ConfigDiff``, which is a plain ``str`` field — a
+# SecureString diff says *that* it changed without reproducing either version of
+# the value — and the same string the planner renders into a previewed command.
 
 PARAMETER_OVERRIDES_KEY: Final = "parameter_overrides"
 """The ``[<stage>.deploy.parameters]`` entry holding the CloudFormation parameter
