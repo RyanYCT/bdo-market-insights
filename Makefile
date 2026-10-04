@@ -4,22 +4,27 @@ STAGE ?= dev
 AWS_REGION ?= us-east-1
 LOCAL_DB_PORT ?= 5432
 
-# Full CloudFormation parameter set for `make deploy`. The domain / hosted-zone
-# / demo-key parameters are SSM-resolved (ADR-0024): we pass SSM *key paths*
-# (not secrets) and CloudFormation substitutes the stored values at deploy, so a
-# full-state deploy can't drop the custom domain and no account-specific host is
-# committed. Seed the keys once per stage first: `make seed-config STAGE=<env>`.
-# Active regions come from samconfig.toml (the single toggle, ADR-0036 / Req
-# 1.5), not a Make default: a full-state --parameter-overrides replaces the set,
-# so BdoRegions is re-threaded from the stage's config here. Lazily expanded (=)
-# so `uv run` only fires on the deploy path, not on every target.
-BDO_REGIONS = $(shell uv run python scripts/samconfig_regions.py $(STAGE))
 # Release version surfaced by GET /v1/meta (ADR-0037). CI passes the release
 # tag; local/dev deploys mark it with git describe (or "dev" outside a repo).
 API_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-USE_RDS_PROXY ?= false
-AUTO_MIGRATE ?= true
-AUTO_BOOTSTRAP ?= true
+
+# Command-line overrides of the stage-static parameter set. EMPTY by default, on
+# purpose: an empty value contributes nothing to DEPLOY_PARAMS, so the value
+# samconfig.toml declares for the stage is what deploys. Setting one on the
+# command line is what makes it win --
+#
+#   make deploy STAGE=<env> AUTO_MIGRATE=false VERIFY=false
+#
+# is step 2 of a first-time bring-up (ADR-0025's two-phase migration
+# introduction, docs/runbook.md), so these overrides MUST keep working. They are
+# honoured by having the reader replace the key in the set it emits, not by
+# appending a second `Key=` later in the --parameter-overrides string: which of
+# two duplicates SAM honours is undocumented, and a silently-ignored
+# AUTO_MIGRATE=false would break a fresh environment's bring-up.
+USE_RDS_PROXY ?=
+AUTO_MIGRATE ?=
+AUTO_BOOTSTRAP ?=
+BDO_REGIONS ?=
 # Post-deploy smoke test (ADR-0029). VERIFY=false skips it at the end of a
 # deploy; VERIFY_WAIT caps the execution-aware wait for the async bootstrap to
 # populate data (it returns as soon as the bootstrap execution completes).
@@ -32,9 +37,28 @@ VERIFY_WAIT ?= 1200
 # migrations) leaves it unchanged, so the migrator is not re-invoked.
 MIGRATIONS_FINGERPRINT := $(shell find migrations/versions -type f -name '*.py' -exec sha256sum {} \; | sort | sha256sum | cut -c1-32)
 
-# Recursively expanded (=) so BdoRegions (and thus the samconfig read) resolves
-# only when the deploy recipe references it, not at parse time for every target.
-DEPLOY_PARAMS = Stage=$(STAGE) BdoRegions=$(BDO_REGIONS) ApiVersion=$(API_VERSION) UseRdsProxy=$(USE_RDS_PROXY) AutoMigrate=$(AUTO_MIGRATE) MigrationsFingerprint=$(MIGRATIONS_FINGERPRINT) AutoBootstrap=$(AUTO_BOOTSTRAP) EnableDemoKey=/bdo-market-insights/$(STAGE)/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/$(STAGE)/domain/api-domain-name IconDomainName=/bdo-market-insights/$(STAGE)/domain/icon-domain-name HostedZoneId=/bdo-market-insights/$(STAGE)/domain/hosted-zone-id
+# Full CloudFormation parameter set for `make deploy`, COMPOSED from the stage's
+# samconfig.toml set (Stage, BdoRegions, UseRdsProxy, AutoMigrate, AutoBootstrap
+# and the four SSM-resolved key paths -- Req 2.5) plus the only two parameters
+# that have no static value because they are derived at deploy time: ApiVersion
+# (ADR-0037) and MigrationsFingerprint (ADR-0025). The static ones are NOT
+# restated here; samconfig.toml is their single source.
+#
+# COMPOSITION rather than merging, because SAM offers no merge: a command-line
+# `--parameter-overrides` REPLACES samconfig's list wholesale -- unspecified
+# parameters revert to template.yaml defaults, not to the values the stage
+# declares (aws-sam-cli#2380). So supplying even one derived value obliges the
+# caller to supply every static one, and the reader is what supplies them from
+# the file instead of by hand.
+#
+# Recursively expanded (=) so the samconfig read (a `uv run`) fires only when the
+# deploy recipe references this, not at parse time for every target.
+DEPLOY_OVERRIDES = ApiVersion=$(API_VERSION) MigrationsFingerprint=$(MIGRATIONS_FINGERPRINT) \
+	$(if $(BDO_REGIONS),BdoRegions=$(BDO_REGIONS)) \
+	$(if $(USE_RDS_PROXY),UseRdsProxy=$(USE_RDS_PROXY)) \
+	$(if $(AUTO_MIGRATE),AutoMigrate=$(AUTO_MIGRATE)) \
+	$(if $(AUTO_BOOTSTRAP),AutoBootstrap=$(AUTO_BOOTSTRAP))
+DEPLOY_PARAMS = $(shell uv run python scripts/samconfig_regions.py --parameters $(STAGE) $(DEPLOY_OVERRIDES))
 
 # Built layer artifacts (CommonLayer is nested under PlatformStack, ADR-0032).
 LAYER_PYTHON := .aws-sam/build/PlatformStack/CommonLayer/python
@@ -88,14 +112,23 @@ verify-layer:
 
 # Single full-state deploy for any stage. `build` runs verify-layer first, so a
 # source-only CommonLayer can never reach `sam deploy`. CI deploys prod the same
-# way, supplying the domain from GitHub Actions variables (see docs/runbook.md).
+# way, composing the same parameter set from the same samconfig.toml stage table
+# (see .github/workflows/deploy.yml and docs/runbook.md).
 #
 #   make deploy STAGE=dev
-#   make deploy STAGE=prod ENABLE_DEMO_KEY=true API_DOMAIN_NAME=api.example.com HOSTED_ZONE_ID=Z123
+#   make deploy STAGE=prod
+#   make deploy STAGE=prod AUTO_MIGRATE=false VERIFY=false   # bring-up, ADR-0025
 #
-# Because the whole state is declared each time, keep the persistent flags (demo
-# key, domain) in the command -- exporting the domain vars once per shell makes
-# that a non-issue.
+# The persistent flags (demo key, domain, regions, RDS Proxy) no longer need to
+# be repeated in the command: they live in the stage's samconfig.toml set, and
+# the domain / demo-key values live in SSM behind the key paths it carries
+# (`make seed-config STAGE=<env>`). Pass one of the override variables above only
+# to deviate from the committed set for a single deploy.
+#
+# `confirm_changeset = true` stays set for both stages in samconfig.toml, so this
+# target still shows the changeset and waits -- an interactive operator is present
+# here. (The control-plane deploy passes --no-confirm-changeset because its output
+# is captured and its own plan-then-`--yes` gate is the confirmation.)
 deploy: build
 	sam deploy --config-env $(STAGE) --parameter-overrides "$(DEPLOY_PARAMS)"
 ifneq ($(VERIFY),false)

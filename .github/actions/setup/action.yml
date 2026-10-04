@@ -1,0 +1,45 @@
+name: 'Setup Python toolchain'
+description: >-
+  Shared setup for this repository's workflows: Python, uv, the synced project
+  environment, and optionally the SAM CLI. Factored here so ci.yml and
+  deploy.yml cannot drift (ADR-0038, Requirement 8.4).
+
+# NOTE ON CHECKOUT -- deliberately NOT a step in this composite.
+# A local composite action is resolved from the caller's checked-out workspace,
+# so `uses: ./.github/actions/setup` only resolves *after* the calling job has
+# already run `actions/checkout`. A checkout step inside would therefore always
+# be a second, redundant checkout -- and a destructive one, since it would wipe
+# anything the job had already written into the workspace (e.g. the regenerated
+# infra/openapi.yaml the `openapi` job diffs). The caller keeps its single
+# `- uses: actions/checkout@v4` line; everything after it lives here. That one
+# unparameterised line is not a drift risk; the version-pinned, configurable
+# steps below were.
+
+inputs:
+  python-version:
+    description: 'Python version passed to actions/setup-python.'
+    required: false
+    default: '3.12'
+  sam:
+    description: >-
+      Install the AWS SAM CLI ('true'/'false'). Off by default so that jobs
+      which do not build or deploy templates (lint, typecheck, test, ...) are
+      not forced to install it; only the SAM-using jobs opt in.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - uses: astral-sh/setup-uv@v4
+
+    # Ordered before `uv sync` to match the existing ci.yml job step order.
+    - if: ${{ inputs.sam == 'true' }}
+      uses: aws-actions/setup-sam@v2
+
+    - run: uv sync
+      shell: bash

@@ -80,7 +80,9 @@ Keep these light; `AGENTS.md` is the full workflow reference.
 - **Spec first.** Design decisions belong in the active spec under
   `.kiro/specs/<feature>/{requirements,design,tasks}.md` *before* code, never
   only in code. Link any new ADR from the relevant spec.
-- **Spec cap.** Each spec file is capped at ~150 lines; split or trim rather
-  than let one balloon.
+- **Spec brevity.** Keep each spec file as short as fully specifies the work;
+  push detail into ADRs and the runbook rather than padding it. (There is no
+  fixed line cap — `AGENTS.md` retired the former ~150-line one, which the
+  canonical user-story/EARS structure cannot always meet.)
 - **Session log.** If the session was non-trivial, append an entry to `log.md`
   per its template at the end.

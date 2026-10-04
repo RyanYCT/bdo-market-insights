@@ -24,6 +24,32 @@ language_extensions = true
 # S3 NoSuchKey. Keep these prefixes stage-scoped; do not collapse them back to a
 # single shared prefix.
 
+# Each stage's `parameter_overrides` is the SINGLE source of the stage-static
+# CloudFormation parameter set (Req 2.5): `sam deploy --config-env <stage>` with
+# no `--parameter-overrides` on the command line must converge the same state a
+# full-state caller converges, so every static parameter template.yaml declares
+# is listed here rather than left to a template default. Before this, only
+# Stage/BdoRegions/UseRdsProxy were listed and a `bdo-deploy deploy --stage prod`
+# silently inherited template.yaml's DEV-defaulted SSM paths.
+#
+# Exactly two of template.yaml's parameters are deliberately absent, because they
+# are derived at deploy time and have no static value: `ApiVersion` (the release
+# tag, ADR-0037) and `MigrationsFingerprint` (a content hash of
+# migrations/versions, ADR-0025). The two full-state callers (`make deploy` and
+# .github/workflows/deploy.yml) COMPOSE their override string from this set plus
+# those two -- a command-line `--parameter-overrides` replaces this list wholesale
+# rather than merging with it (aws-sam-cli#2380), so the whole set has to be
+# restated on the command line, and scripts/samconfig_regions.py is what restates
+# it from here instead of by hand.
+#
+# The four SSM-resolved parameters carry SSM *key paths*, never values (ADR-0024),
+# and the paths are STAGE-SCOPED: the dev table's paths say /dev/ and the prod
+# table's say /prod/. Seed the keys once per stage with `make seed-config
+# STAGE=<env>` before the first deploy. A literal hostname or hosted-zone id here
+# would be an account-specific value in a tracked file; a test asserts every
+# `AWS::SSM::Parameter::Value<String>` parameter's value is a /bdo-market-insights/
+# path, so inlining one fails the suite.
+
 [dev.deploy.parameters]
 stack_name = "bdo-market-dev"
 resolve_s3 = true
@@ -32,7 +58,7 @@ region = "us-east-1"
 confirm_changeset = true
 capabilities = "CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
 language_extensions = true
-parameter_overrides = "Stage=dev BdoRegions=tw UseRdsProxy=false"
+parameter_overrides = "Stage=dev BdoRegions=tw UseRdsProxy=false AutoMigrate=true AutoBootstrap=true EnableDemoKey=/bdo-market-insights/dev/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/dev/domain/api-domain-name IconDomainName=/bdo-market-insights/dev/domain/icon-domain-name HostedZoneId=/bdo-market-insights/dev/domain/hosted-zone-id"
 
 [prod.deploy.parameters]
 stack_name = "bdo-market-prod"
@@ -42,4 +68,4 @@ region = "us-east-1"
 confirm_changeset = true
 capabilities = "CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
 language_extensions = true
-parameter_overrides = "Stage=prod BdoRegions=tw UseRdsProxy=false"
+parameter_overrides = "Stage=prod BdoRegions=tw UseRdsProxy=false AutoMigrate=true AutoBootstrap=true EnableDemoKey=/bdo-market-insights/prod/api-gateway/enable-demo-key ApiDomainName=/bdo-market-insights/prod/domain/api-domain-name IconDomainName=/bdo-market-insights/prod/domain/icon-domain-name HostedZoneId=/bdo-market-insights/prod/domain/hosted-zone-id"
