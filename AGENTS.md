@@ -25,6 +25,7 @@ below).
 | `.kiro/steering/product.md` | What this project is; BDO domain primer |
 | `.kiro/steering/tech.md` | Locked tech stack; forbidden patterns |
 | `.kiro/steering/structure.md` | Repository layout |
+| `.kiro/steering/writing-style.md` | ASD-STE100 writing rules for all prose |
 | `.kiro/specs/v3/` | Shipped v3 baseline (`requirements`, `design`, `domain-model`, `tasks`); reference for how the system is built |
 | `.kiro/specs/<feature>/` | Per-feature specs for work since v3; the active one is the source of truth for that change |
 | `docs/adr/` | One markdown per architectural decision |

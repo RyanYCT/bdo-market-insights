@@ -32,7 +32,8 @@ bdo-market-insights/
 │   └── steering/                      # this directory
 │       ├── product.md
 │       ├── tech.md
-│       └── structure.md
+│       ├── structure.md
+│       └── writing-style.md
 ├── docs/
 │   ├── adr/                           # one MD per ADR (Nygard)
 │   ├── architecture.md
